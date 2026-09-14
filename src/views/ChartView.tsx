@@ -1,11 +1,5 @@
 import { useEffect, useRef } from "react";
-import {
-  CandlestickSeries,
-  ColorType,
-  createChart,
-  HistogramSeries,
-  LineSeries,
-} from "lightweight-charts";
+import { CandlestickSeries, ColorType, createChart, HistogramSeries, LineSeries } from "lightweight-charts";
 import type { IChartApi, ISeriesApi, UTCTimestamp } from "lightweight-charts";
 import { Panel } from "@/components/ui/Panel";
 import { clsx } from "@/lib/clsx";
@@ -25,17 +19,11 @@ export function ChartView() {
   const volRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const rsiRef = useRef<ISeriesApi<"Line"> | null>(null);
 
-  const { bars, ema20, ema50, rsi14, interval, loading, source, lastPrice, setIntervalTf, load } =
-    useMarketStore();
+  const { bars, ema20, ema50, rsi14, interval, loading, source, lastPrice, setIntervalTf, load } = useMarketStore();
   const runOnBars = useTradingStore((s) => s.runOnBars);
 
-  useEffect(() => {
-    if (bars.length === 0) void load();
-  }, [bars.length, load]);
-
-  useEffect(() => {
-    if (bars.length >= 55) runOnBars(bars);
-  }, [bars, runOnBars]);
+  useEffect(() => { if (bars.length === 0) void load(); }, [bars.length, load]);
+  useEffect(() => { if (bars.length >= 55) runOnBars(bars); }, [bars, runOnBars]);
 
   useEffect(() => {
     const el = hostRef.current;
@@ -44,88 +32,41 @@ export function ChartView() {
     const chart = createChart(el, {
       autoSize: true,
       layout: {
-        background: { type: ColorType.Solid, color: "#0c1017" },
-        textColor: "#7d8ea3",
-        fontFamily: "IBM Plex Mono, monospace",
-        panes: { separatorColor: "#1c2736", separatorHoverColor: "#26c6da" },
+        background: { type: ColorType.Solid, color: "#ffffff" }, // Nền Trắng
+        textColor: "#64748b", // Chữ xám đậm
+        fontFamily: "Inter, sans-serif",
       },
       grid: {
-        vertLines: { color: "#151b26" },
-        horzLines: { color: "#151b26" },
+        vertLines: { color: "#f1f5f9" },
+        horzLines: { color: "#f1f5f9" },
       },
-      rightPriceScale: { borderColor: "#1c2736" },
-      timeScale: { borderColor: "#1c2736", timeVisible: true, secondsVisible: false },
+      rightPriceScale: { borderColor: "#e2e8f0" },
+      timeScale: { borderColor: "#e2e8f0", timeVisible: true, secondsVisible: false },
       crosshair: { mode: 0 },
     });
 
     const candles = chart.addSeries(CandlestickSeries, {
-      upColor: "#00e676",
-      downColor: "#ff3d57",
-      borderVisible: false,
-      wickUpColor: "#00e676",
-      wickDownColor: "#ff3d57",
+      upColor: "#10b981", downColor: "#f43f5e", borderVisible: false, wickUpColor: "#10b981", wickDownColor: "#f43f5e",
     });
-    const e20 = chart.addSeries(LineSeries, { color: "#26c6da", lineWidth: 2, priceLineVisible: false });
-    const e50 = chart.addSeries(LineSeries, { color: "#ffc107", lineWidth: 2, priceLineVisible: false });
-    const vol = chart.addSeries(
-      HistogramSeries,
-      { priceFormat: { type: "volume" }, priceScaleId: "vol" },
-      0,
-    );
+    const e20 = chart.addSeries(LineSeries, { color: "#0ea5e9", lineWidth: 2, priceLineVisible: false });
+    const e50 = chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 2, priceLineVisible: false });
+    const vol = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "vol" }, 0);
     vol.priceScale().applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
-    const rsiSeries = chart.addSeries(
-      LineSeries,
-      { color: "#b388ff", lineWidth: 2, priceLineVisible: false },
-      1,
-    );
+    const rsiSeries = chart.addSeries(LineSeries, { color: "#8b5cf6", lineWidth: 2, priceLineVisible: false }, 1);
     rsiSeries.priceScale().applyOptions({ scaleMargins: { top: 0.12, bottom: 0.08 } });
 
-    chartRef.current = chart;
-    candleRef.current = candles;
-    ema20Ref.current = e20;
-    ema50Ref.current = e50;
-    volRef.current = vol;
-    rsiRef.current = rsiSeries;
+    chartRef.current = chart; candleRef.current = candles; ema20Ref.current = e20; ema50Ref.current = e50; volRef.current = vol; rsiRef.current = rsiSeries;
 
-    return () => {
-      chart.remove();
-      chartRef.current = null;
-    };
+    return () => { chart.remove(); chartRef.current = null; };
   }, []);
 
   useEffect(() => {
     if (!candleRef.current || bars.length === 0) return;
-    candleRef.current.setData(
-      bars.map((b) => ({
-        time: b.time as UTCTimestamp,
-        open: b.open,
-        high: b.high,
-        low: b.low,
-        close: b.close,
-      })),
-    );
-    ema20Ref.current?.setData(
-      bars.flatMap((b, i) =>
-        ema20[i] == null ? [] : [{ time: b.time as UTCTimestamp, value: ema20[i] as number }],
-      ),
-    );
-    ema50Ref.current?.setData(
-      bars.flatMap((b, i) =>
-        ema50[i] == null ? [] : [{ time: b.time as UTCTimestamp, value: ema50[i] as number }],
-      ),
-    );
-    volRef.current?.setData(
-      bars.map((b) => ({
-        time: b.time as UTCTimestamp,
-        value: b.volume,
-        color: b.close >= b.open ? "rgba(0,230,118,0.45)" : "rgba(255,61,87,0.45)",
-      })),
-    );
-    rsiRef.current?.setData(
-      bars.flatMap((b, i) =>
-        rsi14[i] == null ? [] : [{ time: b.time as UTCTimestamp, value: rsi14[i] as number }],
-      ),
-    );
+    candleRef.current.setData(bars.map((b) => ({ time: b.time as UTCTimestamp, open: b.open, high: b.high, low: b.low, close: b.close })));
+    ema20Ref.current?.setData(bars.flatMap((b, i) => ema20[i] == null ? [] : [{ time: b.time as UTCTimestamp, value: ema20[i] as number }]));
+    ema50Ref.current?.setData(bars.flatMap((b, i) => ema50[i] == null ? [] : [{ time: b.time as UTCTimestamp, value: ema50[i] as number }]));
+    volRef.current?.setData(bars.map((b) => ({ time: b.time as UTCTimestamp, value: b.volume, color: b.close >= b.open ? "rgba(16, 185, 129, 0.4)" : "rgba(244, 63, 94, 0.4)" })));
+    rsiRef.current?.setData(bars.flatMap((b, i) => rsi14[i] == null ? [] : [{ time: b.time as UTCTimestamp, value: rsi14[i] as number }]));
     chartRef.current?.timeScale().fitContent();
   }, [bars, ema20, ema50, rsi14]);
 
@@ -136,36 +77,28 @@ export function ChartView() {
   const lastE50 = [...ema50].reverse().find((v) => v != null) ?? null;
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 p-3">
-      <div className="flex items-center justify-between gap-3 border border-line bg-panel px-3 py-2">
-        <div className="flex items-end gap-4">
+    <div className="flex h-full min-h-0 flex-col gap-4 p-5 bg-[#f8fafc] font-sans">
+      <div className="flex items-center justify-between gap-4 border border-slate-200 bg-white px-5 py-3 rounded-2xl shadow-sm">
+        <div className="flex items-end gap-6">
           <div>
-            <div className="font-mono text-[10px] tracking-[0.2em] text-cyan">BINANCE</div>
-            <div className="font-mono text-lg font-semibold">BTC/USDT</div>
+            <div className="font-bold text-[10px] tracking-widest text-sky-600 uppercase">SÀN BINANCE</div>
+            <div className="font-sans text-xl font-black text-slate-800">BTC/USDT</div>
           </div>
-          <div className={clsx("font-mono text-2xl", chg >= 0 ? "text-up" : "text-down")}>
+          <div className={clsx("font-sans text-2xl font-bold", chg >= 0 ? "text-emerald-500" : "text-rose-500")}>
             {formatNumber(lastPrice, 2)}
           </div>
-          <div className={clsx("font-mono text-sm", chg >= 0 ? "text-up" : "text-down")}>
-            {formatPct(chg)}
+          <div className={clsx("font-sans text-sm font-bold mb-1", chg >= 0 ? "text-emerald-500" : "text-rose-500")}>
+            {chg >= 0 ? "+" : ""}{formatPct(chg)}
           </div>
         </div>
-        <div className="flex items-center gap-4 font-mono text-[11px] text-muted">
-          <span>EMA20 {lastE20 ? formatNumber(lastE20, 1) : "—"}</span>
-          <span>EMA50 {lastE50 ? formatNumber(lastE50, 1) : "—"}</span>
-          <span>RSI14 {lastRsi ? formatNumber(lastRsi, 1) : "—"}</span>
-          <span>{source === "live" ? "FEED LIVE" : "FEED SYNTHETIC"}</span>
-          <div className="flex border border-line">
+        <div className="flex items-center gap-5 font-sans text-[12px] text-slate-500 font-semibold">
+          <span className="bg-slate-50 px-2 py-1 rounded-md border border-slate-100">EMA20: <span className="text-slate-800">{lastE20 ? formatNumber(lastE20, 1) : "—"}</span></span>
+          <span className="bg-slate-50 px-2 py-1 rounded-md border border-slate-100">EMA50: <span className="text-slate-800">{lastE50 ? formatNumber(lastE50, 1) : "—"}</span></span>
+          <span className="bg-slate-50 px-2 py-1 rounded-md border border-slate-100">RSI14: <span className="text-slate-800">{lastRsi ? formatNumber(lastRsi, 1) : "—"}</span></span>
+          <span className="text-sky-600 bg-sky-50 px-2 py-1 rounded-md border border-sky-100">{source === "live" ? "DỮ LIỆU TRỰC TIẾP" : "DỮ LIỆU MÔ PHỎNG"}</span>
+          <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
             {INTERVALS.map((tf) => (
-              <button
-                key={tf}
-                type="button"
-                onClick={() => setIntervalTf(tf)}
-                className={clsx(
-                  "px-2 py-1",
-                  interval === tf ? "bg-up/15 text-up" : "text-muted hover:text-ink",
-                )}
-              >
+              <button key={tf} onClick={() => setIntervalTf(tf)} className={clsx("px-3 py-1.5 rounded-md font-bold transition-all", interval === tf ? "bg-white text-sky-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}>
                 {tf.toUpperCase()}
               </button>
             ))}
@@ -173,7 +106,7 @@ export function ChartView() {
         </div>
       </div>
 
-      <Panel title="OHLCV · EMA 20/50 · VOLUME · RSI(14)" right={loading ? "LOADING" : `${bars.length} BARS`} className="min-h-0 flex-1">
+      <Panel title="BIỂU ĐỒ KỸ THUẬT OHLCV · EMA 20/50 · RSI(14)" right={loading ? "ĐANG TẢI..." : `${bars.length} NẾN`} className="min-h-0 flex-1 bg-white border border-slate-200 shadow-sm rounded-2xl overflow-hidden">
         <div ref={hostRef} className="h-full min-h-[420px] w-full" />
       </Panel>
     </div>
