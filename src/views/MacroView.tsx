@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
-import { ShieldAlert, HelpCircle, CheckCircle2, BrainCircuit, Loader2, ArrowRight } from "lucide-react";
+import { BrainCircuit, Loader2, ArrowRight, MessageSquare, Send, X, Edit3, Check } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { MacroNewsTable } from "@/components/MacroNewsTable";
@@ -9,7 +9,6 @@ import { clsx } from "@/lib/clsx";
 import { formatNumber, formatPct, formatUsd } from "@/lib/math";
 import { useMacroStore } from "@/stores/macroStore";
 import { usePortfolioStore } from "@/stores/portfolioStore";
-import { generatePortfolioAction, type AiRecommendation } from "@/lib/aiAdvisor";
 import type { AllocationWeights, AssetKey } from "@/types/market";
 
 const PIE_COLORS: Record<keyof AllocationWeights, string> = {
@@ -30,13 +29,18 @@ function corrColor(v: number): string {
 }
 
 export function MacroView() {
-  const { loading, error, series, regime, correlation, refreshedAt, load } = useMacroStore();
+  const { loading, error, series, regime, correlation, load } = useMacroStore();
   const portfolio = usePortfolioStore();
   
-  const [isCallingAi, setIsCallingAi] = useState(false);
-  const [aiAdvice, setAiAdvice] = useState<AiRecommendation | null>(null);
+  // State quản lý Modal Chatbot Pop-up
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatMessages, setChatMessages] = useState<Array<{ sender: 'user' | 'ai'; text: string }>>([
+    { sender: 'ai', text: 'Xin chào! Tôi là Trợ lý Quản trị Rủi ro Quant. Bạn cần tôi phân tích biến động vĩ mô hay danh mục nào?' }
+  ]);
+  const [isChatLoading, setIsChatLoading] = useState(false);
 
-  // States để chỉnh sửa trực tiếp Cash & NAV ngay trên UI
+  // States chỉnh sửa Cash & NAV
   const [isEditingNav, setIsEditingNav] = useState(false);
   const [tempCash, setTempCash] = useState(portfolio.cashUsd.toString());
   const [tempNav, setTempNav] = useState(portfolio.getTotalNav().toString());
@@ -53,166 +57,105 @@ export function MacroView() {
   const corr = correlation ?? (series.length ? thirtyDayCorrelation(series) : null);
   const usingSynthetic = series.some((s) => s.source === "synthetic");
 
-  const handleCallAi = async () => {
-    setIsCallingAi(true);
-    try {
-      const advice = await generatePortfolioAction();
-      setAiAdvice(advice);
-    } catch (err) {
-      alert("Lỗi kết nối AI: Hãy chắc chắn bạn đã cấu hình đúng VITE_GEMINI_API_KEY trong file .env");
-      console.error(err);
-    } finally {
-      setIsCallingAi(false);
-    }
-  };
-
   const handleSaveNav = () => {
     portfolio.setCash(Number(tempCash) || 0);
     portfolio.setTotalNav(Number(tempNav) || 0);
     setIsEditingNav(false);
   };
 
-  return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-3">
-      
-      {/* KHỐI 1: GIÁM ĐỐC RỦI RO AI */}
-      <div className="shrink-0 rounded-xl border border-[#b388ff]/40 bg-gradient-to-br from-[#0d1219] to-[#1a1025] p-4 shadow-lg relative overflow-hidden">
-        <div className="absolute -top-12 -right-12 w-32 h-32 bg-[#b388ff]/10 rounded-full blur-2xl"></div>
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || isChatLoading) return;
 
-        <div className="flex items-center justify-between pb-3 border-b border-[#2d213f] relative z-10">
-          <div className="flex items-center space-x-3">
-            <div className="bg-[#b388ff]/20 p-1.5 rounded-lg border border-[#b388ff]/30">
-              <BrainCircuit size={18} className="text-[#b388ff]" />
-            </div>
+    const userText = chatInput.trim();
+    setChatInput("");
+    setChatMessages(prev => [...prev, { sender: 'user', text: userText }]);
+    setIsChatLoading(true);
+
+    try {
+      const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
+      const prompt = `
+        Đóng vai trò là Trợ lý AI Quản trị Rủi ro Quant Fund.
+        Dữ liệu hiện tại:
+        - Tổng NAV: $${portfolio.getTotalNav()}
+        - Tiền mặt: $${portfolio.cashUsd}
+        - Trạng thái Vĩ mô: ${regime?.label} (Điểm: ${regime?.score}/100)
+        - Luận điểm: ${regime?.thesis}
+        - Danh mục tài sản: ${JSON.stringify(portfolio.assets)}
+
+        Câu hỏi từ nhà đầu tư: "${userText}"
+        Hãy trả lời chuyên nghiệp, súc tích bằng tiếng Việt, dựa trực tiếp vào số liệu trên.
+      `;
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      });
+
+      const data = await response.json();
+      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Không thể phản hồi lúc này.";
+      setChatMessages(prev => [...prev, { sender: 'ai', text: reply }]);
+    } catch (err) {
+      setChatMessages(prev => [...prev, { sender: 'ai', text: 'Lỗi kết nối tới Gemini AI.' }]);
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
+
+  return (
+    <div className="relative flex flex-col gap-3 p-4 overflow-y-auto h-full w-full bg-[#07090d] text-[#d7e2ee]">
+      
+      {/* HEADER: THANH CÔNG CỤ VÀ NÚT BẬT CHATBOT POP-UP */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-[#0c1017] border border-[#1c2736] p-4 rounded-xl shadow-md">
+        <div>
+          <h2 className="text-sm font-bold text-white uppercase tracking-wider">QuantFund OS Macro & Risk Terminal</h2>
+          <p className="text-[11px] text-[#7d8ea3]">Real-time regime monitoring & AI quantitative asset allocation</p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {/* Khu vực hiển thị & chỉnh sửa Cash/NAV */}
+          <div className="flex items-center gap-3 bg-black/50 px-3 py-1.5 rounded-lg border border-white/5 font-mono text-xs">
             <div>
-              <h2 className="text-sm font-bold text-white tracking-wide uppercase">AI Risk Manager</h2>
-              <p className="text-[10px] text-muted tracking-widest mt-0.5">GEMINI FLASH ENGINE</p>
+              <span className="text-[10px] text-[#7d8ea3] block">CASH:</span>
+              {isEditingNav ? (
+                <input type="number" value={tempCash} onChange={(e) => setTempCash(e.target.value)} className="bg-black border border-cyan-500 text-emerald-400 px-1 py-0.5 rounded w-20" />
+              ) : (
+                <span className="text-emerald-400 font-bold">{formatUsd(portfolio.cashUsd, 0)}</span>
+              )}
+            </div>
+            <div className="border-l border-white/10 pl-3">
+              <span className="text-[10px] text-[#7d8ea3] block">NAV:</span>
+              {isEditingNav ? (
+                <input type="number" value={tempNav} onChange={(e) => setTempNav(e.target.value)} className="bg-black border border-cyan-500 text-white px-1 py-0.5 rounded w-24" />
+              ) : (
+                <span className="text-white font-bold">{formatUsd(portfolio.getTotalNav(), 0)}</span>
+              )}
+            </div>
+            <div className="pl-2">
+              {isEditingNav ? (
+                <button onClick={handleSaveNav} className="bg-emerald-500 text-black px-2 py-1 rounded font-bold hover:bg-emerald-400 flex items-center gap-1">
+                  <Check size={12} /> Lưu
+                </button>
+              ) : (
+                <button onClick={() => { setTempCash(portfolio.cashUsd.toString()); setTempNav(portfolio.getTotalNav().toString()); setIsEditingNav(true); }} className="bg-[#1c2736] text-[#26c6da] px-2 py-1 rounded hover:bg-[#26c6da]/20 flex items-center gap-1">
+                  <Edit3 size={12} /> Sửa
+                </button>
+              )}
             </div>
           </div>
+
+          {/* NÚT BẬT CHATBOT POP-UP (THAY THẾ NÚT CŨ) */}
           <button 
-            onClick={handleCallAi}
-            disabled={isCallingAi || !regime}
-            className="flex items-center gap-2 text-xs font-bold text-white bg-[#b388ff] hover:bg-[#9c66ff] px-4 py-2 rounded-lg transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(179,136,255,0.4)]"
+            onClick={() => setIsChatOpen(true)}
+            className="flex items-center gap-2 text-xs font-bold text-white bg-gradient-to-r from-[#b388ff] to-[#7c4dff] hover:opacity-90 px-4 py-2.5 rounded-xl shadow-[0_0_20px_rgba(179,136,255,0.4)] transition-all cursor-pointer"
           >
-            {isCallingAi ? (
-              <><Loader2 size={14} className="animate-spin" /> ĐANG PHÂN TÍCH VÍ...</>
-            ) : (
-              <><BrainCircuit size={14} /> XIN CHỈ THỊ HÀNH ĐỘNG</>
-            )}
+            <BrainCircuit size={16} /> HỎI AI RISK ASSISTANT
           </button>
         </div>
-
-        {/* Thanh cấu hình Cash & NAV có thể chỉnh sửa trực tiếp */}
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 bg-black/40 px-4 py-2.5 rounded-lg border border-white/5 font-mono text-[11px]">
-          <div className="flex items-center gap-4">
-            <div>
-              <span className="text-muted block text-[10px]">CASH TỒN TRỮ</span>
-              {isEditingNav ? (
-                <input 
-                  type="number" 
-                  value={tempCash} 
-                  onChange={(e) => setTempCash(e.target.value)}
-                  className="bg-[#07090d] border border-[#26c6da] text-emerald-400 px-2 py-0.5 rounded w-24 font-mono text-xs"
-                />
-              ) : (
-                <span className="text-emerald-400 text-sm font-bold">{formatUsd(portfolio.cashUsd, 0)}</span>
-              )}
-            </div>
-            <div className="border-l border-white/10 pl-4">
-              <span className="text-muted block text-[10px]">TỔNG TÀI SẢN (NAV)</span>
-              {isEditingNav ? (
-                <input 
-                  type="number" 
-                  value={tempNav} 
-                  onChange={(e) => setTempNav(e.target.value)}
-                  className="bg-[#07090d] border border-[#26c6da] text-white px-2 py-0.5 rounded w-28 font-mono text-xs"
-                />
-              ) : (
-                <span className="text-white text-sm font-bold">{formatUsd(portfolio.getTotalNav(), 0)}</span>
-              )}
-            </div>
-          </div>
-
-          <div>
-            {isEditingNav ? (
-              <button 
-                onClick={handleSaveNav}
-                className="bg-emerald-500 text-black px-3 py-1 rounded text-xs font-bold hover:bg-emerald-400 transition-colors"
-              >
-                Lưu Vốn
-              </button>
-            ) : (
-              <button 
-                onClick={() => { setTempCash(portfolio.cashUsd.toString()); setTempNav(portfolio.getTotalNav().toString()); setIsEditingNav(true); }}
-                className="bg-[#1c2736] text-[#26c6da] px-3 py-1 rounded text-xs hover:bg-[#26c6da]/20 transition-colors"
-              >
-                Sửa Vốn / Cash
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Khung hiển thị kết quả từ AI (Đã đảo ngược: Lệnh thực thi lên trên, Nhận định chi tiết xuống dưới) */}
-        {aiAdvice && (
-          <div className="mt-4 space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-500">
-            
-            {/* 1. LỆNH THỰC THI TRỰC TIẾP (ĐƯA LÊN TRÊN ĐỂ DỄ ĐỌC SỐ TIỀN) */}
-            <div className="bg-black/60 p-3.5 rounded-lg border border-[#2d213f]">
-              <div className="flex justify-between items-center mb-3">
-                <span className="text-[10px] text-muted uppercase tracking-wider font-semibold">Lệnh Thực Thi Trực Tiếp (Dựa trên NAV thực tế)</span>
-                <span className={clsx("text-[10px] font-bold px-2 py-0.5 rounded border uppercase", 
-                  aiAdvice.riskStatus === "DEFENSIVE" ? "bg-amber-500/20 text-amber-400 border-amber-500/50" : 
-                  aiAdvice.riskStatus === "AGGRESSIVE" ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/50" : 
-                  "bg-blue-500/20 text-blue-400 border-blue-500/50"
-                )}>
-                  Khẩu vị: {aiAdvice.riskStatus}
-                </span>
-              </div>
-              <div className="space-y-2">
-                {aiAdvice.actions.map((act, idx) => (
-                  <div key={idx} className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-[#151b26] p-3 rounded border border-white/5">
-                    <div className="flex items-center gap-3">
-                      <div className={clsx("shrink-0 flex items-center justify-center w-14 h-8 rounded font-black text-[11px] tracking-wider", 
-                        act.action === "SELL" ? "bg-rose-500/20 text-rose-400" : 
-                        act.action === "BUY" ? "bg-emerald-500/20 text-emerald-400" : 
-                        "bg-gray-500/20 text-gray-400"
-                      )}>
-                        {act.action}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-white uppercase text-xs">{act.assetId}</span>
-                          <ArrowRight size={12} className="text-muted" />
-                          <span className="text-[#b388ff] font-mono text-xs">{act.percentageToMove}% tỷ trọng</span>
-                        </div>
-                        <span className="text-muted text-[11px] leading-snug">{act.reasoning}</span>
-                      </div>
-                    </div>
-                    {/* Hiển thị số tiền USD cụ thể cần dịch chuyển */}
-                    <div className="text-right font-mono shrink-0 bg-black/40 px-3 py-1.5 rounded border border-white/5">
-                      <span className="text-[10px] text-muted block">Số tiền dịch chuyển</span>
-                      <span className={clsx("text-sm font-bold", act.action === "SELL" ? "text-emerald-400" : "text-amber-400")}>
-                        {formatUsd(act.usdAmountToMove || (portfolio.getTotalNav() * act.percentageToMove / 100), 0)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 2. TẦM NHÌN THỊ TRƯỜNG CHI TIẾT (ĐẨY XUỐNG DƯỚI) */}
-            <div className="bg-[#151b26] p-3.5 rounded-lg border border-[#2d213f]">
-              <span className="text-[10px] text-muted uppercase tracking-wider font-semibold block mb-1">Tầm nhìn & Phân tích Vĩ mô chi tiết từ AI</span>
-              <p className="text-[12px] text-ink/90 leading-relaxed italic border-l-2 border-[#b388ff] pl-3">
-                "{aiAdvice.marketView}"
-              </p>
-            </div>
-
-          </div>
-        )}
       </div>
 
-      {/* BẢNG TIN TỨC VĨ MÔ & LỰC TÁC ĐỘNG THỊ TRƯỜNG */}
+      {/* BẢNG TIN TỨC VĨ MÔ & LỊCH SỰ KIỆN */}
       <MacroNewsTable />
 
       {/* 2. DỮ LIỆU GỐC (Metric Cards) */}
@@ -287,7 +230,7 @@ export function MacroView() {
         </Panel>
       </div>
 
-      <div className="grid grid-cols-[1fr_1.1fr] gap-3">
+      <div className="grid grid-cols-[1fr_1.1fr] gap-3 pb-6">
         <Panel title="30-Day Return Correlation">
           {corr ? (
             <table className="w-full border-collapse font-mono text-[11px]">
@@ -317,6 +260,62 @@ export function MacroView() {
           </div>
         </Panel>
       </div>
+
+      {/* CHATBOT POP-UP MODAL */}
+      {isChatOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-[#0c1017] border border-[#b388ff]/50 w-full max-w-xl rounded-2xl shadow-2xl flex flex-col h-[550px] overflow-hidden">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-5 py-3.5 bg-[#121824] border-b border-[#1c2736]">
+              <div className="flex items-center gap-2.5">
+                <div className="bg-[#b388ff]/20 p-1.5 rounded-lg border border-[#b388ff]/40">
+                  <BrainCircuit size={18} className="text-[#b388ff]" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-white">Quant Risk Assistant AI</h3>
+                  <p className="text-[10px] text-[#7d8ea3]">Trực tiếp liên kết với dữ liệu Macro & Danh mục</p>
+                </div>
+              </div>
+              <button onClick={() => setIsChatOpen(false)} className="text-[#7d8ea3] hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Chat Messages Body */}
+            <div className="flex-1 p-4 overflow-y-auto space-y-3 font-mono text-xs">
+              {chatMessages.map((msg, index) => (
+                <div key={index} className={clsx("flex flex-col max-w-[85%]", msg.sender === 'user' ? "ml-auto items-end" : "mr-auto items-start")}>
+                  <div className={clsx("p-3 rounded-xl leading-relaxed", msg.sender === 'user' ? "bg-[#b388ff] text-black font-semibold rounded-br-none" : "bg-[#151b26] border border-[#2d213f] text-[#d7e2ee] rounded-bl-none")}>
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+              {isChatLoading && (
+                <div className="flex items-center gap-2 text-[#7d8ea3] text-[11px] p-2">
+                  <Loader2 size={14} className="animate-spin text-[#b388ff]" /> Đang tổng hợp dữ liệu vĩ mô...
+                </div>
+              )}
+            </div>
+
+            {/* Chat Input Footer */}
+            <form onSubmit={handleSendMessage} className="p-3 bg-[#121824] border-t border-[#1c2736] flex gap-2">
+              <input 
+                type="text" 
+                value={chatInput} 
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Nhập câu hỏi (VD: Danh mục nên phân bổ lại thế nào khi DXY tăng?)..."
+                className="flex-1 bg-[#07090d] border border-[#1c2736] text-white px-3.5 py-2.5 rounded-xl text-xs focus:outline-none focus:border-[#b388ff]"
+              />
+              <button type="submit" disabled={isChatLoading} className="bg-[#b388ff] hover:bg-[#9c66ff] text-black font-bold px-4 py-2.5 rounded-xl flex items-center justify-center transition-colors disabled:opacity-50">
+                <Send size={15} />
+              </button>
+            </form>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
