@@ -13,6 +13,12 @@ export interface AiRecommendation {
 }
 
 export async function generatePortfolioAction(): Promise<AiRecommendation> {
+  const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
+
+  if (!apiKey) {
+    throw new Error("Không tìm thấy VITE_GEMINI_API_KEY trong file .env!");
+  }
+
   const macro = useMacroStore.getState().regime;
   const portfolio = usePortfolioStore.getState();
 
@@ -52,10 +58,18 @@ export async function generatePortfolioAction(): Promise<AiRecommendation> {
     }
   `;
 
-  const response = await fetch('/api/ai-advisor', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
+  // Gọi trực tiếp Google Gemini API với khóa xác thực trên Bolt
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.2 },
+    }),
   });
 
   const rawText = await response.text();
@@ -64,12 +78,12 @@ export async function generatePortfolioAction(): Promise<AiRecommendation> {
   try {
     data = JSON.parse(rawText);
   } catch (e) {
-    throw new Error(`Phản hồi từ Server không hợp lệ: ${rawText.slice(0, 150)}`);
+    throw new Error(`Phản hồi từ Google không hợp lệ: ${rawText.slice(0, 150)}`);
   }
 
   if (!response.ok) {
-    const errorMsg = data?.error?.message || data?.error || JSON.stringify(data);
-    throw new Error(`Google API Error (${response.status}): ${errorMsg}`);
+    const errorMsg = data?.error?.message || JSON.stringify(data);
+    throw new Error(`Lỗi Google API (${response.status}): ${errorMsg}`);
   }
 
   let text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
