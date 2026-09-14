@@ -3,6 +3,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip } 
 import { ShieldAlert, HelpCircle, CheckCircle2, BrainCircuit, Loader2, ArrowRight } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
 import { MetricCard } from "@/components/ui/MetricCard";
+import { MacroNewsTable } from "@/components/MacroNewsTable";
 import { thirtyDayCorrelation } from "@/lib/correlation";
 import { clsx } from "@/lib/clsx";
 import { formatNumber, formatPct, formatUsd } from "@/lib/math";
@@ -32,9 +33,13 @@ export function MacroView() {
   const { loading, error, series, regime, correlation, refreshedAt, load } = useMacroStore();
   const portfolio = usePortfolioStore();
   
-  const [showExplanation, setShowExplanation] = useState(false);
   const [isCallingAi, setIsCallingAi] = useState(false);
   const [aiAdvice, setAiAdvice] = useState<AiRecommendation | null>(null);
+
+  // States để chỉnh sửa trực tiếp Cash & NAV ngay trên UI
+  const [isEditingNav, setIsEditingNav] = useState(false);
+  const [tempCash, setTempCash] = useState(portfolio.cashUsd.toString());
+  const [tempNav, setTempNav] = useState(portfolio.getTotalNav().toString());
 
   useEffect(() => { if (series.length === 0) void load(); }, [load, series.length]);
 
@@ -61,12 +66,17 @@ export function MacroView() {
     }
   };
 
+  const handleSaveNav = () => {
+    portfolio.setCash(Number(tempCash) || 0);
+    portfolio.setTotalNav(Number(tempNav) || 0);
+    setIsEditingNav(false);
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-3">
       
       {/* KHỐI 1: GIÁM ĐỐC RỦI RO AI */}
       <div className="shrink-0 rounded-xl border border-[#b388ff]/40 bg-gradient-to-br from-[#0d1219] to-[#1a1025] p-4 shadow-lg relative overflow-hidden">
-        {/* Họa tiết nền */}
         <div className="absolute -top-12 -right-12 w-32 h-32 bg-[#b388ff]/10 rounded-full blur-2xl"></div>
 
         <div className="flex items-center justify-between pb-3 border-b border-[#2d213f] relative z-10">
@@ -76,7 +86,7 @@ export function MacroView() {
             </div>
             <div>
               <h2 className="text-sm font-bold text-white tracking-wide uppercase">AI Risk Manager</h2>
-              <p className="text-[10px] text-muted tracking-widest mt-0.5">GEMINI 2.0 FLASH ENGINE</p>
+              <p className="text-[10px] text-muted tracking-widest mt-0.5">GEMINI FLASH ENGINE</p>
             </div>
           </div>
           <button 
@@ -92,24 +102,64 @@ export function MacroView() {
           </button>
         </div>
 
-        {/* Khung hiển thị Tình hình Ví của bạn */}
-        <div className="mt-4 flex gap-4 text-[11px] font-mono">
-          <div className="bg-black/40 px-3 py-2 rounded border border-white/5">
-            <span className="text-muted block mb-1">CASH TỒN TRỮ</span>
-            <span className="text-emerald-400 text-sm font-bold">{formatUsd(portfolio.cashUsd, 0)}</span>
+        {/* Thanh cấu hình Cash & NAV có thể chỉnh sửa trực tiếp */}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 bg-black/40 px-4 py-2.5 rounded-lg border border-white/5 font-mono text-[11px]">
+          <div className="flex items-center gap-4">
+            <div>
+              <span className="text-muted block text-[10px]">CASH TỒN TRỮ</span>
+              {isEditingNav ? (
+                <input 
+                  type="number" 
+                  value={tempCash} 
+                  onChange={(e) => setTempCash(e.target.value)}
+                  className="bg-[#07090d] border border-[#26c6da] text-emerald-400 px-2 py-0.5 rounded w-24 font-mono text-xs"
+                />
+              ) : (
+                <span className="text-emerald-400 text-sm font-bold">{formatUsd(portfolio.cashUsd, 0)}</span>
+              )}
+            </div>
+            <div className="border-l border-white/10 pl-4">
+              <span className="text-muted block text-[10px]">TỔNG TÀI SẢN (NAV)</span>
+              {isEditingNav ? (
+                <input 
+                  type="number" 
+                  value={tempNav} 
+                  onChange={(e) => setTempNav(e.target.value)}
+                  className="bg-[#07090d] border border-[#26c6da] text-white px-2 py-0.5 rounded w-28 font-mono text-xs"
+                />
+              ) : (
+                <span className="text-white text-sm font-bold">{formatUsd(portfolio.getTotalNav(), 0)}</span>
+              )}
+            </div>
           </div>
-          <div className="bg-black/40 px-3 py-2 rounded border border-white/5">
-            <span className="text-muted block mb-1">TỔNG TÀI SẢN (NAV)</span>
-            <span className="text-white text-sm font-bold">{formatUsd(portfolio.getTotalNav(), 0)}</span>
+
+          <div>
+            {isEditingNav ? (
+              <button 
+                onClick={handleSaveNav}
+                className="bg-emerald-500 text-black px-3 py-1 rounded text-xs font-bold hover:bg-emerald-400 transition-colors"
+              >
+                Lưu Vốn
+              </button>
+            ) : (
+              <button 
+                onClick={() => { setTempCash(portfolio.cashUsd.toString()); setTempNav(portfolio.getTotalNav().toString()); setIsEditingNav(true); }}
+                className="bg-[#1c2736] text-[#26c6da] px-3 py-1 rounded text-xs hover:bg-[#26c6da]/20 transition-colors"
+              >
+                Sửa Vốn / Cash
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Khung hiển thị kết quả từ AI */}
+        {/* Khung hiển thị kết quả từ AI (Đã đảo ngược: Lệnh thực thi lên trên, Nhận định chi tiết xuống dưới) */}
         {aiAdvice && (
-          <div className="mt-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
-            <div className="bg-[#151b26] p-3 rounded-t-lg border border-[#2d213f] border-b-0">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-[10px] text-muted uppercase tracking-wider font-semibold">Tầm nhìn thị trường</span>
+          <div className="mt-4 space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-500">
+            
+            {/* 1. LỆNH THỰC THI TRỰC TIẾP (ĐƯA LÊN TRÊN ĐỂ DỄ ĐỌC SỐ TIỀN) */}
+            <div className="bg-black/60 p-3.5 rounded-lg border border-[#2d213f]">
+              <div className="flex justify-between items-center mb-3">
+                <span className="text-[10px] text-muted uppercase tracking-wider font-semibold">Lệnh Thực Thi Trực Tiếp (Dựa trên NAV thực tế)</span>
                 <span className={clsx("text-[10px] font-bold px-2 py-0.5 rounded border uppercase", 
                   aiAdvice.riskStatus === "DEFENSIVE" ? "bg-amber-500/20 text-amber-400 border-amber-500/50" : 
                   aiAdvice.riskStatus === "AGGRESSIVE" ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/50" : 
@@ -118,38 +168,52 @@ export function MacroView() {
                   Khẩu vị: {aiAdvice.riskStatus}
                 </span>
               </div>
-              <p className="text-[12px] text-ink/90 leading-relaxed italic border-l-2 border-[#b388ff] pl-3">
-                "{aiAdvice.marketView}"
-              </p>
-            </div>
-            
-            <div className="bg-black/60 p-3 rounded-b-lg border border-[#2d213f]">
-              <span className="text-[10px] text-muted uppercase tracking-wider font-semibold block mb-3">Lệnh Thực Thi Trực Tiếp</span>
               <div className="space-y-2">
                 {aiAdvice.actions.map((act, idx) => (
-                  <div key={idx} className="flex flex-col md:flex-row md:items-center gap-3 bg-[#151b26] p-2.5 rounded border border-white/5">
-                    <div className={clsx("shrink-0 flex items-center justify-center w-14 h-8 rounded font-black text-[11px] tracking-wider", 
-                      act.action === "SELL" ? "bg-rose-500/20 text-rose-400" : 
-                      act.action === "BUY" ? "bg-emerald-500/20 text-emerald-400" : 
-                      "bg-gray-500/20 text-gray-400"
-                    )}>
-                      {act.action}
-                    </div>
-                    <div className="flex-1 text-[11px]">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-bold text-white uppercase">{act.assetId}</span>
-                        <ArrowRight size={12} className="text-muted" />
-                        <span className="text-[#b388ff] font-mono">{act.percentageToMove}% tỷ trọng</span>
+                  <div key={idx} className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-[#151b26] p-3 rounded border border-white/5">
+                    <div className="flex items-center gap-3">
+                      <div className={clsx("shrink-0 flex items-center justify-center w-14 h-8 rounded font-black text-[11px] tracking-wider", 
+                        act.action === "SELL" ? "bg-rose-500/20 text-rose-400" : 
+                        act.action === "BUY" ? "bg-emerald-500/20 text-emerald-400" : 
+                        "bg-gray-500/20 text-gray-400"
+                      )}>
+                        {act.action}
                       </div>
-                      <span className="text-muted leading-snug">{act.reasoning}</span>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white uppercase text-xs">{act.assetId}</span>
+                          <ArrowRight size={12} className="text-muted" />
+                          <span className="text-[#b388ff] font-mono text-xs">{act.percentageToMove}% tỷ trọng</span>
+                        </div>
+                        <span className="text-muted text-[11px] leading-snug">{act.reasoning}</span>
+                      </div>
+                    </div>
+                    {/* Hiển thị số tiền USD cụ thể cần dịch chuyển */}
+                    <div className="text-right font-mono shrink-0 bg-black/40 px-3 py-1.5 rounded border border-white/5">
+                      <span className="text-[10px] text-muted block">Số tiền dịch chuyển</span>
+                      <span className={clsx("text-sm font-bold", act.action === "SELL" ? "text-emerald-400" : "text-amber-400")}>
+                        {formatUsd(act.usdAmountToMove || (portfolio.getTotalNav() * act.percentageToMove / 100), 0)}
+                      </span>
                     </div>
                   </div>
                 ))}
               </div>
             </div>
+
+            {/* 2. TẦM NHÌN THỊ TRƯỜNG CHI TIẾT (ĐẨY XUỐNG DƯỚI) */}
+            <div className="bg-[#151b26] p-3.5 rounded-lg border border-[#2d213f]">
+              <span className="text-[10px] text-muted uppercase tracking-wider font-semibold block mb-1">Tầm nhìn & Phân tích Vĩ mô chi tiết từ AI</span>
+              <p className="text-[12px] text-ink/90 leading-relaxed italic border-l-2 border-[#b388ff] pl-3">
+                "{aiAdvice.marketView}"
+              </p>
+            </div>
+
           </div>
         )}
       </div>
+
+      {/* BẢNG TIN TỨC VĨ MÔ & LỰC TÁC ĐỘNG THỊ TRƯỜNG */}
+      <MacroNewsTable />
 
       {/* 2. DỮ LIỆU GỐC (Metric Cards) */}
       <div className="grid grid-cols-4 gap-3">
