@@ -1,36 +1,35 @@
-import { create } from "zustand";
+import { create } from 'zustand';
 
-export interface Asset {
+export interface AssetPosition {
   id: string;
   name: string;
-  allocation: number; // Tỷ trọng mục tiêu %
-  currentValue: number; // Giá trị thực tế (USD)
+  category: string;
+  currentValue: number;
+  allocationPercent: number;
 }
 
 interface PortfolioState {
   cashUsd: number;
-  assets: Asset[];
-  updateAssetValue: (id: string, value: number) => void;
-  updateCash: (amount: number) => void;
+  totalNav: number;
+  assets: AssetPosition[];
+  setCash: (cash: number) => void;
+  setTotalNav: (nav: number) => void;
   getTotalNav: () => number;
 }
 
 export const usePortfolioStore = create<PortfolioState>((set, get) => ({
-  cashUsd: 15000, // Tiền mặt ban đầu
+  cashUsd: 15000,
+  totalNav: 100000,
   assets: [
-    { id: "btc", name: "Bitcoin", allocation: 40, currentValue: 25000 },
-    { id: "gold", name: "Vàng XAU", allocation: 20, currentValue: 10000 },
-    { id: "realestate", name: "Bất động sản", allocation: 40, currentValue: 50000 },
+    { id: 'realestate', name: 'Real Estate', category: 'Real Estate', currentValue: 12800, allocationPercent: 12.8 },
+    { id: 'gold', name: 'Gold', category: 'Gold', currentValue: 28600, allocationPercent: 28.6 },
+    { id: 'usdCash', name: 'USD Cash', category: 'Cash', currentValue: 21900, allocationPercent: 21.9 },
+    { id: 'equities', name: 'Equities', category: 'Equities', currentValue: 36100, allocationPercent: 36.1 },
+    { id: 'crypto', name: 'Crypto', category: 'Crypto', allocationPercent: 8.6, currentValue: 8600 }
   ],
-  
-  updateAssetValue: (id, value) => set((state) => ({
-    assets: state.assets.map(a => a.id === id ? { ...a, currentValue: value } : a)
-  })),
-  
-  updateCash: (amount) => set({ cashUsd: amount }),
-  
+  setCash: (cash: number) => set({ cashUsd: cash }),
+  setTotalNav: (nav: number) => set({ totalNav: nav }),
   getTotalNav: () => {
-    const { cashUsd, assets } = get();
-    return cashUsd + assets.reduce((sum, a) => sum + a.currentValue, 0);
+    return get().totalNav;
   }
 }));
