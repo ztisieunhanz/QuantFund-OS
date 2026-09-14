@@ -8,64 +8,52 @@ export interface AiRecommendation {
     assetId: string;
     action: "BUY" | "SELL" | "HOLD";
     percentageToMove: number;
+    usdAmountToMove: number;
     reasoning: string;
   }[];
 }
 
 export async function generatePortfolioAction(): Promise<AiRecommendation> {
   const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
-
-  if (!apiKey) {
-    throw new Error("Không tìm thấy VITE_GEMINI_API_KEY trong file .env!");
-  }
+  if (!apiKey) throw new Error("Không tìm thấy VITE_GEMINI_API_KEY trong file .env!");
 
   const macro = useMacroStore.getState().regime;
   const portfolio = usePortfolioStore.getState();
+  const totalNav = portfolio.getTotalNav();
 
-  if (!macro) throw new Error("Chưa có dữ liệu vĩ mô (Macro data not ready).");
+  if (!macro) throw new Error("Chưa có dữ liệu vĩ mô.");
 
   const prompt = `
-    Đóng vai trò là Giám đốc Quản trị Rủi ro (Chief Risk Officer) của một quỹ Quant Fund.
-    Hãy phân tích dữ liệu Vĩ mô và Danh mục tài chính hiện tại:
-    
-    [DỮ LIỆU VĨ MÔ]
-    - Điểm rủi ro (Regime Score): ${macro.score}/100
-    - Trạng thái: ${macro.label}
-    - Bối cảnh: ${macro.thesis}
+    Đóng vai trò là Giám đốc Quản trị Rủi ro (Chief Risk Officer) của quỹ Quant Fund.
+    Tổng NAV khách hàng: $${totalNav}, Tiền mặt: $${portfolio.cashUsd}.
+    Điểm rủi ro vĩ mô: ${macro.score}/100 (${macro.label}). Bối cảnh: ${macro.thesis}.
 
-    [DANH MỤC KHÁCH HÀNG]
-    - Tiền mặt: $${portfolio.cashUsd}
-    - Tài sản: ${JSON.stringify(portfolio.assets.map(a => ({ id: a.id, name: a.name, value: a.currentValue })))}
-    - Tổng NAV: $${portfolio.getTotalNav()}
-
-    [YÊU CẦU]
-    1. Đưa ra marketView (nhận định ngắn gọn, thực chiến bằng tiếng Việt).
+    YÊU CẦU:
+    1. Đưa ra marketView nhận định thực chiến ngắn gọn bằng tiếng Việt.
     2. Xác định riskStatus (AGGRESSIVE / NEUTRAL / DEFENSIVE).
-    3. Đưa ra lệnh giao dịch cụ thể (actions). Nếu điểm rủi ro < 45, ưu tiên SELL bớt tài sản rủi ro và thu tiền mặt.
+    3. Đưa ra lệnh giao dịch cụ thể (actions). Mỗi lệnh phải tính rõ percentageToMove (tính trên % tài sản đó hoặc % NAV) và usdAmountToMove (số tiền USD thực tế dịch chuyển dựa trên tổng NAV $${totalNav}).
 
-    BẮT BUỘC TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON SAU, TUYỆT ĐỐI KHÔNG DÙNG MARKDOWN BLOCK:
+    BẮT BUỘC TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON SAU, KHÔNG DÙNG MARKDOWN BLOCK:
     {
-      "marketView": "Nhận định ngắn gọn bằng tiếng Việt...",
+      "marketView": "Nhận định thị trường thực chiến...",
       "riskStatus": "DEFENSIVE",
       "actions": [
         {
           "assetId": "btc",
           "action": "SELL",
           "percentageToMove": 25,
-          "reasoning": "Giảm bớt tỷ trọng crypto để gom tiền mặt phòng thủ."
+          "usdAmountToMove": 12500,
+          "reasoning": "Thu hồi $12,500 tiền mặt từ Bitcoin để phòng thủ rủi ro vĩ mô."
         }
       ]
     }
   `;
 
-  // Cập nhật đúng chuẩn model mới nhất: gemini-flash-latest
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
 
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: { temperature: 0.2 },
@@ -73,17 +61,10 @@ export async function generatePortfolioAction(): Promise<AiRecommendation> {
   });
 
   const rawText = await response.text();
-  let data: any;
-
-  try {
-    data = JSON.parse(rawText);
-  } catch (e) {
-    throw new Error(`Phản hồi từ Google không hợp lệ: ${rawText.slice(0, 150)}`);
-  }
+  let data = JSON.parse(rawText);
 
   if (!response.ok) {
-    const errorMsg = data?.error?.message || JSON.stringify(data);
-    throw new Error(`Lỗi Google API (${response.status}): ${errorMsg}`);
+    throw new Error(data?.error?.message || "Lỗi gọi Google API");
   }
 
   let text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
