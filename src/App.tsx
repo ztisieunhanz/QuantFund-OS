@@ -5,7 +5,6 @@ import { useUiStore } from "@/stores/uiStore";
 import { ChartView } from "@/views/ChartView";
 import { MacroView } from "@/views/MacroView";
 import { TradingLabView } from "@/views/TradingLabView";
-import { GlobalChatbot } from "@/components/GlobalChatbot";
 
 export default function App() {
   const view = useUiStore((s) => s.view);
@@ -23,9 +22,6 @@ export default function App() {
           <div className="scanlines absolute inset-0 pointer-events-none" />
         </main>
       </div>
-      
-      {/* Tích hợp Trợ lý AI lơ lửng toàn cục */}
-      <GlobalChatbot />
     </div>
   );
 }
