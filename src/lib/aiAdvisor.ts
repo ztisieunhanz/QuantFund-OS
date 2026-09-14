@@ -58,8 +58,8 @@ export async function generatePortfolioAction(): Promise<AiRecommendation> {
     }
   `;
 
-  // Gọi trực tiếp Google Gemini API với khóa xác thực trên Bolt
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  // Cập nhật đúng chuẩn model mới nhất: gemini-flash-latest
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
 
   const response = await fetch(endpoint, {
     method: "POST",
