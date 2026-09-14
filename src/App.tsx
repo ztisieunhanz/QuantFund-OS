@@ -5,12 +5,13 @@ import { useUiStore } from "@/stores/uiStore";
 import { ChartView } from "@/views/ChartView";
 import { MacroView } from "@/views/MacroView";
 import { TradingLabView } from "@/views/TradingLabView";
+import { GlobalChatbot } from "@/components/GlobalChatbot";
 
 export default function App() {
   const view = useUiStore((s) => s.view);
 
   return (
-    <div className="flex h-full bg-terminal text-ink">
+    <div className="flex h-full bg-terminal text-ink relative">
       <FeedSync />
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
@@ -19,9 +20,12 @@ export default function App() {
           {view === "macro" ? <MacroView /> : null}
           {view === "charts" ? <ChartView /> : null}
           {view === "lab" ? <TradingLabView /> : null}
-          <div className="scanlines absolute inset-0" />
+          <div className="scanlines absolute inset-0 pointer-events-none" />
         </main>
       </div>
+      
+      {/* Tích hợp Trợ lý AI lơ lửng toàn cục */}
+      <GlobalChatbot />
     </div>
   );
 }
