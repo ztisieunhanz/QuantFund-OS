@@ -1,21 +1,26 @@
+// ============================================================================
+// FILE: src/lib/binance.ts
+// MODULE: REAL-TIME BTC KLINES FETCHER WITH MULTI-PROXY FALLBACK
+// ============================================================================
+
 import type { OhlcvBar } from "@/types/market";
 import { mulberry32 } from "@/lib/math";
 
 export type BinanceInterval = "15m" | "1h" | "4h" | "1d";
 
 type KlineTuple = [
-  number,
+  number, // Open time
+  string, // Open
+  string, // High
+  string, // Low
+  string, // Close
+  string, // Volume
+  number, // Close time
+  string, // Quote asset volume
+  number, // Number of trades
   string,
   string,
-  string,
-  string,
-  string,
-  number,
-  string,
-  number,
-  string,
-  string,
-  string,
+  string
 ];
 
 function parseKlines(raw: KlineTuple[]): OhlcvBar[] {
@@ -33,17 +38,28 @@ export async function fetchBtcKlines(
   interval: BinanceInterval = "1h",
   limit = 500,
 ): Promise<{ bars: OhlcvBar[]; source: "live" | "synthetic" }> {
-  try {
-    const url = `/api/binance/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`binance ${res.status}`);
-    const json = (await res.json()) as KlineTuple[];
-    const bars = parseKlines(json);
-    if (bars.length < 60) throw new Error("insufficient bars");
-    return { bars, source: "live" };
-  } catch {
-    return { bars: syntheticBtc(interval, limit), source: "synthetic" };
+  // Danh sách các cổng tải nến: Ưu tiên Proxy Vite nội bộ -> Mirror chính thức không chặn CORS
+  const endpoints = [
+    `/api/binance/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`,
+    `https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`,
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const json = (await res.json()) as KlineTuple[];
+      if (!Array.isArray(json) || json.length < 60) continue;
+      
+      const bars = parseKlines(json);
+      return { bars, source: "live" };
+    } catch {
+      // Thử endpoint tiếp theo
+    }
   }
+
+  // Nếu toàn bộ mạng Binance bị cắt, fallback tạo nến neo theo mốc giá thực tế năm 2026 (~77,000 USD)
+  return { bars: syntheticBtc(interval, limit, 77000), source: "synthetic" };
 }
 
 function intervalMs(interval: BinanceInterval): number {
@@ -59,22 +75,23 @@ function intervalMs(interval: BinanceInterval): number {
   }
 }
 
-function syntheticBtc(interval: BinanceInterval, limit: number): OhlcvBar[] {
+function syntheticBtc(interval: BinanceInterval, limit: number, basePrice = 77000): OhlcvBar[] {
   const rand = mulberry32(777 + interval.length * 13);
   const step = intervalMs(interval);
-  let close = 64150;
+  let close = basePrice;
   const now = Date.now();
   const bars: OhlcvBar[] = [];
+
   for (let i = limit; i >= 1; i -= 1) {
     const t = Math.floor((now - i * step) / 1000);
-    const drift = 0.00015;
-    const shock = (rand() - 0.5) * 0.016;
+    const drift = 0.0001;
+    const shock = (rand() - 0.495) * 0.015;
     const open = close;
     close = Math.max(1000, open * (1 + drift + shock));
-    const wick = Math.abs(shock) * open * 0.55;
+    const wick = Math.abs(shock) * open * 0.5;
     const high = Math.max(open, close) + wick * rand();
     const low = Math.min(open, close) - wick * rand();
-    const volume = 120 + rand() * 1800;
+    const volume = 200 + rand() * 1500;
     bars.push({ time: t, open, high, low, close, volume });
   }
   return bars;
