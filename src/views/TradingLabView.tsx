@@ -1,6 +1,6 @@
 // ============================================================================
 // FILE: src/views/TradingLabView.tsx
-// MODULE: QUANT LAB VIEW WITH HYSTERESIS CIRCUIT BREAKER & BENCHMARK AUDIT
+// MODULE: QUANT LAB VIEW (SYNCHRONIZED WITH REAL BINANCE CANDLES)
 // ============================================================================
 
 import { useEffect, useMemo, useState, useCallback } from "react";
@@ -20,11 +20,10 @@ import {
   Cpu,
   Layers,
   RotateCcw,
-  CheckCircle2,
 } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
 import { clsx } from "@/lib/clsx";
-import { FEE_BPS, SLIPPAGE_BPS, STARTING_EQUITY } from "@/lib/paperEngine";
+import { FEE_BPS, STARTING_EQUITY } from "@/lib/paperEngine";
 import { formatNumber, formatPct, formatUsd } from "@/lib/math";
 import { useMarketStore } from "@/stores/marketStore";
 import { useTradingStore } from "@/stores/tradingStore";
@@ -35,6 +34,7 @@ export function TradingLabView() {
   const bars = useMarketStore((s) => s.bars);
   const loadMarket = useMarketStore((s) => s.load);
   const lastPrice = useMarketStore((s) => s.lastPrice);
+  const source = useMarketStore((s) => s.source);
 
   const trend = useTradingStore((s) => s.trend);
   const event = useTradingStore((s) => s.event);
@@ -66,7 +66,7 @@ export function TradingLabView() {
     setTimeout(() => {
       runOnBars(bars);
       setReplaying(false);
-    }, 150);
+    }, 120);
   }, [replaying, bars, resetTrading, runOnBars]);
 
   const combinedEquitySeries = useMemo(() => {
@@ -113,13 +113,12 @@ export function TradingLabView() {
     return sorted.filter((_, idx, arr) => idx % stepSize === 0 || idx === arr.length - 1);
   }, [trend.equityCurve, mean.equityCurve, event.equityCurve, omega.equityCurve, benchmarkDca.equityCurve]);
 
-  // Giải mã trạng thái Circuit Breaker chi tiết
   const cbStatus = latestDecision?.risk.circuitBreakerStatus ?? "NORMAL";
-  const cbReason = latestDecision?.risk.circuitBreakerReason ?? "System exposure normal";
+  const cbReason = latestDecision?.risk.circuitBreakerReason ?? "System exposure within thresholds";
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-3 bg-[#07090d]">
-      {/* 1. THANH TRẠNG THÁI HỆ THỐNG */}
+      {/* 1. THANH TELEMETRY HUD CHUẨN ĐỒNG BỘ */}
       <div className="flex flex-wrap items-center justify-between border border-line bg-panel px-3 py-2 font-mono text-[11px] rounded-sm gap-2">
         <div className="flex flex-wrap items-center gap-4 sm:gap-6">
           <span className="text-muted">
@@ -129,16 +128,29 @@ export function TradingLabView() {
             WARMUP <span className="text-white font-bold">125 BARS</span>
           </span>
           <span className="text-muted">
-            COMMISSION <span className="text-amber">{(FEE_BPS * 100).toFixed(2)}%</span>
+            FEE <span className="text-amber">{(FEE_BPS * 100).toFixed(2)}%</span>
           </span>
           <span className="text-muted">
-            MARK (BTC) <span className="text-up font-bold">{formatNumber(lastPrice, 2)}</span>
+            MARK (BTC){" "}
+            <span className="text-up font-bold">
+              {lastPrice > 0 ? formatNumber(lastPrice, 2) : "SYNCING..."}
+            </span>
+          </span>
+          <span
+            className={clsx(
+              "px-1.5 py-0.2 rounded text-[9px] font-bold border uppercase",
+              source === "live"
+                ? "bg-up/15 text-up border-up/30"
+                : "bg-amber/15 text-amber border-amber/30"
+            )}
+          >
+            {source === "live" ? "FEED: LIVE BINANCE" : "FEED: SYNTHETIC"}
           </span>
         </div>
 
         <div className="flex items-center gap-3">
           <span className="text-muted">
-            SYNC {lastRunAt ? new Date(lastRunAt).toISOString().slice(11, 19) : "—"}
+            SYNC: {lastRunAt ? new Date(lastRunAt).toISOString().slice(11, 19) : "—"} UTC
           </span>
           <button
             type="button"
@@ -173,7 +185,7 @@ export function TradingLabView() {
           <div className="text-base font-mono font-bold text-ink mt-1">
             {latestDecision
               ? `${(latestDecision.risk.targetVolatility * 100).toFixed(1)}% / ${(latestDecision.risk.realizedVol * 100).toFixed(1)}%`
-              : "12.0% / 20.0%"}
+              : "12.0% / 18.5%"}
           </div>
           <div className="text-[10px] text-muted font-mono">
             Target Vol / Realized (VolFloor: 5.0%)
@@ -223,18 +235,18 @@ export function TradingLabView() {
         <div className="flex items-center gap-2 rounded border border-amber/50 bg-amber/10 p-2.5 text-[11px] font-medium text-amber shadow-sm">
           <AlertTriangle size={16} />
           <span>
-            <strong>MACRO PERMISSION NOTICE:</strong> Chế độ vĩ mô Risk-Off (Score: {regime?.score.toFixed(1)}/100).
-            Permission Gate đang điều tiết quyền mở vị thế theo ma trận tương thích chiến lược.
+            <strong>MACRO PERMISSION NOTICE:</strong> Môi trường Risk-Off (Regime Score: {regime?.score.toFixed(1)}/100).
+            Hệ thống đang kích hoạt Permission Gate thắt chặt phơi nhiễm gộp của các vị thế Momentum.
           </span>
         </div>
       )}
 
-      {/* 3. 3 BOT ALPHA ĐỘC LẬP & 1 BENCHMARK ĐỐI CHỨNG */}
+      {/* 3. 3 ALPHA ENGINE & 1 CONTROL BENCHMARK */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 w-full">
         <BotCard bot={trend} rule="Alpha 1: Multi-Horizon Momentum · Persistence & Chandelier Stop" />
         <BotCard bot={event} rule="Alpha 2: Economic Catalyst · Surprise Reaction & Exponential Decay" />
         <BotCard bot={mean} rule="Alpha 3: Short Mean Reversion · Deviation Z-Score & Trend Filter" />
-        <BotCard bot={benchmarkDca} rule="Control: Passive DCA 5% Cash every 7 bars (Non-Alpha Benchmark)" isBenchmark />
+        <BotCard bot={benchmarkDca} rule="Control: Passive Accumulate 5% Cash every 7 bars (Non-Alpha Benchmark)" isBenchmark />
       </div>
 
       {/* 4. ĐƯỜNG CONG VỐN ĐỐI CHUẨN (EQUITY CURVES) */}
