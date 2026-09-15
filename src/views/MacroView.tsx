@@ -1,3 +1,8 @@
+// ============================================================================
+// FILE: src/views/MacroView.tsx
+// MODULE: CLEAN QUANT MACRO VIEW WITHOUT TICKER FACADE
+// ============================================================================
+
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
 import { Loader2, Send, MessageSquareText, TrendingUp, Activity, ShieldAlert } from "lucide-react";
@@ -6,7 +11,7 @@ import { MetricCard } from "@/components/ui/MetricCard";
 import { MacroNewsTable } from "@/components/MacroNewsTable";
 import { thirtyDayCorrelation } from "@/lib/correlation";
 import { clsx } from "@/lib/clsx";
-import { formatNumber, formatPct, formatUsd } from "@/lib/math";
+import { formatNumber, formatPct } from "@/lib/math";
 import { useMacroStore } from "@/stores/macroStore";
 import { usePortfolioStore } from "@/stores/portfolioStore";
 import { useTradingStore } from "@/stores/tradingStore";
@@ -589,7 +594,7 @@ export function MacroView() {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager (2026)** đã kết nối 6 kênh dữ liệu (Coverage 100%).\n\n- Đã nạp MA200 dài hạn & hiệu suất 3 Trading Bots\n- Đã đồng bộ giá thị trường thực tế\n\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager (2026)** đã kết nối dữ liệu định lượng.\n\n- Đã nạp MA200 dài hạn & hiệu suất 3 Trading Bots\n- Đã đồng bộ giá thị trường thực tế\n\nBạn cần phân tích chiến lược nào?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -795,14 +800,12 @@ ${JSON.stringify(marketSnapshot, null, 2)}
         bodyPayload.generationConfig = generationConfig;
       }
 
-      // 1. Thử gửi qua proxy nội bộ
       let response = await fetch("/api/ai-advisor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(bodyPayload)
       });
 
-      // 2. Fallback gọi trực tiếp Google nếu proxy 404 (chuẩn model gemini-flash-latest)
       if (!response.ok && response.status === 404) {
         response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
           method: "POST",
@@ -840,40 +843,8 @@ ${JSON.stringify(marketSnapshot, null, 2)}
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-3 custom-scrollbar relative bg-[#07090d]">
-      {/* 0. DẢI TIN TỨC CHẠY NGANG ĐỒNG BỘ DỮ LIỆU LIVE */}
-      <style dangerouslySetInnerHTML={{__html: `
-        @keyframes ticker { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
-        .animate-ticker { display: inline-block; white-space: nowrap; animation: ticker 40s linear infinite; will-change: transform; }
-        .ticker-container:hover .animate-ticker { animation-play-state: paused; cursor: default; }
-      `}} />
-      <div className="ticker-container flex items-center bg-panel border border-line p-1.5 overflow-hidden shrink-0 rounded-sm">
-        <div className="font-mono text-[11px] font-bold tracking-[0.15em] text-[#07090d] bg-[#00e676] px-2 py-0.5 rounded-sm mr-3 shrink-0 flex items-center gap-1.5 z-10 relative">
-          <span className="w-1.5 h-1.5 bg-[#07090d] rounded-full animate-ping"></span>
-          LIVE QUANT STREAM
-        </div>
-        <div className="flex-1 overflow-hidden relative h-5 flex items-center">
-          <div className="animate-ticker font-mono text-[12px] text-[#d7e2ee] flex gap-12 absolute">
-            <span className={clsx((macroAdvanced.yieldCurve?.spreadBps ?? 0) < 0 ? "text-down" : "text-up")}>
-              📊 YIELD CURVE: {macroAdvanced.yieldCurve ? `${macroAdvanced.yieldCurve.spreadBps} bps (${macroAdvanced.yieldCurve.status})` : "Đang tính toán..."}
-            </span>
-            <span className={clsx((macroAdvanced.vixData?.current ?? 0) >= 20 ? "text-down" : "text-up")}>
-              ⚡ CBOE VIX: {macroAdvanced.vixData ? `${macroAdvanced.vixData.current.toFixed(2)} (${macroAdvanced.vixData.status})` : "Syncing..."}
-            </span>
-            <span className="text-cyan">
-              🇻🇳 VN-INDEX: {vietnamState ? `${vietnamState.index.price.toLocaleString()} điểm (A/D: ${vietnamState.breadth.adRatio})` : "Loading VN..."}
-            </span>
-            <span className={clsx((vietnamState?.foreignFlow?.net1dBillion ?? 0) >= 0 ? "text-up" : "text-down")}>
-              💰 KHỐI NGOẠI: {vietnamState?.foreignFlow ? `${vietnamState.foreignFlow.net1dBillion > 0 ? "+" : ""}${vietnamState.foreignFlow.net1dBillion}B VNĐ` : "Syncing..."}
-            </span>
-            <span className="text-amber">
-              💧 THANH KHOẢN VN: {vietnamState?.liquidity ? `${vietnamState.liquidity.ratioToMa20}x MA20 (${vietnamState.liquidity.status})` : "Syncing..."}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* 1. TICKERS GỐC (6 TICKERS: DXY, US10Y, US2Y, VIX, GOLD, BTC) */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 shrink-0 mt-1">
+      {/* 1. TICKERS GỐC (DXY, US10Y, US2Y, VIX, GOLD, BTC) */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 shrink-0">
         {series.map((s) => (
           <MetricCard 
             key={s.id} 
@@ -888,7 +859,7 @@ ${JSON.stringify(marketSnapshot, null, 2)}
       </div>
 
       {/* 2. DỮ LIỆU VIỆT NAM VÀ SIGNAL CONFLUENCE */}
-      <div className="border border-[#1c2736] bg-[#10151e] flex flex-col shrink-0 shadow-sm">
+      <div className="border border-[#1c2736] bg-[#10151e] flex flex-col shrink-0 shadow-sm rounded-sm">
         <div className="px-4 py-2 border-b border-[#1c2736] flex justify-between items-center bg-[#0c1017]">
           <span className="font-mono text-[10px] font-bold tracking-[0.2em] text-[#26c6da]">FEATURE ENGINE · VIETNAM MARKET & CONFLUENCE</span>
           <div className="flex items-center gap-2">
@@ -958,7 +929,7 @@ ${JSON.stringify(marketSnapshot, null, 2)}
         </div>
       </div>
 
-      {/* 3. BẢNG TIN TỨC VĨ MÔ THỜI GIAN THỰC */}
+      {/* 3. BẢNG KIỂM TOÁN TÍN HIỆU & RỦI RO ĐỊNH LƯỢNG */}
       <MacroNewsTable />
 
       {/* 4. DỮ LIỆU VĨ MÔ GỐC, YIELD CURVE & VIX ENGINE */}
