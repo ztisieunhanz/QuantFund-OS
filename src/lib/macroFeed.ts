@@ -19,9 +19,10 @@ interface YahooChartResponse {
   };
 }
 
+// 1. KÉO NẾN BTC (250 PHIÊN ĐỂ TÍNH ĐỦ MA200)
 async function fetchBinanceBtc(): Promise<MacroSeries | null> {
   try {
-    const url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=120";
+    const url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250";
     const res = await fetch(url);
     if (!res.ok) return null;
     const data = await res.json();
@@ -38,9 +39,10 @@ async function fetchBinanceBtc(): Promise<MacroSeries | null> {
   }
 }
 
+// 2. KÉO NẾN VÀNG PAXG (250 PHIÊN ĐỂ TÍNH ĐỦ MA200)
 async function fetchBinanceGold(): Promise<MacroSeries | null> {
   try {
-    const url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=120";
+    const url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=250";
     const res = await fetch(url);
     if (!res.ok) return null;
     const data = await res.json();
@@ -57,12 +59,13 @@ async function fetchBinanceGold(): Promise<MacroSeries | null> {
   }
 }
 
+// 3. KÉO YAHOO SERIES VỚI RANGE 2 NĂM
 async function fetchYahooViaProxy(id: MacroSeries["id"]): Promise<MacroSeries | null> {
   const meta = YAHOO[id];
-  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=6mo`;
+  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=2y`;
 
   const proxies = [
-    `/api/yahoo/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=6mo`,
+    `/api/yahoo/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=2y`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
   ];
 
@@ -86,7 +89,7 @@ async function fetchYahooViaProxy(id: MacroSeries["id"]): Promise<MacroSeries | 
         return toMacroSeries(id, meta.ticker, meta.name, points, "live");
       }
     } catch (e) {
-      // Thử proxy tiếp theo
+      // Tiếp tục fallback
     }
   }
 
@@ -116,17 +119,18 @@ function toMacroSeries(
   };
 }
 
+// 4. MÔ PHỎNG DỰ PHÒNG CẤP ĐỦ 250 PHIÊN ĐỂ TÍNH ĐƯỢC MA200
 function syntheticSeries(id: MacroSeries["id"]): MacroSeries {
   const meta = YAHOO[id];
   const seedMap = { dxy: 11, us10y: 22, us2y: 25, vix: 28, gold: 33, btc: 44 };
   const rand = mulberry32(seedMap[id] + 20260914);
   const start: Record<MacroSeries["id"], number> = {
-    dxy: 104.2,
-    us10y: 4.18,
-    us2y: 4.45,
-    vix: 16.5,
-    gold: 2485,
-    btc: 63800,
+    dxy: 99.6,
+    us10y: 4.58,
+    us2y: 4.86,
+    vix: 20.8,
+    gold: 4277,
+    btc: 76800,
   };
   const vol: Record<MacroSeries["id"], number> = {
     dxy: 0.0024,
@@ -137,19 +141,19 @@ function syntheticSeries(id: MacroSeries["id"]): MacroSeries {
     btc: 0.028,
   };
   const drift: Record<MacroSeries["id"], number> = {
-    dxy: 0.00018,
-    us10y: 0.0004,
-    us2y: 0.00035,
+    dxy: 0.0001,
+    us10y: 0.0002,
+    us2y: 0.0002,
     vix: -0.0001,
-    gold: -0.00005,
-    btc: -0.0004,
+    gold: 0.0002,
+    btc: 0.0003,
   };
 
   const points: TimeSeriesPoint[] = [];
   let px = start[id];
   const now = Date.now();
   const day = 86_400_000;
-  for (let i = 120; i >= 0; i -= 1) {
+  for (let i = 250; i >= 0; i -= 1) {
     const shock = (rand() - 0.48) * vol[id];
     px = Math.max(px * (1 + drift[id] + shock), id === "us10y" || id === "us2y" ? 0.5 : 1);
     points.push({ time: now - i * day, value: px });
