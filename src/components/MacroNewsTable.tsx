@@ -2,20 +2,24 @@ import React from 'react';
 import { ArrowUpRight, ArrowDownRight, Minus } from 'lucide-react';
 import { clsx } from "@/lib/clsx";
 
-interface NewsItem {
+export type SourceStatus = 'VERIFIED' | 'UNVERIFIED' | 'MOCK';
+
+export interface NewsItem {
   id: string;
-  time: string;
+  timestamp: string;
   event: string;
   impact: 'HIGH' | 'MEDIUM' | 'LOW';
   direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   description: string;
+  sourceStatus: SourceStatus;
+  source: string;
 }
 
-// MOCK DATA: Toàn bộ mảng mockNews này đang là hard-code
-const mockNews: NewsItem[] = [
-  { id: '1', time: '2026-09-15 01:00 UTC', event: 'Tin đồn: FED cân nhắc cắt giảm 50bps', impact: 'HIGH', direction: 'BULLISH', description: 'Kỳ vọng FED mạnh tay nới lỏng gia tăng, hỗ trợ đà tăng cho Vàng (XAU) và Tiền số (BTC).' },
-  { id: '2', time: '2026-09-14 12:30 UTC', event: 'Căng thẳng Địa chính trị Trung Đông', impact: 'HIGH', direction: 'BEARISH', description: 'Rủi ro gián đoạn chuỗi cung ứng dầu mỏ, đẩy nguy cơ lạm phát quay lại (Stagflation).' },
-  { id: '3', time: '2026-09-13 14:00 UTC', event: 'NHNN Việt Nam hút ròng tín phiếu', impact: 'MEDIUM', direction: 'NEUTRAL', description: 'Động thái ổn định tỷ giá USD/VND, thanh khoản hệ thống ngắn hạn chịu áp lực nhẹ.' }
+// BƯỚC 8: Thêm cờ phân loại data cho Event Risk
+export const mockNews: NewsItem[] = [
+  { id: '1', timestamp: '2026-09-15 01:00 UTC', event: 'Tin đồn: FED cân nhắc cắt giảm 50bps', impact: 'HIGH', direction: 'BULLISH', description: 'Kỳ vọng FED mạnh tay nới lỏng gia tăng, hỗ trợ đà tăng cho Vàng (XAU) và Tiền số (BTC).', sourceStatus: 'UNVERIFIED', source: 'Market Rumors' },
+  { id: '2', timestamp: '2026-09-14 12:30 UTC', event: 'Căng thẳng Địa chính trị Trung Đông', impact: 'HIGH', direction: 'BEARISH', description: 'Rủi ro gián đoạn chuỗi cung ứng dầu mỏ, đẩy nguy cơ lạm phát quay lại (Stagflation).', sourceStatus: 'UNVERIFIED', source: 'News Outlet' },
+  { id: '3', timestamp: '2026-09-13 14:00 UTC', event: 'NHNN Việt Nam hút ròng tín phiếu', impact: 'MEDIUM', direction: 'NEUTRAL', description: 'Động thái ổn định tỷ giá USD/VND, thanh khoản hệ thống ngắn hạn chịu áp lực nhẹ.', sourceStatus: 'MOCK', source: 'System Mock' }
 ];
 
 export const MacroNewsTable: React.FC = () => {
@@ -39,16 +43,28 @@ export const MacroNewsTable: React.FC = () => {
           <tbody className="divide-y divide-line">
             {mockNews.map((item) => (
               <tr key={item.id} className="hover:bg-panel-2 transition-colors">
-                <td className="py-3.5 px-3 text-muted whitespace-nowrap">{item.time}</td>
-                <td className="py-3.5 px-3 text-ink font-bold">{item.event}</td>
-                <td className="py-3.5 px-3 text-center">
+                <td className="py-3.5 px-3 text-muted whitespace-nowrap">{item.timestamp}</td>
+                <td className="py-3.5 px-3">
+                  <div className="text-ink font-bold">{item.event}</div>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <span className={clsx("text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase", 
+                      item.sourceStatus === 'VERIFIED' ? "bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30" : 
+                      item.sourceStatus === 'UNVERIFIED' ? "bg-amber/10 text-amber border-amber/30" : 
+                      "bg-[#ff3d57]/10 text-[#ff3d57] border-[#ff3d57]/30"
+                    )}>
+                      {item.sourceStatus}
+                    </span>
+                    <span className="text-[9px] text-muted">{item.source}</span>
+                  </div>
+                </td>
+                <td className="py-3.5 px-3 text-center align-top pt-4">
                   <span className={clsx("px-2 py-1 rounded text-[10px] font-bold tracking-wider", 
                     item.impact === 'HIGH' ? "bg-[#ff3d57]/20 text-down border border-[#ff3d57]/30" : "bg-[#ffc107]/20 text-amber border border-[#ffc107]/30"
                   )}>
                     {item.impact}
                   </span>
                 </td>
-                <td className="py-3.5 px-3">
+                <td className="py-3.5 px-3 align-top pt-4">
                   <div className="flex items-center justify-center gap-1.5 text-[11px] font-bold">
                     {item.direction === 'BULLISH' && <ArrowUpRight className="w-3.5 h-3.5 text-up" />}
                     {item.direction === 'BEARISH' && <ArrowDownRight className="w-3.5 h-3.5 text-down" />}
@@ -60,7 +76,7 @@ export const MacroNewsTable: React.FC = () => {
                     </span>
                   </div>
                 </td>
-                <td className="py-3.5 px-3 text-muted leading-relaxed whitespace-normal">{item.description}</td>
+                <td className="py-3.5 px-3 text-muted leading-relaxed whitespace-normal align-top pt-4">{item.description}</td>
               </tr>
             ))}
           </tbody>
