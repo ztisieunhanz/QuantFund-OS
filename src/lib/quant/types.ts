@@ -13,9 +13,17 @@ export type StrategyId =
   | "EVENT_REACTION" 
   | "MEAN_REVERSION";
 
+// Tách biệt hoàn toàn Benchmark kiểm chứng khỏi danh sách Alpha Engine
+export type BenchmarkId = "BUY_AND_HOLD" | "DCA_SCHEDULE";
+
 export type AssetId = string;
 
-export type Side = "BUY" | "SELL" | "HOLD";
+export type OrderSide = "BUY" | "SELL";
+
+// Hệ thống vị thế hai chiều hỗ trợ Long / Short / Flat
+export type PositionSide = "LONG" | "SHORT" | "FLAT";
+
+export type PositionStatus = "OPEN" | "CLOSED" | "PENDING";
 
 export type OrderType = "MARKET" | "LIMIT";
 
@@ -55,14 +63,15 @@ export interface PointInTimeBar {
 export interface PointInTimeEvent {
   readonly eventId: string;
   readonly eventType: string;
-  readonly eventTimestamp: number;       // Thời điểm sự kiện diễn ra thực tế
-  readonly publicationTimestamp: number; // Thời điểm số liệu được công bố rộng rãi
+  readonly eventTimestamp: number;            // Thời điểm sự kiện thực tế diễn ra
+  readonly publicationTimestamp: number;      // Thời điểm số liệu công bố ra thị trường
+  readonly consensusSnapshotTimestamp: number;// Mốc chốt số liệu dự báo trước giờ ra tin (ngăn Look-Ahead)
   readonly actual: number | null;
   readonly consensus: number | null;
   readonly previous: number | null;
-  readonly surprise: number | null;      // actual - consensus
+  readonly surprise: number | null;           // actual - consensus
   readonly sourceQuality: "TIER_1_OFFICIAL" | "TIER_2_BROKER" | "UNVERIFIED";
-  readonly noveltyScore: number | null;  // Normalized 0.0 .. 1.0
+  readonly noveltyScore: number | null;       // [0.0 .. 1.0]
 }
 
 export interface PointInTimeMacro {
@@ -71,19 +80,15 @@ export interface PointInTimeMacro {
   readonly regimeScore: number | null;
   readonly yield10Y: number | null;
   readonly yield2Y: number | null;
-  readonly yieldSpreadBps: number | null; // 10Y - 2Y (bps)
+  readonly yieldSpreadBps: number | null;
   readonly vixLevel: number | null;
   readonly vixZScore: number | null;
   readonly marketBreadthRatio: number | null;
   readonly marketBreadthPctAboveMa20: number | null;
-  readonly marketLiquidityRatio: number | null; // Khớp lệnh / MA20 thanh khoản
+  readonly marketLiquidityRatio: number | null;
   readonly foreignNetFlowBillion: number | null;
 }
 
-/**
- * StrategyContext: Dữ liệu duy nhất Alpha Engine được phép đọc tại bar T.
- * Toàn bộ mảng dữ liệu là point-in-time, bất biến, tuyệt đối không chứa dữ liệu T+1.
- */
 export interface StrategyContext {
   readonly strategyId: StrategyId;
   readonly assetId: AssetId;
@@ -99,26 +104,23 @@ export interface StrategyContext {
 // 2. SIGNAL OUTPUT (ALPHA ENGINE LAYER)
 // ----------------------------------------------------------------------------
 
-/**
- * SignalOutput: Đầu ra tinh khiết của Alpha Engine.
- * Không chứa position size, không chứa lệnh, không chứa portfolio weights.
- */
 export interface SignalOutput {
   readonly strategyId: StrategyId;
   readonly assetId: AssetId;
   readonly timestamp: number;
-  readonly alphaScore: number;          // [-1.0 .. +1.0] Chiều hướng & cường độ toán học
-  readonly expectedReturn: number;      // Tỷ suất sinh lời kỳ vọng (annualized hoặc theo holding period)
-  readonly confidence: number;          // [0.0 .. 1.0] Độ tin cậy thống kê của signal
-  readonly forecastVol: number;         // Biến động năm hóa dự báo của Alpha
-  readonly holdingPeriod: number;       // Thời gian nắm giữ kỳ vọng (số phiên)
-  readonly decayRate?: number | null;   // Tỷ lệ suy giảm tín hiệu mỗi bar (đặc biệt cho Event)
-  readonly validUntil?: number | null;  // Thời điểm tín hiệu hết hạn nếu không kích hoạt
-  readonly metadata?: Readonly<Record<string, number | string | boolean>> | null;
+  readonly alphaScore: number;                 // [-1.0 .. +1.0]
+  readonly heuristicExpectedReturn: number;    // Heuristic Forecast (Linear mapping: Alpha * Vol * Scaling)
+  readonly confidence: number;                 // [0.0 .. 1.0]
+  readonly forecastVol: number;                // Biến động năm hóa dự báo của riêng Alpha
+  readonly holdingPeriod: number;              // Số phiên kỳ vọng
+  readonly decayRate?: number | null;          // Tỷ lệ suy giảm tín hiệu
+  readonly validUntil?: number | null;
+  readonly rationale: string;
+  readonly metadata?: Readonly<Record<string, number | string | boolean | null>> | null;
 }
 
 // ----------------------------------------------------------------------------
-// 3. STRATEGY STATE & CONFIGURATION
+// 3. STRATEGY STATE
 // ----------------------------------------------------------------------------
 
 export interface StrategyState {
@@ -128,19 +130,13 @@ export interface StrategyState {
   readonly internalValues: Readonly<Record<string, number | string | boolean | null>>;
 }
 
-export interface StrategyConfig {
-  readonly strategyId: StrategyId;
-  readonly enabled: boolean;
-  readonly parameters: Readonly<Record<string, number | string | boolean>>;
-}
-
 // ----------------------------------------------------------------------------
-// 4. PERMISSION GATE (MACRO/LIQUIDITY FILTER LAYER)
+// 4. PERMISSION GATE
 // ----------------------------------------------------------------------------
 
 export interface PermissionOutput {
   readonly strategyId: StrategyId;
-  readonly permission: number; // [0.0 .. 1.0] Hệ số điều tiết quyền hoạt động
+  readonly permission: number; // [0.0 .. 1.0]
   readonly isPermitted: boolean;
   readonly reason: string;
   readonly regime: MacroRegime;
@@ -148,20 +144,16 @@ export interface PermissionOutput {
 }
 
 // ----------------------------------------------------------------------------
-// 5. RISK ENGINE OUTPUT (PORTFOLIO RISK LAYER)
+// 5. RISK ENGINE OUTPUT
 // ----------------------------------------------------------------------------
 
-/**
- * RiskOutput: Quản trị biến động và drawdown.
- * Phân biệt rạch ròi giữa realizedVol, forecastVol và targetVolatility.
- */
 export interface RiskOutput {
   readonly scope: StrategyId | "PORTFOLIO_AGGREGATE";
-  readonly targetExposure: number;         // Exposure được phép tối đa theo Risk Engine
-  readonly grossExposure: number;          // Đòn bẩy gộp hiện hữu
-  readonly targetVolatility: number;       // Volatility mục tiêu (ví dụ 12% = 0.12)
-  readonly realizedVol: number;            // Volatility thực tế đo lường trong quá khứ
-  readonly forecastVol: number;            // Volatility dự báo toàn danh mục
+  readonly targetExposure: number;          // Hạn mức phơi nhiễm gộp tối đa
+  readonly grossExposure: number;           // Đòn bẩy gộp hiện tại
+  readonly targetVolatility: number;        // Target Vol policy assumption (ví dụ 0.12)
+  readonly realizedVol: number;             // Biến động thực tế đo lường
+  readonly forecastVol: number;             // Biến động dự báo toàn danh mục
   readonly riskFlags: readonly string[];
   readonly circuitBreakerStatus: CircuitBreakerStatus;
   readonly circuitBreakerReason?: string | null;
@@ -171,34 +163,28 @@ export interface RiskOutput {
 // 6. TARGET POSITIONS & OMEGA ALLOCATOR
 // ----------------------------------------------------------------------------
 
-/**
- * TargetPosition: Ý định vị thế của một strategy đơn lẻ sau khi qua Risk.
- */
 export interface TargetPosition {
   readonly strategyId: StrategyId;
   readonly assetId: AssetId;
   readonly targetUnits: number;
   readonly targetNotionalUsd: number;
-  readonly targetExposureFraction: number; // [-1.0 .. +1.0]
+  readonly targetExposureFraction: number;  // [-1.0 .. +1.0], âm biểu thị Short
   readonly timestamp: number;
 }
 
-/**
- * TargetPortfolioWeight: Phân bổ tài sản cuối cùng do Omega Allocator thiết lập.
- */
 export interface TargetPortfolioWeight {
   readonly asOfTimestamp: number;
-  readonly assetWeights: Readonly<Record<AssetId, number>>;
-  readonly cashWeight: number;
-  readonly grossExposure: number;
-  readonly netExposure: number;
+  readonly assetWeights: Readonly<Record<AssetId, number>>; // Trọng số từng tài sản (âm = Short)
+  readonly cashWeight: number;                             // Tiền mặt phòng vệ
+  readonly grossExposure: number;                          // Tổng tuyệt đối |Weights|
+  readonly netExposure: number;                            // Tổng đại số Weights
   readonly strategyAllocations: Readonly<Record<StrategyId, number>>;
   readonly riskAdjustmentRatio: number;
   readonly rationale: string;
 }
 
 // ----------------------------------------------------------------------------
-// 7. EXECUTION RECORD (TRANSACTION LOG LAYER)
+// 7. EXECUTION RECORD
 // ----------------------------------------------------------------------------
 
 export interface ExecutionRecord {
@@ -206,7 +192,7 @@ export interface ExecutionRecord {
   readonly orderId: string;
   readonly strategyId: StrategyId | "OMEGA_REBALANCE";
   readonly assetId: AssetId;
-  readonly side: Side;
+  readonly side: OrderSide;
   readonly orderType: OrderType;
   readonly signalTimestamp: number;
   readonly decisionTimestamp: number;
@@ -215,34 +201,35 @@ export interface ExecutionRecord {
   readonly executionPrice: number;
   readonly quantity: number;
   readonly notionalUsd: number;
-  readonly slippage: number; // Đơn vị tiền tệ tuyệt đối hoặc bps
-  readonly fees: number;     // Phí giao dịch sàn
+  readonly slippage: number;
+  readonly fees: number;
   readonly netCashImpact: number;
 }
 
 // ----------------------------------------------------------------------------
-// 8. COMPLETE DECISION STATE (AUDIT & REPLAY SNAPSHOT)
+// 8. DECISION STATE AUDIT SNAPSHOT
 // ----------------------------------------------------------------------------
 
-/**
- * DecisionState: Bản chụp đóng băng trạng thái của toàn hệ thống tại mỗi bar.
- * Cung cấp đầy đủ dấu vết (Audit Trail) để tái lập 100% quyết định.
- */
+export interface PositionRecord {
+  readonly assetId: AssetId;
+  readonly side: PositionSide;
+  readonly status: PositionStatus;
+  readonly quantity: number;
+  readonly entryPrice: number;
+  readonly unrealizedPnl: number;
+}
+
 export interface DecisionState {
   readonly barIndex: number;
   readonly timestamp: number;
   readonly nav: number;
   readonly cash: number;
-  readonly holdings: Readonly<Record<AssetId, number>>;
-  
-  // Dòng chảy dữ liệu từng tầng
+  readonly positions: Readonly<Record<AssetId, PositionRecord>>;
   readonly signals: readonly SignalOutput[];
   readonly permissions: readonly PermissionOutput[];
   readonly risk: RiskOutput;
   readonly targetWeights: TargetPortfolioWeight;
   readonly executions: readonly ExecutionRecord[];
-  
-  // Chỉ số hiệu suất luỹ kế
   readonly dailyPnl: number;
   readonly cumulativePnl: number;
   readonly currentDrawdown: number;
@@ -260,11 +247,11 @@ export interface SlippageModelConfig {
 
 export interface BacktestConfig {
   readonly runId: string;
-  readonly startDate: number; // Unix epoch ms
-  readonly endDate: number;   // Unix epoch ms
-  readonly warmupPeriod: number; // Số phiên nạp dữ liệu trước ngày bắt đầu replay
+  readonly startDate: number;
+  readonly endDate: number;
+  readonly warmupPeriod: number; // Phải >= 125 để đáp ứng lookback của Adaptive Trend
   readonly initialCapital: number;
-  readonly commissionRate: number; // Ví dụ 0.001 = 0.1%
+  readonly commissionRate: number;
   readonly slippageModel: SlippageModelConfig;
   readonly executionRule: ExecutionRule;
   readonly deterministicSeed: number;
