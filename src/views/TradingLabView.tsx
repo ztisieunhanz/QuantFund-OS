@@ -1,6 +1,6 @@
 // ============================================================================
 // FILE: src/views/TradingLabView.tsx
-// MODULE: QUANT LAB VIEW (5-LAYER ARCHITECTURE DASHBOARD)
+// MODULE: QUANT LAB VIEW (FIXED LAYOUT & RECHARTS ISOLATION)
 // ============================================================================
 
 import { useEffect, useMemo, useState, useCallback } from "react";
@@ -31,7 +31,6 @@ import { useMacroStore } from "@/stores/macroStore";
 import type { BotMetrics } from "@/types/market";
 
 export function TradingLabView() {
-  // 1. SELECTORS RIÊNG BIỆT (TRÁNH OBJECT RE-CREATION GÂY RE-RENDER VÔ TẬN)
   const bars = useMarketStore((s) => s.bars);
   const loadMarket = useMarketStore((s) => s.load);
   const lastPrice = useMarketStore((s) => s.lastPrice);
@@ -50,21 +49,14 @@ export function TradingLabView() {
 
   const [replaying, setReplaying] = useState(false);
 
-  // 2. KHỞI TẠO NẠP DỮ LIỆU NẾN
   useEffect(() => {
-    if (bars.length === 0) {
-      void loadMarket();
-    }
+    if (bars.length === 0) void loadMarket();
   }, [bars.length, loadMarket]);
 
-  // 3. TỰ ĐỘNG CHẠY BACKTEST KHI CÓ ĐỦ DỮ LIỆU
   useEffect(() => {
-    if (bars.length >= 25) {
-      runOnBars(bars);
-    }
+    if (bars.length >= 25) runOnBars(bars);
   }, [bars, runOnBars]);
 
-  // 4. XỬ LÝ REPLAY THỦ CÔNG
   const handleReplay = useCallback(() => {
     if (replaying || bars.length < 25) return;
     setReplaying(true);
@@ -75,7 +67,6 @@ export function TradingLabView() {
     }, 150);
   }, [replaying, bars, resetTrading, runOnBars]);
 
-  // 5. KẾT HỢP ĐƯỜNG CONG VỐN (EQUITY CURVES) THEO TRỤC THỜI GIAN GIÂY
   const combinedEquitySeries = useMemo(() => {
     const timeMap = new Map<
       number,
@@ -94,9 +85,8 @@ export function TradingLabView() {
 
     for (const p of mean.equityCurve) {
       const row = timeMap.get(p.time);
-      if (row) {
-        row.mean = p.equity;
-      } else {
+      if (row) row.mean = p.equity;
+      else {
         timeMap.set(p.time, {
           time: p.time,
           trend: STARTING_EQUITY,
@@ -109,9 +99,8 @@ export function TradingLabView() {
 
     for (const p of dca.equityCurve) {
       const row = timeMap.get(p.time);
-      if (row) {
-        row.event = p.equity;
-      } else {
+      if (row) row.event = p.equity;
+      else {
         timeMap.set(p.time, {
           time: p.time,
           trend: STARTING_EQUITY,
@@ -124,23 +113,19 @@ export function TradingLabView() {
 
     for (const p of omega.equityCurve) {
       const row = timeMap.get(p.time);
-      if (row) {
-        row.omega = p.equity;
-      }
+      if (row) row.omega = p.equity;
     }
 
     const sorted = [...timeMap.values()].sort((a, b) => a.time - b.time);
-    
-    // Downsampling nhẹ nếu lịch sử quá dài để tối ưu hiệu năng Recharts
-    const stepSize = Math.max(1, Math.floor(sorted.length / 200));
+    const stepSize = Math.max(1, Math.floor(sorted.length / 150));
     return sorted.filter((_, idx, arr) => idx % stepSize === 0 || idx === arr.length - 1);
   }, [trend.equityCurve, mean.equityCurve, dca.equityCurve, omega.equityCurve]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-3 bg-[#07090d]">
-      {/* 1. THANH TRẠNG THÁI HỆ THỐNG */}
-      <div className="flex items-center justify-between border border-line bg-panel px-3 py-2 font-mono text-[11px] rounded-sm">
-        <div className="flex flex-wrap items-center gap-6">
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-3 bg-[#07090d]">
+      {/* 1. TOP STATUS BAR */}
+      <div className="flex flex-wrap items-center justify-between border border-line bg-panel px-3 py-2 font-mono text-[11px] rounded-sm gap-2">
+        <div className="flex flex-wrap items-center gap-4 sm:gap-6">
           <span className="text-muted">
             ARCHITECTURE <span className="text-cyan font-bold">5-LAYER MODULAR QUANT</span>
           </span>
@@ -151,7 +136,7 @@ export function TradingLabView() {
             SLIPPAGE <span className="text-amber">{(SLIPPAGE_BPS * 100).toFixed(2)}%</span>
           </span>
           <span className="text-muted">
-            MARK (BTC) <span className="text-up font-bold">{formatNumber(lastPrice, 2)}</span>
+            BENCHMARK (BTC) <span className="text-up font-bold">{formatNumber(lastPrice, 2)}</span>
           </span>
         </div>
 
@@ -171,9 +156,9 @@ export function TradingLabView() {
         </div>
       </div>
 
-      {/* 2. OMEGA META-FUND & RISK ENGINE MONITOR */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 border border-[#1c2736] bg-[#10151e] p-3 rounded-sm shadow-sm">
-        <div className="flex flex-col justify-between border-r border-line/40 pr-3">
+      {/* 2. OMEGA META-FUND & RISK MONITOR (CĂN FULL CHIỀU NGANG) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 border border-[#1c2736] bg-[#10151e] p-3 rounded-sm shadow-sm w-full">
+        <div className="flex flex-col justify-between border-b sm:border-b-0 sm:border-r border-line/40 pb-2 sm:pb-0 sm:pr-3">
           <div className="flex items-center gap-1.5 text-muted text-[10px] font-bold tracking-wider">
             <Cpu size={14} className="text-cyan" /> OMEGA PORTFOLIO NAV
           </div>
@@ -185,7 +170,7 @@ export function TradingLabView() {
           </div>
         </div>
 
-        <div className="flex flex-col justify-between border-r border-line/40 pr-3">
+        <div className="flex flex-col justify-between border-b sm:border-b-0 lg:border-r border-line/40 pb-2 sm:pb-0 sm:pr-3">
           <div className="flex items-center gap-1.5 text-muted text-[10px] font-bold tracking-wider">
             <Activity size={14} className="text-amber" /> VOLATILITY TARGETING
           </div>
@@ -194,12 +179,10 @@ export function TradingLabView() {
               ? `${(latestDecision.risk.targetVolatility * 100).toFixed(1)}% / ${(latestDecision.risk.realizedVol * 100).toFixed(1)}%`
               : "12.0% / 20.0%"}
           </div>
-          <div className="text-[10px] text-muted font-mono">
-            Target Vol / Realized Vol
-          </div>
+          <div className="text-[10px] text-muted font-mono">Target Vol / Realized Vol</div>
         </div>
 
-        <div className="flex flex-col justify-between border-r border-line/40 pr-3">
+        <div className="flex flex-col justify-between border-b sm:border-b-0 sm:border-r border-line/40 pb-2 sm:pb-0 sm:pr-3">
           <div className="flex items-center gap-1.5 text-muted text-[10px] font-bold tracking-wider">
             <ShieldCheck size={14} className="text-[#00e676]" /> RISK & CIRCUIT BREAKER
           </div>
@@ -230,13 +213,13 @@ export function TradingLabView() {
           <div className="text-[11px] font-mono font-bold text-white mt-1">
             BTC: {latestDecision ? `${((latestDecision.targetWeights.assetWeights["BTC"] ?? 0) * 100).toFixed(1)}%` : "0.0%"} | Cash: {latestDecision ? `${(latestDecision.targetWeights.cashWeight * 100).toFixed(1)}%` : "100.0%"}
           </div>
-          <div className="text-[10px] text-cyan font-mono truncate">
-            {latestDecision?.targetWeights.rationale.slice(0, 40) ?? "Awaiting allocation..."}
+          <div className="text-[10px] text-cyan font-mono truncate" title={latestDecision?.targetWeights.rationale}>
+            {latestDecision?.targetWeights.rationale.slice(0, 42) ?? "Awaiting allocation..."}
           </div>
         </div>
       </div>
 
-      {/* CẢNH BÁO PERMISSION GATE KHI VĨ MÔ SUY YẾU */}
+      {/* 3. MACRO PERMISSION BANNER */}
       {isRiskOff && (
         <div className="flex items-center gap-2 rounded border border-amber/50 bg-amber/10 p-2.5 text-[11px] font-medium text-amber shadow-sm">
           <AlertTriangle size={16} />
@@ -247,27 +230,21 @@ export function TradingLabView() {
         </div>
       )}
 
-      {/* 3. THẺ THÔNG TIN 3 BOT ALPHA ĐỘC LẬP */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-        <BotCard
-          bot={trend}
-          rule="Alpha 1: Multi-Horizon Momentum · Trend Persistence & Chandelier Stop"
-        />
-        <BotCard
-          bot={dca}
-          rule="Alpha 2: Economic Surprise · Market Confirmation & Half-Life Decay"
-        />
-        <BotCard
-          bot={mean}
-          rule="Alpha 3: Short Mean Reversion · Deviation Z-Score & Volume Exhaustion"
-        />
+      {/* 4. THẺ 3 ALPHA ENGINES */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 w-full">
+        <BotCard bot={trend} rule="Alpha 1: Multi-Horizon Momentum · Trend Persistence & Chandelier Stop" />
+        <BotCard bot={dca} rule="Alpha 2: Economic Surprise · Market Confirmation & Half-Life Decay" />
+        <BotCard bot={mean} rule="Alpha 3: Short Mean Reversion · Deviation Z-Score & Volume Exhaustion" />
       </div>
 
-      {/* 4. BIỂU ĐỒ ĐƯỜNG CONG VỐN (EQUITY CURVES) */}
-      <Panel title="Multi-Strategy Concurrent Fleet & Omega Meta-Fund" className="min-h-[290px]">
-        <div className="h-[250px]">
+      {/* 5. KHỐI BIỂU ĐỒ ĐƯỢC CÔ LẬP KHÔNG GIAN RIÊNG */}
+      <div className="border border-line bg-panel p-3 rounded-sm w-full">
+        <div className="text-[11px] font-mono font-bold text-muted uppercase tracking-wider mb-2">
+          Multi-Strategy Concurrent Fleet & Omega Meta-Fund (100D Replay)
+        </div>
+        <div className="h-[240px] w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={combinedEquitySeries}>
+            <LineChart data={combinedEquitySeries} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
               <CartesianGrid stroke="#151b26" strokeDasharray="3 3" />
               <XAxis
                 dataKey="time"
@@ -278,7 +255,7 @@ export function TradingLabView() {
               <YAxis
                 stroke="#7d8ea3"
                 fontSize={10}
-                domain={["auto", "auto"]}
+                domain={["dataMin - 100", "dataMax + 100"]}
                 tickFormatter={(val) => `$${Number(val).toLocaleString()}`}
               />
               <Tooltip
@@ -293,10 +270,10 @@ export function TradingLabView() {
             </LineChart>
           </ResponsiveContainer>
         </div>
-      </Panel>
+      </div>
 
-      {/* 5. AUDIT BLOTTERS (NHẬT KÝ KHỚP LỆNH THEO TỪNG STRATEGY) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+      {/* 6. AUDIT BLOTTERS (CÓ THANH CUỘN NỘI BỘ RIÊNG BIỆT) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 w-full pb-4">
         <Blotter bot={trend} />
         <Blotter bot={dca} />
         <Blotter bot={mean} />
@@ -304,10 +281,6 @@ export function TradingLabView() {
     </div>
   );
 }
-
-// ----------------------------------------------------------------------------
-// PHẦN BỔ TRỢ: THẺ BOT (BOTCARD)
-// ----------------------------------------------------------------------------
 
 function BotCard({ bot, rule }: { bot: BotMetrics; rule: string }) {
   const up = bot.pnl >= 0;
@@ -365,53 +338,51 @@ function Kpi({ label, value, down }: { label: string; value: string; down?: bool
   );
 }
 
-// ----------------------------------------------------------------------------
-// PHẦN BỔ TRỢ: BẢNG SỔ LỆNH KIỂM TOÁN (BLOTTER)
-// ----------------------------------------------------------------------------
-
 function Blotter({ bot }: { bot: BotMetrics }) {
-  const rows = useMemo(() => [...bot.trades].reverse().slice(0, 8), [bot.trades]);
+  const rows = useMemo(() => [...bot.trades].reverse().slice(0, 10), [bot.trades]);
 
   return (
     <Panel title={`${bot.name} · Audit Log`}>
-      <table className="w-full border-collapse font-mono text-[10px]">
-        <thead className="text-muted border-b border-line bg-panel-2">
-          <tr>
-            <th className="py-1 px-1.5 text-left">TIME</th>
-            <th className="py-1 px-1 text-center">SIDE</th>
-            <th className="py-1 px-1 text-right">PX</th>
-            <th className="py-1 px-1 text-right">QTY</th>
-            <th className="py-1 px-1 text-right">FEE</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-line">
-          {rows.map((t) => (
-            <tr key={t.id} className="hover:bg-panel-2 transition-colors">
-              <td className="py-1 px-1.5 text-muted">
-                {new Date(t.time * 1000).toISOString().slice(5, 16).replace("T", " ")}
-              </td>
-              <td
-                className={clsx(
-                  "py-1 px-1 text-center font-bold",
-                  t.side === "BUY" ? "text-up" : "text-down"
-                )}
-              >
-                {t.side}
-              </td>
-              <td className="py-1 px-1 text-right text-white">{formatNumber(t.price, 2)}</td>
-              <td className="py-1 px-1 text-right text-muted">{t.qty.toFixed(4)}</td>
-              <td className="py-1 px-1 text-right text-amber">{formatUsd(t.fee, 2)}</td>
-            </tr>
-          ))}
-          {rows.length === 0 ? (
+      <div className="max-h-[190px] overflow-y-auto">
+        <table className="w-full border-collapse font-mono text-[10px]">
+          <thead className="text-muted border-b border-line bg-panel-2 sticky top-0">
             <tr>
-              <td colSpan={5} className="py-3 text-muted text-center">
-                Awaiting quant execution...
-              </td>
+              <th className="py-1 px-1.5 text-left">TIME</th>
+              <th className="py-1 px-1 text-center">SIDE</th>
+              <th className="py-1 px-1 text-right">PX</th>
+              <th className="py-1 px-1 text-right">QTY</th>
+              <th className="py-1 px-1 text-right">FEE</th>
             </tr>
-          ) : null}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {rows.map((t) => (
+              <tr key={t.id} className="hover:bg-panel-2 transition-colors">
+                <td className="py-1 px-1.5 text-muted">
+                  {new Date(t.time * 1000).toISOString().slice(5, 16).replace("T", " ")}
+                </td>
+                <td
+                  className={clsx(
+                    "py-1 px-1 text-center font-bold",
+                    t.side === "BUY" ? "text-up" : "text-down"
+                  )}
+                >
+                  {t.side}
+                </td>
+                <td className="py-1 px-1 text-right text-white">{formatNumber(t.price, 2)}</td>
+                <td className="py-1 px-1 text-right text-muted">{t.qty.toFixed(4)}</td>
+                <td className="py-1 px-1 text-right text-amber">{formatUsd(t.fee, 2)}</td>
+              </tr>
+            ))}
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="py-3 text-muted text-center">
+                  Awaiting quant execution...
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
     </Panel>
   );
 }
