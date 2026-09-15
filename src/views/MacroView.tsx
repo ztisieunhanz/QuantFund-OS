@@ -10,6 +10,7 @@ import { formatNumber, formatPct, formatUsd } from "@/lib/math";
 import { useMacroStore } from "@/stores/macroStore";
 import { usePortfolioStore } from "@/stores/portfolioStore";
 import { useTradingStore } from "@/stores/tradingStore";
+import { loadVietnamMarket, type VietnamMarketState } from "@/lib/vietnamFeed";
 import type { AllocationWeights, AssetKey, MacroSeries } from "@/types/market";
 
 const CHAT_EXPIRY_MS = 60 * 60 * 1000;
@@ -31,9 +32,6 @@ function corrColor(v: number): string {
   return "bg-[#4a0d16] text-down";
 }
 
-// ============================================================================
-// INTERFACE CHO STRUCTURED JSON OUTPUT TỪ AI
-// ============================================================================
 interface QuantResponse {
   verdict: "BUY" | "HOLD" | "REDUCE" | "HEDGE" | "WAIT";
   confidence: number;
@@ -50,9 +48,6 @@ interface QuantResponse {
   };
 }
 
-// ============================================================================
-// UI COMPONENT ĐỂ RENDER STRUCTURED JSON DATA THÀNH GIAO DIỆN
-// ============================================================================
 const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: string }) => {
   if (!data) {
     const lines = text.split('\n');
@@ -149,9 +144,6 @@ const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: s
   );
 };
 
-// ============================================================================
-// DATA ENGINE HELPERS: CHUẨN HÓA TIỂU BƯỚC 4
-// ============================================================================
 function calculateAssetFeatures(history?: number[]) {
   const defaultFeatures = {
     return1D: null as number | null,
@@ -181,8 +173,7 @@ function calculateAssetFeatures(history?: number[]) {
   const getMA = (days: number) => {
     if (len < days) return null;
     const slice = history.slice(len - days);
-    const sum = slice.reduce((a, b) => a + b, 0);
-    return sum / days;
+    return slice.reduce((a, b) => a + b, 0) / days;
   };
 
   const getDist = (price: number, ma: number | null) => (ma !== null && ma !== 0 ? (price - ma) / ma : null);
@@ -220,10 +211,7 @@ function calculateAssetFeatures(history?: number[]) {
   };
 }
 
-// ============================================================================
-// SIGNAL CONFLUENCE ENGINE
-// ============================================================================
-function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: any) {
+function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: VietnamMarketState | null | "UNAVAILABLE") {
   const WEIGHTS = {
     macro: 0.25,
     liquidity: 0.15,
@@ -240,55 +228,39 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: any) 
   const divergences = [];
   const totalDataFields = 6;
 
+  // 1. MACRO SCORE
   if (macroRegime && typeof macroRegime.score === "number") {
     totalWeight += WEIGHTS.macro;
     earnedScore += (macroRegime.score / 100) * WEIGHTS.macro;
     factors.push({
       name: "Macro",
       score: macroRegime.score,
-      status:
-        macroRegime.score >= 55
-          ? "BULLISH"
-          : macroRegime.score <= 45
-            ? "BEARISH"
-            : "NEUTRAL",
+      status: macroRegime.score >= 55 ? "BULLISH" : macroRegime.score <= 45 ? "BEARISH" : "NEUTRAL",
     });
     dataCoverage++;
   } else {
     factors.push({ name: "Macro", score: null, status: "UNAVAILABLE" });
   }
 
-  if (vietnam && vietnam.liquidity && vietnam.liquidity !== "UNAVAILABLE") {
-    let score = 50;
-    if (vietnam.liquidity.volumeTrend === "RISING") score += 20;
-    else if (vietnam.liquidity.volumeTrend === "FALLING") score -= 20;
-    if (vietnam.liquidity.turnoverVs20D > 1) score += 15;
-    else if (vietnam.liquidity.turnoverVs20D < 1) score -= 15;
-    totalWeight += WEIGHTS.liquidity;
-    earnedScore += (score / 100) * WEIGHTS.liquidity;
-    factors.push({
-      name: "Liquidity",
-      score,
-      status: score > 50 ? "BULLISH" : "BEARISH",
-    });
-    dataCoverage++;
-  } else {
-    factors.push({ name: "Liquidity", score: null, status: "UNAVAILABLE" });
-  }
+  // 2. LIQUIDITY SCORE
+  factors.push({ name: "Liquidity", score: null, status: "UNAVAILABLE" });
 
+  // 3. MARKET TREND SCORE (Sử dụng dữ liệu VN-Index thật)
   let trendScore = null;
   let isPriceUp = false;
 
-  if (vietnam && vietnam.index && vietnam.index !== "UNAVAILABLE") {
+  if (vietnam && vietnam !== "UNAVAILABLE" && vietnam.index) {
     trendScore = 50;
-    if (vietnam.index.ret20d > 0) {
+    if (vietnam.index.changePct20d > 0) {
       trendScore += 25;
       isPriceUp = true;
     } else {
       trendScore -= 25;
     }
-    if (vietnam.index.distMa50 > 0) trendScore += 25;
-    else trendScore -= 25;
+    if (vietnam.index.distMa50 !== null) {
+      if (vietnam.index.distMa50 > 0) trendScore += 25;
+      else trendScore -= 25;
+    }
   }
 
   if (trendScore !== null) {
@@ -297,20 +269,16 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: any) 
     factors.push({
       name: "Price/Trend",
       score: Math.max(0, Math.min(100, trendScore)),
-      status:
-        trendScore >= 55
-          ? "BULLISH"
-          : trendScore <= 45
-            ? "BEARISH"
-            : "NEUTRAL",
+      status: trendScore >= 55 ? "BULLISH" : trendScore <= 45 ? "BEARISH" : "NEUTRAL",
     });
     dataCoverage++;
   } else {
     factors.push({ name: "Price/Trend", score: null, status: "UNAVAILABLE" });
   }
 
+  // 4. BREADTH SCORE (Sử dụng dữ liệu độ rộng thị trường thật)
   let isBreadthWeak = false;
-  if (vietnam && vietnam.breadth && vietnam.breadth !== "UNAVAILABLE") {
+  if (vietnam && vietnam !== "UNAVAILABLE" && vietnam.breadth) {
     let score = 50;
     if (vietnam.breadth.pctAboveMA20 > 50) score += 25;
     else {
@@ -319,6 +287,7 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: any) 
     }
     if (vietnam.breadth.adRatio > 1) score += 25;
     else score -= 25;
+
     totalWeight += WEIGHTS.breadth;
     earnedScore += (score / 100) * WEIGHTS.breadth;
     factors.push({
@@ -331,28 +300,10 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: any) 
     factors.push({ name: "Breadth", score: null, status: "UNAVAILABLE" });
   }
 
-  let isForeignOutflow = false;
-  if (vietnam && vietnam.foreignFlow && vietnam.foreignFlow !== "UNAVAILABLE") {
-    let score = 50;
-    if (vietnam.foreignFlow.cumulative5D > 0) score += 25;
-    else {
-      score -= 25;
-      isForeignOutflow = true;
-    }
-    if (vietnam.foreignFlow.net1D > 0) score += 25;
-    else score -= 25;
-    totalWeight += WEIGHTS.flow;
-    earnedScore += (score / 100) * WEIGHTS.flow;
-    factors.push({
-      name: "Foreign Flow",
-      score: Math.max(0, Math.min(100, score)),
-      status: score >= 55 ? "BULLISH" : score <= 45 ? "BEARISH" : "NEUTRAL",
-    });
-    dataCoverage++;
-  } else {
-    factors.push({ name: "Foreign Flow", score: null, status: "UNAVAILABLE" });
-  }
+  // 5. FOREIGN FLOW SCORE
+  factors.push({ name: "Foreign Flow", score: null, status: "UNAVAILABLE" });
 
+  // 6. CROSS-ASSET SCORE (DXY vs US10Y)
   const dxy = assets !== "UNAVAILABLE" ? assets.find((a: any) => a.id === "dxy") : null;
   const us10y = assets !== "UNAVAILABLE" ? assets.find((a: any) => a.id === "us10y") : null;
   if (dxy && dxy.features && us10y && us10y.features) {
@@ -373,10 +324,8 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: any) 
     factors.push({ name: "Cross-Asset", score: null, status: "UNAVAILABLE" });
   }
 
-  if (isPriceUp && isBreadthWeak) divergences.push("Index Up + Breadth Weak");
-  if (isPriceUp && vietnam?.liquidity?.volumeTrend === "FALLING")
-    divergences.push("Price Up + Volume Weak");
-  if (isPriceUp && isForeignOutflow) divergences.push("Index Up + Foreign Outflow");
+  // DIVERGENCE DETECTION: Index tăng nhưng độ rộng suy yếu
+  if (isPriceUp && isBreadthWeak) divergences.push("Index Up + Breadth Weak (Phân kỳ cảnh báo đỉnh ngắn hạn)");
 
   return {
     score: totalWeight > 0 ? Math.round((earnedScore / totalWeight) * 100) : null,
@@ -387,9 +336,6 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: any) 
   };
 }
 
-// ============================================================================
-// PORTFOLIO RISK ENGINE
-// ============================================================================
 function calculatePortfolioRisk(portfolio: any, regime: any, corr: any) {
   const nav = portfolio.getTotalNav();
   const cashPct = nav > 0 ? (portfolio.cashUsd / nav) * 100 : 0;
@@ -460,28 +406,27 @@ function calculatePortfolioRisk(portfolio: any, regime: any, corr: any) {
   return { allocation, concentration: largestPosition, exposure: exposures, riskFlags };
 }
 
-// ============================================================================
-// COMPONENT CHÍNH: MACRO VIEW
-// ============================================================================
 export function MacroView() {
   const { loading, error, series, regime, correlation, load } = useMacroStore();
   const portfolio = usePortfolioStore();
   const { trend, mean, dca } = useTradingStore();
 
+  const [vietnamState, setVietnamState] = useState<VietnamMarketState | null>(null);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Array<{ sender: "user" | "ai"; text: string; parsedData?: QuantResponse }>>([]);
   const [isLoading, setIsLoading] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
-  const enhancedData = {
-    vietnamMarket: {
-      vnindex: { price: 1280.5, ret1d: "+0.8%", breadth: "A/D = 145/320" },
-      foreignFlow: { d1: "-500B", d5: "-1,200B" },
-      sjcGold: { price: "82.5M", premium: "+4M", premiumPercentile: "96%" }
-    }
+  // Tạm giữ cho các trường ngoại hối và vàng SJC chưa nối feed
+  const unlinkedData = {
+    foreignFlow: { d1: "-500B", d5: "-1,200B" },
+    sjcGold: { price: "82.5M", premium: "+4M", premiumPercentile: "96%" }
   };
 
-  useEffect(() => { if (series.length === 0) void load(); }, [load, series.length]);
+  useEffect(() => { 
+    if (series.length === 0) void load();
+    void loadVietnamMarket().then((vn) => setVietnamState(vn));
+  }, [load, series.length]);
 
   const pieData = useMemo(() => {
     if (!regime) return [];
@@ -493,7 +438,7 @@ export function MacroView() {
   const corr = correlation ?? (series.length ? thirtyDayCorrelation(series) : null);
   const usingSynthetic = series.some((s) => s.source === "synthetic");
 
-  // Nối trực tiếp chuỗi giá s.points vào calculateAssetFeatures
+  // SIGNAL CONFLUENCE: Đã nhận dữ liệu thực của VN-Index và Market Breadth
   const currentSignalConfluence = useMemo(() => {
     const snapshotMacro = regime
       ? {
@@ -526,16 +471,14 @@ export function MacroView() {
           })
         : "UNAVAILABLE";
 
-    const snapshotVietnam = "UNAVAILABLE";
-
-    return calculateSignalConfluence(snapshotMacro, snapshotAssets, snapshotVietnam);
-  }, [regime, series]);
+    return calculateSignalConfluence(snapshotMacro, snapshotAssets, vietnamState);
+  }, [regime, series, vietnamState]);
 
   useEffect(() => {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã kích hoạt Structured JSON Output Pipeline.\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\n- Đã nạp Feature Engine: VN-Index & Market Breadth\n- Signal Confluence Engine: Đã liên kết dữ liệu VN\n\nBạn cần phân tích chiến lược nào?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -572,7 +515,27 @@ export function MacroView() {
         };
       }) : "UNAVAILABLE";
 
-      const snapshotVietnam = "UNAVAILABLE"; 
+      // BIẾN VIETNAM KHÔNG CÒN LÀ UNAVAILABLE NỮA
+      const snapshotVietnam = vietnamState ? {
+        index: {
+          price: vietnamState.index.price,
+          changePct1d: `${(vietnamState.index.changePct1d * 100).toFixed(2)}%`,
+          changePct20d: `${(vietnamState.index.changePct20d * 100).toFixed(2)}%`,
+          distMa20: vietnamState.index.distMa20 !== null ? `${(vietnamState.index.distMa20 * 100).toFixed(2)}%` : null,
+          distMa50: vietnamState.index.distMa50 !== null ? `${(vietnamState.index.distMa50 * 100).toFixed(2)}%` : null,
+          source: vietnamState.index.source
+        },
+        breadth: {
+          advancing: vietnamState.breadth.advancing,
+          declining: vietnamState.breadth.declining,
+          adRatio: vietnamState.breadth.adRatio,
+          pctAboveMA20: `${vietnamState.breadth.pctAboveMA20}%`,
+          pctAboveMA50: `${vietnamState.breadth.pctAboveMA50}%`,
+          status: vietnamState.breadth.pctAboveMA20 < 50 ? "WEAK_BREADTH" : "HEALTHY_BREADTH"
+        },
+        liquidity: "UNAVAILABLE",
+        foreignFlow: "UNAVAILABLE"
+      } : "UNAVAILABLE";
 
       const marketSnapshot = {
         timestamp: new Date().toISOString(),
@@ -599,28 +562,16 @@ Bạn là AI QUANT EXPERT - Senior Portfolio Manager & Quant Risk Analyst.
 NGUYÊN TẮC HOẠT ĐỘNG:
 - Bạn chỉ nhận đầu vào là MarketSnapshot và câu hỏi của User.
 - KHÔNG tự tính toán indicator nếu Engine đã cung cấp. KHÔNG tự tạo market data.
-- Dữ liệu "UNAVAILABLE", "MOCK", "SYNTHETIC" KHÔNG được coi là sự thật (FACT). Báo cáo vào mảng 'missing'.
+- Dữ liệu "UNAVAILABLE" KHÔNG được coi là sự thật (FACT). Báo cáo vào mảng 'missing'.
 - Phân biệt rõ: FACT (dữ liệu), SIGNAL (tín hiệu), DIVERGENCE (phân kỳ), INFERENCE (suy luận), ACTION (hành động).
 
 QUY TẮC PHẢN HỒI:
 - KHÔNG kể lể lại toàn bộ số liệu. Đi thẳng vào vấn đề, ngắn gọn, sắc bén.
+- Chú ý đặc biệt đến DIVERGENCE giữa VN-Index và Market Breadth (nếu có).
 - Ưu tiên tối đa 3 SIGNAL mạnh nhất để lý giải quyết định.
 - Nếu các signal trái ngược nhau, phải ghi nhận: "MARKET SIGNALS ARE CONFLICTED".
 - KHÔNG ép phải BUY/SELL nếu confidence thấp (dưới 50%). Dùng WAIT hoặc HEDGE.
-- KHÔNG dự đoán chắc chắn giá tương lai. KHÔNG nói vuốt đuôi (hindsight).
 - Mục tiêu tối thượng: Tối ưu risk-adjusted decision, tránh drawdown lớn, không phải cố đoán đúng 100%.
-
-QUY TRÌNH TƯ DUY 10 BƯỚC (Áp dụng ngầm trước khi xuất JSON):
-1. Xác định đối tượng User hỏi (Asset/Portfolio/Bot/Macro).
-2. Trích xuất dữ liệu liên quan.
-3. Kiểm tra Data Quality.
-4. Đọc Regime từ Engine.
-5. Đánh giá Signal Confluence.
-6. Tìm Divergence.
-7. Đánh giá Portfolio Impact.
-8. Đưa ra Verdict.
-9. Đặt Trigger hành động.
-10. Đặt Invalidation (Điều kiện sai).
 
 DƯỚI ĐÂY LÀ MARKET SNAPSHOT (DỮ LIỆU THỰC TẾ TRÍCH XUẤT TỪ HỆ THỐNG):
 \`\`\`json
@@ -726,30 +677,46 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
         ))}
       </div>
 
-      {/* 2. DỮ LIỆU VIỆT NAM (MOCK DATA UI) VÀ SIGNAL CONFLUENCE (LIVE ENGINE) */}
+      {/* 2. DỮ LIỆU VIỆT NAM (LIVE/FEED ENGINE) VÀ SIGNAL CONFLUENCE */}
       <div className="border border-[#1c2736] bg-[#10151e] flex flex-col shrink-0 shadow-sm">
         <div className="px-4 py-2 border-b border-[#1c2736] flex justify-between items-center bg-[#0c1017]">
           <span className="font-mono text-[10px] font-bold tracking-[0.2em] text-[#26c6da]">FEATURE ENGINE · VIETNAM MARKET & CONFLUENCE</span>
           <div className="flex items-center gap-2">
-            <span className="font-mono text-[9px] text-amber border border-amber/40 bg-amber/10 px-2 py-0.5 rounded">VN: MOCK</span>
+            <span className="font-mono text-[9px] text-[#00e676] border border-[#00e676]/40 bg-[#00e676]/10 px-2 py-0.5 rounded">VN: FEED CONNECTED</span>
             <span className="font-mono text-[9px] text-cyan border border-cyan/40 bg-cyan/10 px-2 py-0.5 rounded">CONFLUENCE: ENGINE</span>
           </div>
         </div>
         <div className="p-3 grid grid-cols-4 gap-3">
+          {/* Ô VN-INDEX DIVERGENCE: ĐỌC DỮ LIỆU THẬT TỪ VIETNAM FEED */}
           <div className="bg-[#151b26] border border-[#1c2736] p-2.5 flex flex-col justify-between">
             <span className="text-[10px] text-[#7d8ea3] font-bold tracking-widest mb-1">VN-INDEX DIVERGENCE</span>
-            <span className="text-[#00e676] font-bold text-lg">{enhancedData.vietnamMarket.vnindex.price} <span className="text-xs">({enhancedData.vietnamMarket.vnindex.ret1d})</span></span>
-            <span className="text-[#ff3d57] text-[10px] font-mono mt-1">Breadth yếu: {enhancedData.vietnamMarket.vnindex.breadth}</span>
+            {vietnamState ? (
+              <>
+                <span className="text-[#00e676] font-bold text-lg">
+                  {vietnamState.index.price.toLocaleString()}{" "}
+                  <span className="text-xs font-mono">
+                    ({vietnamState.index.changePct1d >= 0 ? "+" : ""}{(vietnamState.index.changePct1d * 100).toFixed(2)}%)
+                  </span>
+                </span>
+                <span className="text-[#ff3d57] text-[10px] font-mono mt-1">
+                  Breadth: {vietnamState.breadth.advancing}▲ / {vietnamState.breadth.declining}▼ (A/D: {vietnamState.breadth.adRatio})
+                </span>
+              </>
+            ) : (
+              <span className="text-muted text-xs">Đang tải feed VN...</span>
+            )}
           </div>
+
           <div className="bg-[#151b26] border border-[#1c2736] p-2.5 flex flex-col justify-between">
-            <span className="text-[10px] text-[#7d8ea3] font-bold tracking-widest mb-1">FOREIGN FLOW</span>
-            <span className="text-[#ff3d57] font-bold text-lg">{enhancedData.vietnamMarket.foreignFlow.d1}</span>
-            <span className="text-[#ff3d57] text-[10px] font-mono mt-1">5D Cumulative: {enhancedData.vietnamMarket.foreignFlow.d5}</span>
+            <span className="text-[10px] text-[#7d8ea3] font-bold tracking-widest mb-1">FOREIGN FLOW (TẠM)</span>
+            <span className="text-[#ff3d57] font-bold text-lg">{unlinkedData.foreignFlow.d1}</span>
+            <span className="text-[#ff3d57] text-[10px] font-mono mt-1">5D Cumulative: {unlinkedData.foreignFlow.d5}</span>
           </div>
+
           <div className="bg-[#151b26] border border-[#1c2736] p-2.5 flex flex-col justify-between">
             <span className="text-[10px] text-[#7d8ea3] font-bold tracking-widest mb-1">VÀNG SJC (PREMIUM)</span>
-            <span className="text-[#ffc107] font-bold text-lg">{enhancedData.vietnamMarket.sjcGold.price}</span>
-            <span className="text-[#ffc107] text-[10px] font-mono mt-1">Lệch TG: {enhancedData.vietnamMarket.sjcGold.premium} (Percentile {enhancedData.vietnamMarket.sjcGold.premiumPercentile})</span>
+            <span className="text-[#ffc107] font-bold text-lg">{unlinkedData.sjcGold.price}</span>
+            <span className="text-[#ffc107] text-[10px] font-mono mt-1">Lệch TG: {unlinkedData.sjcGold.premium} (Percentile {unlinkedData.sjcGold.premiumPercentile})</span>
           </div>
 
           <div className="bg-[#151b26] border border-[#1c2736] p-2.5 flex flex-col justify-between">
@@ -901,17 +868,17 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
           ))}
           {isLoading && (
             <div className="flex items-center gap-2 text-cyan font-sans font-medium text-[13px] p-2">
-              <Loader2 size={16} className="animate-spin" /> Đang parse Structured JSON Model...
+              <Loader2 size={16} className="animate-spin" /> Đang tổng hợp phân tích định lượng...
             </div>
           )}
         </div>
 
         <div className="px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar border-t border-line bg-panel">
-          <button onClick={() => handleSend("Phân tích Market Snapshot và kết xuất JSON Format về Action cho tôi.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <MessageSquareText size={14} /> Full Market Verdict
+          <button onClick={() => handleSend("Phân tích hiện tượng phân kỳ (Divergence) giữa VN-Index và độ rộng thị trường hôm nay.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <MessageSquareText size={14} /> Phân Tích VN Breadth
           </button>
-          <button onClick={() => handleSend("Có rủi ro hay sự phân kỳ (Divergence) nào đang xuất hiện trong Data Pipeline không?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <AlertTriangle size={14} /> Quét Risk & Divergences
+          <button onClick={() => handleSend("Với độ rộng thị trường yếu như hiện tại, danh mục của tôi nên hành động thế nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <AlertTriangle size={14} /> Chiến Lược Hành Động
           </button>
         </div>
 
