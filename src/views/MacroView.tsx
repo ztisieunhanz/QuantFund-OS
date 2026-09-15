@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
-import { BrainCircuit, Loader2, Send, MessageSquareText, Target, TrendingUp, AlertTriangle, Activity } from "lucide-react";
+import { BrainCircuit, Loader2, Send, MessageSquareText, Target, TrendingUp, AlertTriangle, Activity, ShieldAlert } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { MacroNewsTable } from "@/components/MacroNewsTable";
@@ -544,7 +544,7 @@ export function MacroView() {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\n- Đã nạp Yield Curve Engine (10Y-2Y Spread) & VIX Index\n- Đã kích hoạt Bộ định tuyến từ khóa (Gõ 'báo cáo' hoặc 'report' để xuất JSON Schema chuẩn)\n\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\n- Đã nạp Yield Curve Engine (10Y-2Y Spread) & VIX Index\n- Đã kích hoạt Stress-Test & Devil's Advocate Quick Actions\n\nBạn cần phân tích chiến lược nào?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -570,12 +570,13 @@ export function MacroView() {
     try {
       const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
 
-      // Kiểm tra từ khóa kích hoạt chế độ báo cáo định lượng
       const lowerText = userText.toLowerCase();
       const isReportMode = lowerText.includes("báo cáo") || 
                            lowerText.includes("report") || 
                            lowerText.includes("soi nhanh") || 
-                           lowerText.includes("full verdict");
+                           lowerText.includes("full verdict") ||
+                           lowerText.includes("stress-test") ||
+                           lowerText.includes("devil's advocate");
 
       const snapshotMacro = regime ? {
         label: regime.label,
@@ -649,17 +650,17 @@ export function MacroView() {
         }
       };
 
-      // PHÂN TÁCH PROMPT DỰA TRÊN CHẾ ĐỘ (REPORT MODE VS CHAT MODE)
       let systemPrompt = "";
       let generationConfig: any = undefined;
 
       if (isReportMode) {
         systemPrompt = `
 Bạn là AI QUANT EXPERT - Senior Portfolio Manager & Quant Risk Analyst.
-User yêu cầu một BÁO CÁO ĐỊNH LƯỢNG CHUYÊN SÂU.
+User yêu cầu một KỊCH BẢN STRESS-TEST, DEVIL'S ADVOCATE HOẶC BÁO CÁO CHUYÊN SÂU.
 NGUYÊN TẮC:
 - Dựa trên MarketSnapshot và câu hỏi. Không bịa số.
-- Đọc kỹ Yield Curve và VIX để nhận diện rủi ro vĩ mô.
+- Nếu là Stress-Test: Tính toán cụ thể mức tổn thất NAV ($100k) dựa trên tỷ trọng danh mục hiện tại.
+- Nếu là Devil's Advocate: Đóng vai phản biện sắc bén, tìm ra ít nhất 3 lý do tại sao quyết định HEDGE hoặc nhận định hiện tại có thể sai lầm chết người.
 - Xuất kết quả theo đúng chuẩn JSON Schema được yêu cầu. Không kèm text thừa ngoài JSON.
 MARKET SNAPSHOT:
 \`\`\`json
@@ -667,7 +668,7 @@ ${JSON.stringify(marketSnapshot, null, 2)}
 \`\`\`
         `;
         generationConfig = {
-          temperature: 0.1,
+          temperature: 0.15,
           responseMimeType: "application/json",
           responseSchema: {
             type: "OBJECT",
@@ -1020,24 +1021,28 @@ ${JSON.stringify(marketSnapshot, null, 2)}
           ))}
           {isLoading && (
             <div className="flex items-center gap-2 text-cyan font-sans font-medium text-[13px] p-2">
-              <Loader2 size={16} className="animate-spin" /> Đang đánh giá Yield Curve, VIX & Signal Confluence...
+              <Loader2 size={16} className="animate-spin" /> Đang chạy kịch bản Stress-Test & Phản biện chiến lược...
             </div>
           )}
         </div>
 
+        {/* QUICK ACTIONS: STRESS-TEST & DEVIL'S ADVOCATE */}
         <div className="px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar border-t border-line bg-panel">
-          <button onClick={() => handleSend("Báo cáo: Phân tích trạng thái Yield Curve (10Y-2Y Spread) và chỉ số VIX hiện tại ảnh hưởng thế nào đến danh mục?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <MessageSquareText size={14} /> Báo Cáo Yield Curve & VIX
+          <button onClick={() => handleSend("Báo cáo: Phân tích trạng thái Yield Curve (10Y-2Y Spread) và chỉ số VIX hiện tại.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <MessageSquareText size={14} /> Báo Cáo Vĩ Mô
           </button>
-          <button onClick={() => handleSend("Theo ông, liệu vàng có đang là hầm trú ẩn an toàn nhất lúc này không?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <Target size={14} /> Hỏi Đáp Nhanh Về Vàng
+          <button onClick={() => handleSend("Stress-test: Chạy kịch bản giả lập NAV ($100k) khi tài sản Crypto/BTC sập 15% và Equities sụt giảm 8%. Mức sụt giảm NAV tính bằng USD là bao nhiêu?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <TrendingUp size={14} /> Stress-Test NAV (BTC -15%)
+          </button>
+          <button onClick={() => handleSend("Devil's Advocate: Phản bác lại quyết định HEDGE của chính ông. Hãy tìm ra 3 lý do sắc bén tại sao việc HEDGE hoặc phòng thủ lúc này có thể là một sai lầm chết người.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <ShieldAlert size={14} /> Devil's Advocate (Phản Bác HEDGE)
           </button>
         </div>
 
         <form onSubmit={(e) => { e.preventDefault(); handleSend(input); }} className="p-4 border-t border-line flex gap-4 bg-panel">
           <textarea 
             rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
-            placeholder="Gõ 'báo cáo' hoặc 'report' để lấy JSON Schema, hoặc hỏi đáp tự nhiên... (Shift + Enter xuống dòng)"
+            placeholder="Gõ lệnh stress-test, 'báo cáo' hoặc hỏi đáp tự nhiên... (Shift + Enter xuống dòng)"
             className="flex-1 bg-[#0c1017] border border-line text-white px-5 py-3.5 rounded-lg text-[14px] font-sans focus:outline-none focus:border-cyan resize-none min-h-[50px] max-h-32 custom-scrollbar shadow-inner"
           />
           <button type="submit" disabled={isLoading || !input.trim()} className="bg-panel-2 border border-line hover:bg-cyan hover:text-[#0c1017] text-cyan font-black w-14 h-14 rounded-lg flex items-center justify-center transition-all disabled:opacity-50 shrink-0">
