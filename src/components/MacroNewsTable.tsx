@@ -1,174 +1,163 @@
+// ============================================================================
+// FILE: src/components/MacroNewsTable.tsx
+// MODULE: QUANT MACRO SIGNAL AUDIT TABLE
+// ============================================================================
+
 import React, { useMemo } from 'react';
-import { ArrowUpRight, ArrowDownRight, Minus, RefreshCw, Radio } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, Activity, Terminal } from 'lucide-react';
 import { clsx } from "@/lib/clsx";
 import { useMacroStore } from "@/stores/macroStore";
 
-export type SourceStatus = 'VERIFIED' | 'UNVERIFIED' | 'QUANT_ENGINE';
-
-export interface NewsItem {
+export interface SignalAuditItem {
   id: string;
-  timestamp: string;
-  event: string;
-  impact: 'HIGH' | 'MEDIUM' | 'LOW';
-  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-  description: string;
-  sourceStatus: SourceStatus;
-  source: string;
+  metric: string;
+  observedValue: string;
+  thresholdState: string;
+  severity: 'CRITICAL' | 'WARNING' | 'STABLE';
+  regimeImplication: string;
+  dataSource: string;
 }
 
 export const MacroNewsTable: React.FC = () => {
   const { series, regime, refreshedAt } = useMacroStore();
 
-  // TỰ ĐỘNG TỔNG HỢP SỰ KIỆN VĨ MÔ THỜI GIAN THỰC TỪ DỮ LIỆU ĐỊNH LƯỢNG
-  const dynamicEvents = useMemo<NewsItem[]>(() => {
-    const events: NewsItem[] = [];
-    const dateStr = refreshedAt ? new Date(refreshedAt).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'LIVE UPDATING';
+  const auditRecords = useMemo<SignalAuditItem[]>(() => {
+    const records: SignalAuditItem[] = [];
 
-    const yld10 = series.find(s => s.id === 'us10y');
-    const yld2 = series.find(s => s.id === 'us2y');
-    const vix = series.find(s => s.id === 'vix');
-    const gold = series.find(s => s.id === 'gold');
-    const dxy = series.find(s => s.id === 'dxy');
+    const yld10 = series.find((s) => s.id === "us10y");
+    const yld2 = series.find((s) => s.id === "us2y");
+    const vix = series.find((s) => s.id === "vix");
+    const dxy = series.find((s) => s.id === "dxy");
+    const btc = series.find((s) => s.id === "btc");
 
-    // 1. SỰ KIỆN ĐƯỜNG CONG LỢI SUẤT (YIELD CURVE SPREAD)
+    // 1. Kiểm toán Đường cong Lợi suất US10Y - US2Y
     if (yld10 && yld2 && Number.isFinite(yld10.last) && Number.isFinite(yld2.last)) {
       const spreadBps = Math.round((yld10.last - yld2.last) * 100);
       const isInverted = spreadBps < 0;
-      events.push({
-        id: 'ev-yield-curve',
-        timestamp: dateStr,
-        event: isInverted 
-          ? `Đường cong lợi suất US10Y-US2Y đảo ngược (${spreadBps} bps)` 
-          : `Độ dốc lợi suất US10Y-US2Y duy trì dương (+${spreadBps} bps)`,
-        impact: 'HIGH',
-        direction: isInverted ? 'BEARISH' : 'BULLISH',
-        description: isInverted 
-          ? `Lợi suất ngắn hạn US2Y (${yld2.last.toFixed(2)}%) vượt US10Y (${yld10.last.toFixed(2)}%). Áp lực thắt chặt tiền tệ gia tăng, cảnh báo rủi ro suy thoái chu kỳ.`
-          : `Đường cong lợi suất ở trạng thái bình thường hóa, áp lực thanh khoản hệ thống ngắn hạn được giải tỏa.`,
-        sourceStatus: 'VERIFIED',
-        source: 'US Treasury / Yield Engine'
+      records.push({
+        id: "audit-yield-spread",
+        metric: "Yield Spread (10Y - 2Y)",
+        observedValue: `${spreadBps} bps`,
+        thresholdState: isInverted ? "INVERSION (< 0 bps)" : "NORMAL (> 0 bps)",
+        severity: isInverted ? "CRITICAL" : "STABLE",
+        regimeImplication: isInverted
+          ? "Rủi ro chu kỳ thắt chặt thanh khoản ngắn hạn; Permission Gate hạ tỷ trọng Risk-On"
+          : "Đường cong dốc dương chuẩn, tạo nền thanh khoản ổn định cho tài sản rủi ro",
+        dataSource: `${yld10.source.toUpperCase()} · ${yld10.ticker}`,
       });
     }
 
-    // 2. SỰ KIỆN CHỈ SỐ BIẾN ĐỘNG VIX
+    // 2. Kiểm toán Độ biến động VIX
     if (vix && Number.isFinite(vix.last)) {
-      const isStress = vix.last >= 20;
-      events.push({
-        id: 'ev-vix',
-        timestamp: dateStr,
-        event: isStress 
-          ? `Chỉ số CBOE VIX vượt ngưỡng rủi ro (${vix.last.toFixed(2)} điểm)` 
-          : `Chỉ số CBOE VIX nằm trong vùng ổn định (${vix.last.toFixed(2)} điểm)`,
-        impact: isStress ? 'HIGH' : 'LOW',
-        direction: isStress ? 'BEARISH' : 'BULLISH',
-        description: isStress
-          ? `Biến động hợp đồng quyền chọn S&P 500 tăng vọt, phản ánh tâm lý lo ngại của các quỹ định chế và kích hoạt dòng vốn tìm nơi phòng vệ.`
-          : `Biến động thị trường cổ phiếu toàn cầu duy trì ở biên độ thấp, hỗ trợ khẩu vị rủi ro cho các tài sản beta cao.`,
-        sourceStatus: 'VERIFIED',
-        source: 'CBOE Market Data'
+      const isPanic = vix.last >= 25;
+      const isElevated = vix.last >= 20;
+      records.push({
+        id: "audit-vix-volatility",
+        metric: "CBOE Volatility (VIX)",
+        observedValue: `${vix.last.toFixed(2)} pts`,
+        thresholdState: isPanic ? "EXTREME (> 25)" : isElevated ? "ELEVATED (20-25)" : "COMPLACENT (< 20)",
+        severity: isPanic ? "CRITICAL" : isElevated ? "WARNING" : "STABLE",
+        regimeImplication: isPanic
+          ? "Biến động cực đoan: Kích hoạt Volatility Scaling giảm đòn bẩy danh mục"
+          : isElevated
+          ? "Rủi ro gia tăng: Thắt chặt dải Trailing Stop đối với các vị thế Momentum"
+          : "Môi trường biến động thấp: Cho phép phân bổ tỷ trọng theo mô hình cơ sở",
+        dataSource: `${vix.source.toUpperCase()} · ${vix.ticker}`,
       });
     }
 
-    // 3. SỰ KIỆN GIÁ VÀNG THẾ GIỚI & DÒNG TIỀN PHÒNG HỘ
-    if (gold && Number.isFinite(gold.last)) {
-      events.push({
-        id: 'ev-gold',
-        timestamp: dateStr,
-        event: `Vàng thế giới (PAXG/XAU) neo ở vùng $${gold.last.toLocaleString('en-US', { minimumFractionDigits: 2 })}/oz`,
-        impact: 'HIGH',
-        direction: 'BULLISH',
-        description: `Dòng vốn tổ chức tiếp tục tích lũy tài sản bảo chứng vật chất để chống lại lạm phát cơ bản và sự bất ổn của hệ thống thanh toán quốc tế.`,
-        sourceStatus: 'VERIFIED',
-        source: 'Binance PAXG Feed'
-      });
-    }
-
-    // 4. SỰ KIỆN SỨC MẠNH ĐỒNG USD (DXY)
+    // 3. Kiểm toán Áp lực USD (DXY 20D Return)
     if (dxy && Number.isFinite(dxy.last)) {
-      const dxyUp = dxy.changePct1d >= 0;
-      events.push({
-        id: 'ev-dxy',
-        timestamp: dateStr,
-        event: `Chỉ số US Dollar Index (DXY) dao động quanh ${dxy.last.toFixed(2)} (${dxyUp ? '+' : ''}${(dxy.changePct1d * 100).toFixed(2)}%)`,
-        impact: 'MEDIUM',
-        direction: dxyUp ? 'BEARISH' : 'BULLISH',
-        description: dxyUp 
-          ? `Đồng USD tăng giá gây sức ép lên tỷ giá USD/VND và thanh khoản ngoại tệ của các thị trường mới nổi.`
-          : `Đồng USD hạ nhiệt giúp giảm bớt áp lực can thiệp ngoại hối của các ngân hàng trung ương khu vực.`,
-        sourceStatus: 'VERIFIED',
-        source: 'ICE Dollar Index'
+      const dxySurge = dxy.changePct20d > 0.02;
+      records.push({
+        id: "audit-dxy-pressure",
+        metric: "US Dollar Index Momentum",
+        observedValue: `${dxy.last.toFixed(2)} (${(dxy.changePct20d * 100).toFixed(2)}%/20d)`,
+        thresholdState: dxySurge ? "DOLLAR RALLY (> +2%)" : "NEUTRAL / WEAKENING",
+        severity: dxySurge ? "WARNING" : "STABLE",
+        regimeImplication: dxySurge
+          ? "Dòng vốn rút ròng khỏi Emerging Markets; gia tăng chi phí phòng hộ tỷ giá"
+          : "Áp lực tỷ giá dịu bớt, dòng tiền phân bổ cân bằng hơn sang chứng khoán và vàng",
+        dataSource: `${dxy.source.toUpperCase()} · ${dxy.ticker}`,
       });
     }
 
-    return events;
-  }, [series, refreshedAt]);
+    // 4. Kiểm toán Trạng thái Bitcoin Benchmark
+    if (btc && Number.isFinite(btc.last)) {
+      records.push({
+        id: "audit-btc-benchmark",
+        metric: "BTC Benchmark Mark Price",
+        observedValue: `$${btc.last.toLocaleString("en-US", { maximumFractionDigits: 2 })}`,
+        thresholdState: btc.changePct1d >= 0 ? "BULLISH DELTA" : "BEARISH DELTA",
+        severity: "STABLE",
+        regimeImplication: `Hiệu suất 24h: ${(btc.changePct1d * 100).toFixed(2)}%. Định giá tài sản số neo theo luồng nến đồng bộ Paper Lab`,
+        dataSource: `${btc.source.toUpperCase()} · Binance Engine`,
+      });
+    }
+
+    return records;
+  }, [series]);
 
   return (
-    <div className="border border-line bg-panel p-4 mt-3 shrink-0 block w-full relative z-10 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
+    <div className="border border-line bg-panel p-3.5 mt-3 shrink-0 block w-full rounded-sm shadow-sm">
+      <div className="flex items-center justify-between mb-3 border-b border-line/50 pb-2">
         <div className="flex items-center gap-2">
-          <Radio size={14} className="text-cyan animate-pulse" />
-          <div className="font-mono text-[11px] tracking-[0.2em] text-cyan font-bold">
-            MACRO EVENT CALENDAR · SỰ KIỆN VĨ MÔ THỜI GIAN THỰC
-          </div>
+          <Terminal size={14} className="text-cyan" />
+          <span className="font-mono text-[11px] tracking-[0.18em] text-cyan font-bold">
+            QUANT SIGNAL & MACRO RISK AUDIT
+          </span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] text-[#00e676] border border-[#00e676]/40 bg-[#00e676]/10 px-2 py-0.5 rounded flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#00e676] animate-ping"></span>
-            LIVE QUANT ENGINE
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-[10px] text-muted">
+            SYNC: {refreshedAt ? new Date(refreshedAt).toISOString().slice(11, 19) : "—"} UTC
+          </span>
+          <span className="font-mono text-[9px] text-[#00e676] border border-[#00e676]/30 bg-[#00e676]/10 px-2 py-0.5 rounded">
+            REGIME: {regime?.label ?? "CALCULATING"}
           </span>
         </div>
       </div>
+
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse font-mono text-[12px]">
+        <table className="w-full text-left border-collapse font-mono text-[11px]">
           <thead className="text-muted border-b border-line bg-panel-2">
             <tr>
-              <th className="py-2.5 px-3 font-normal">THỜI GIAN</th>
-              <th className="py-2.5 px-3 font-normal">SỰ KIỆN ĐỊNH LƯỢNG</th>
-              <th className="py-2.5 px-3 text-center font-normal">MỨC ĐỘ</th>
-              <th className="py-2.5 px-3 text-center font-normal">TÁC ĐỘNG</th>
-              <th className="py-2.5 px-3 font-normal">PHÂN TÍCH RỦI RO CHI TIẾT</th>
+              <th className="py-2 px-3">CHỈ SỐ KIỂM TOÁN</th>
+              <th className="py-2 px-3">GIÁ TRỊ QUAN SÁT</th>
+              <th className="py-2 px-3 text-center">TRẠNG THÁI NGƯỠNG</th>
+              <th className="py-2 px-3 text-center">MỨC RỦI RO</th>
+              <th className="py-2 px-3">TÁC ĐỘNG ĐIỀU TIẾT QUẢN TRỊ (REGIME IMPLICATION)</th>
+              <th className="py-2 px-3 text-right">NGUỒN DỮ LIỆU</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
-            {dynamicEvents.map((item) => (
-              <tr key={item.id} className="hover:bg-panel-2 transition-colors">
-                <td className="py-3 px-3 text-muted whitespace-nowrap">{item.timestamp}</td>
-                <td className="py-3 px-3">
-                  <div className="text-ink font-bold">{item.event}</div>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <span className={clsx("text-[9px] px-1.5 py-0.2 rounded border font-bold uppercase", 
-                      item.sourceStatus === 'VERIFIED' ? "bg-[#00e676]/10 text-[#00e676] border-[#00e676]/30" : 
-                      item.sourceStatus === 'UNVERIFIED' ? "bg-amber/10 text-amber border-amber/30" : 
-                      "bg-cyan/10 text-cyan border-cyan/30"
-                    )}>
-                      {item.sourceStatus}
-                    </span>
-                    <span className="text-[9px] text-muted">{item.source}</span>
-                  </div>
-                </td>
-                <td className="py-3 px-3 text-center align-middle">
-                  <span className={clsx("px-2 py-0.5 rounded text-[10px] font-bold tracking-wider", 
-                    item.impact === 'HIGH' ? "bg-[#ff3d57]/20 text-down border border-[#ff3d57]/30" : 
-                    item.impact === 'MEDIUM' ? "bg-amber/20 text-amber border border-amber/30" :
-                    "bg-[#00e676]/20 text-[#00e676] border border-[#00e676]/30"
-                  )}>
-                    {item.impact}
+            {auditRecords.map((row) => (
+              <tr key={row.id} className="hover:bg-panel-2/70 transition-colors">
+                <td className="py-2.5 px-3 font-bold text-white">{row.metric}</td>
+                <td className="py-2.5 px-3 font-mono font-bold text-ink">{row.observedValue}</td>
+                <td className="py-2.5 px-3 text-center text-muted">{row.thresholdState}</td>
+                <td className="py-2.5 px-3 text-center">
+                  <span
+                    className={clsx(
+                      "px-2 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase inline-flex items-center gap-1",
+                      row.severity === "CRITICAL"
+                        ? "bg-down/20 text-down border border-down/30"
+                        : row.severity === "WARNING"
+                        ? "bg-amber/20 text-amber border border-amber/30"
+                        : "bg-up/20 text-up border border-up/30"
+                    )}
+                  >
+                    {row.severity === "CRITICAL" && <ShieldAlert size={10} />}
+                    {row.severity === "STABLE" && <ShieldCheck size={10} />}
+                    {row.severity === "WARNING" && <Activity size={10} />}
+                    {row.severity}
                   </span>
                 </td>
-                <td className="py-3 px-3 align-middle">
-                  <div className="flex items-center justify-center gap-1.5 text-[11px] font-bold">
-                    {item.direction === 'BULLISH' && <ArrowUpRight className="w-3.5 h-3.5 text-up" />}
-                    {item.direction === 'BEARISH' && <ArrowDownRight className="w-3.5 h-3.5 text-down" />}
-                    {item.direction === 'NEUTRAL' && <Minus className="w-3.5 h-3.5 text-muted" />}
-                    <span className={clsx(
-                      item.direction === 'BULLISH' ? "text-up" : item.direction === 'BEARISH' ? "text-down" : "text-muted"
-                    )}>
-                      {item.direction}
-                    </span>
-                  </div>
+                <td className="py-2.5 px-3 text-muted leading-relaxed whitespace-normal">
+                  {row.regimeImplication}
                 </td>
-                <td className="py-3 px-3 text-muted leading-relaxed whitespace-normal align-middle">{item.description}</td>
+                <td className="py-2.5 px-3 text-right font-mono text-[10px] text-cyan">
+                  {row.dataSource}
+                </td>
               </tr>
             ))}
           </tbody>
