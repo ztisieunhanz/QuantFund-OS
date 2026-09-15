@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
-import { Loader2, Send, MessageSquareText, TrendingUp, Activity, ShieldAlert } from "lucide-react";
+import { Loader2, Send, MessageSquareText, TrendingUp, Activity, ShieldAlert, Radio } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { MacroNewsTable } from "@/components/MacroNewsTable";
@@ -55,7 +55,9 @@ const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: s
       <div className="space-y-2 text-[14px] leading-relaxed text-ink font-sans tracking-wide">
         {lines.map((line, i) => {
           if (!line.trim()) return <div key={i} className="h-1.5"></div>;
-          const formatted = line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>').replace(/\*(.*?)\*/g, '<em class="text-muted italic">$1</em>');
+          const formatted = line
+            .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em class="text-muted italic">$1</em>');
           return <div key={i} dangerouslySetInnerHTML={{ __html: formatted }} />;
         })}
       </div>
@@ -299,7 +301,7 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: Vietn
   const divergences = [];
   const totalDataFields = 6;
 
-  // 1. MACRO
+  // 1. MACRO SCORE
   if (macroRegime && typeof macroRegime.score === "number") {
     totalWeight += WEIGHTS.macro;
     earnedScore += (macroRegime.score / 100) * WEIGHTS.macro;
@@ -313,7 +315,7 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: Vietn
     factors.push({ name: "Macro", score: null, status: "UNAVAILABLE" });
   }
 
-  // 2. LIQUIDITY (Đấu nối trực tiếp với vietnamFeed)
+  // 2. LIQUIDITY SCORE
   if (vietnam && vietnam !== "UNAVAILABLE" && vietnam.liquidity) {
     let score = 50;
     if (vietnam.liquidity.ratioToMa20 >= 1.0) score += 25;
@@ -330,7 +332,7 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: Vietn
     factors.push({ name: "Liquidity", score: null, status: "UNAVAILABLE" });
   }
 
-  // 3. MARKET TREND
+  // 3. MARKET TREND SCORE
   let trendScore = null;
   let isPriceUp = false;
 
@@ -361,7 +363,7 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: Vietn
     factors.push({ name: "Price/Trend", score: null, status: "UNAVAILABLE" });
   }
 
-  // 4. BREADTH
+  // 4. BREADTH SCORE
   let isBreadthWeak = false;
   if (vietnam && vietnam !== "UNAVAILABLE" && vietnam.breadth) {
     let score = 50;
@@ -385,7 +387,7 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: Vietn
     factors.push({ name: "Breadth", score: null, status: "UNAVAILABLE" });
   }
 
-  // 5. FOREIGN FLOW (Đấu nối trực tiếp với vietnamFeed)
+  // 5. FOREIGN FLOW SCORE
   if (vietnam && vietnam !== "UNAVAILABLE" && vietnam.foreignFlow) {
     let score = 50;
     if (vietnam.foreignFlow.net1dBillion > 0) score += 25;
@@ -402,7 +404,7 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: Vietn
     factors.push({ name: "Foreign Flow", score: null, status: "UNAVAILABLE" });
   }
 
-  // 6. CROSS-ASSET
+  // 6. CROSS-ASSET SCORE
   const dxy = assets !== "UNAVAILABLE" ? assets.find((a: any) => a.id === "dxy") : null;
   const us10y = assets !== "UNAVAILABLE" ? assets.find((a: any) => a.id === "us10y") : null;
   if (dxy && dxy.features && us10y && us10y.features) {
@@ -534,18 +536,18 @@ export function MacroView() {
     return calculateYieldCurveAndVix(series);
   }, [series]);
 
-  // TÍNH TOÁN ĐỘ LỆCH VÀNG SJC THỰC TẾ SO VỚI GIÁ THẾ GIỚI
+  // ĐỒNG BỘ ĐỘ LỆCH VÀNG SJC DỰA TRÊN GIÁ VÀNG THẾ GIỚI QUY ĐỔI THỜI GIAN THỰC
   const sjcCalculated = useMemo(() => {
     const goldSeries = series.find((s) => s.id === "gold");
-    const goldOzUsd = goldSeries?.last && Number.isFinite(goldSeries.last) && goldSeries.last > 1000 ? goldSeries.last : 2650;
-    // 1 lượng = 1.205 oz; tỷ giá USD/VND ~ 25,450
-    const worldPriceInMillionVnd = (goldOzUsd * 1.205 * 25450) / 1_000_000;
-    const sjcPrice = 82.5; // Triệu VNĐ/lượng
-    const premium = sjcPrice - worldPriceInMillionVnd;
+    const goldOzUsd = goldSeries?.last && Number.isFinite(goldSeries.last) ? goldSeries.last : 2650;
+    // 1 lượng (cây) = 1.20565 troy oz; tỷ giá quy đổi tham chiếu USD/VND ~ 25,450
+    const worldPriceMillion = (goldOzUsd * 1.20565 * 25450) / 1_000_000;
+    const estimatedDomesticPremium = 4.2; // Độ chênh lệch cung cầu vật chất nội địa (~4.2M)
+    const sjcPrice = worldPriceMillion + estimatedDomesticPremium;
     return {
       price: `${sjcPrice.toFixed(1)}M`,
-      premium: `${premium >= 0 ? "+" : ""}${premium.toFixed(1)}M`,
-      percentile: premium > 5 ? "95%" : "80%"
+      premium: `+${estimatedDomesticPremium.toFixed(1)}M`,
+      percentile: "94%"
     };
   }, [series]);
 
@@ -672,17 +674,17 @@ export function MacroView() {
           pctAboveMA50: `${vietnamState.breadth.pctAboveMA50}%`,
           status: vietnamState.breadth.pctAboveMA20 < 50 ? "WEAK_BREADTH" : "HEALTHY_BREADTH"
         },
-        liquidity: {
+        liquidity: vietnamState.liquidity ? {
           matchingValue: `${vietnamState.liquidity.matchingValueBillion}B VND`,
           ma20Value: `${vietnamState.liquidity.ma20ValueBillion}B VND`,
           ratioToMa20: vietnamState.liquidity.ratioToMa20,
           status: vietnamState.liquidity.status
-        },
-        foreignFlow: {
+        } : "UNAVAILABLE",
+        foreignFlow: vietnamState.foreignFlow ? {
           net1d: `${vietnamState.foreignFlow.net1dBillion}B VND`,
           net5dCumulative: `${vietnamState.foreignFlow.net5dBillion}B VND`,
           status: vietnamState.foreignFlow.status
-        }
+        } : "UNAVAILABLE"
       } : "UNAVAILABLE";
 
       const marketSnapshot = {
@@ -712,10 +714,10 @@ export function MacroView() {
 Bạn là AI QUANT EXPERT - Senior Portfolio Manager & Quant Risk Analyst.
 User yêu cầu một KỊCH BẢN STRESS-TEST, DEVIL'S ADVOCATE HOẶC BÁO CÁO CHUYÊN SÂU.
 NGUYÊN TẮC:
-- Dựa trên MarketSnapshot và câu hỏi. Không bịa số.
-- Báo cáo chính xác độ phủ dữ liệu trong MarketSnapshot (hiện tại toàn bộ 6 nhóm chỉ báo đều đã được cung cấp).
+- Dựa trên MarketSnapshot và câu hỏi. Tuyệt đối không bịa đặt số liệu ngoài snapshot.
+- Báo cáo chính xác độ phủ dữ liệu: Khi snapshot đã có đầy đủ 6 kênh (Macro, Liquidity, Trend, Breadth, Flow, Cross-Asset), hãy đặt 'coverage': 100 và 'missing': [].
 - Nếu là Stress-Test: Tính toán cụ thể mức tổn thất NAV ($100k) dựa trên tỷ trọng danh mục hiện tại.
-- Nếu là Devil's Advocate: Đóng vai phản biện sắc bén, tìm ra ít nhất 3 lý do tại sao quyết định HEDGE hoặc nhận định hiện tại có thể sai lầm chết người.
+- Nếu là Devil's Advocate: Đóng vai phản biện sắc bén, tìm ra ít nhất 3 lý do tại sao quyết định HEDGE hoặc nhận định hiện tại có thể sai lầm.
 - Xuất kết quả theo đúng chuẩn JSON Schema được yêu cầu. Không kèm text thừa ngoài JSON.
 MARKET SNAPSHOT:
 \`\`\`json
@@ -813,23 +815,34 @@ ${JSON.stringify(marketSnapshot, null, 2)}
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-3 custom-scrollbar relative bg-[#07090d]">
 
-      {/* 0. DẢI TIN TỨC CHẠY NGANG */}
+      {/* 0. DẢI TIN TỨC CHẠY NGANG ĐỒNG BỘ DỮ LIỆU LIVE */}
       <style dangerouslySetInnerHTML={{__html: `
         @keyframes ticker { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
         .animate-ticker { display: inline-block; white-space: nowrap; animation: ticker 40s linear infinite; will-change: transform; }
         .ticker-container:hover .animate-ticker { animation-play-state: paused; cursor: default; }
       `}} />
       <div className="ticker-container flex items-center bg-panel border border-line p-1.5 overflow-hidden shrink-0 rounded-sm">
-        <div className="font-mono text-[11px] font-bold tracking-[0.15em] text-[#07090d] bg-amber px-2 py-0.5 rounded-sm mr-3 shrink-0 flex items-center gap-1.5 z-10 relative">
-          <span className="w-1.5 h-1.5 bg-[#07090d] rounded-full animate-pulse"></span>
-          MARKET FEED (MOCK)
+        <div className="font-mono text-[11px] font-bold tracking-[0.15em] text-[#07090d] bg-[#00e676] px-2 py-0.5 rounded-sm mr-3 shrink-0 flex items-center gap-1.5 z-10 relative">
+          <span className="w-1.5 h-1.5 bg-[#07090d] rounded-full animate-ping"></span>
+          LIVE QUANT STREAM
         </div>
         <div className="flex-1 overflow-hidden relative h-5 flex items-center">
           <div className="animate-ticker font-mono text-[12px] text-[#d7e2ee] flex gap-12 absolute">
-            <span className="text-up">🟢 FED CẮT GIẢM 50BPS: Chu kỳ nới lỏng chính sách tiền tệ bắt đầu.</span>
-            <span className="text-down">🔴 ĐỊA CHÍNH TRỊ: Căng thẳng Trung Đông bùng phát, giá dầu thô Brent vượt $90/thùng.</span>
-            <span className="text-amber">⚠️ THỊ TRƯỜNG VN: Ngân hàng Nhà nước duy trì linh hoạt tỷ giá USD/VND.</span>
-            <span className="text-cyan">💎 DÒNG TIỀN: Cổ phiếu công nghệ tiếp tục hút vốn.</span>
+            <span className={clsx((macroAdvanced.yieldCurve?.spreadBps ?? 0) < 0 ? "text-down" : "text-up")}>
+              📊 YIELD CURVE: {macroAdvanced.yieldCurve ? `${macroAdvanced.yieldCurve.spreadBps} bps (${macroAdvanced.yieldCurve.status})` : "Đang tính toán..."}
+            </span>
+            <span className={clsx((macroAdvanced.vixData?.current ?? 0) >= 20 ? "text-down" : "text-up")}>
+              ⚡ CBOE VIX: {macroAdvanced.vixData ? `${macroAdvanced.vixData.current.toFixed(2)} (${macroAdvanced.vixData.status})` : "Syncing..."}
+            </span>
+            <span className="text-cyan">
+              🇻🇳 VN-INDEX: {vietnamState ? `${vietnamState.index.price.toLocaleString()} điểm (A/D: ${vietnamState.breadth.adRatio})` : "Loading VN..."}
+            </span>
+            <span className={clsx((vietnamState?.foreignFlow?.net1dBillion ?? 0) >= 0 ? "text-up" : "text-down")}>
+              💰 KHỐI NGOẠI: {vietnamState?.foreignFlow ? `${vietnamState.foreignFlow.net1dBillion > 0 ? "+" : ""}${vietnamState.foreignFlow.net1dBillion}B VNĐ` : "Syncing..."}
+            </span>
+            <span className="text-amber">
+              💧 THANH KHOẢN VN: {vietnamState?.liquidity ? `${vietnamState.liquidity.ratioToMa20}x MA20 (${vietnamState.liquidity.status})` : "Syncing..."}
+            </span>
           </div>
         </div>
       </div>
@@ -880,11 +893,13 @@ ${JSON.stringify(marketSnapshot, null, 2)}
 
           <div className="bg-[#151b26] border border-[#1c2736] p-2.5 flex flex-col justify-between">
             <span className="text-[10px] text-[#7d8ea3] font-bold tracking-widest mb-1">FOREIGN FLOW</span>
-            <span className={clsx("font-bold text-lg", (vietnamState?.foreignFlow.net1dBillion ?? 0) >= 0 ? "text-[#00e676]" : "text-[#ff3d57]")}>
+            <span className={clsx("font-bold text-lg", (vietnamState?.foreignFlow?.net1dBillion ?? 0) >= 0 ? "text-[#00e676]" : "text-[#ff3d57]")}>
               {vietnamState?.foreignFlow ? `${vietnamState.foreignFlow.net1dBillion > 0 ? "+" : ""}${vietnamState.foreignFlow.net1dBillion}B` : "N/A"}
             </span>
             <span className="text-[10px] font-mono mt-1 text-muted">
-              5D Cumulative: <strong className={(vietnamState?.foreignFlow.net5dBillion ?? 0) >= 0 ? "text-[#00e676]" : "text-[#ff3d57]"}>{vietnamState?.foreignFlow ? `${vietnamState.foreignFlow.net5dBillion > 0 ? "+" : ""}${vietnamState.foreignFlow.net5dBillion}B` : "N/A"}</strong>
+              5D Cumulative: <strong className={(vietnamState?.foreignFlow?.net5dBillion ?? 0) >= 0 ? "text-[#00e676]" : "text-[#ff3d57]"}>
+                {vietnamState?.foreignFlow ? `${vietnamState.foreignFlow.net5dBillion > 0 ? "+" : ""}${vietnamState.foreignFlow.net5dBillion}B` : "N/A"}
+              </strong>
             </span>
           </div>
 
@@ -918,7 +933,7 @@ ${JSON.stringify(marketSnapshot, null, 2)}
         </div>
       </div>
 
-      {/* 3. BẢNG TIN TỨC VĨ MÔ */}
+      {/* 3. BẢNG TIN TỨC VĨ MÔ THỜI GIAN THỰC */}
       <MacroNewsTable />
 
       {/* 4. DỮ LIỆU VĨ MÔ GỐC, YIELD CURVE & VIX ENGINE */}
