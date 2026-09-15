@@ -1,6 +1,6 @@
 // ============================================================================
 // FILE: src/lib/paperEngine.ts
-// MODULE: QUANT ADAPTER & BENCHMARK CONTROLLER
+// MODULE: QUANT ADAPTER & REPLAY ENGINE (LIVE STREAM SYNCED)
 // ============================================================================
 
 import type {
@@ -16,7 +16,6 @@ import { runBacktest, type BacktestDataset } from "@/lib/quant/backtestEngine";
 import type {
   BacktestConfig,
   DecisionState,
-  OrderSide,
   PointInTimeBar,
   PointInTimeEvent,
   PointInTimeMacro,
@@ -26,8 +25,8 @@ import type {
 import { useMacroStore } from "@/stores/macroStore";
 
 export const STARTING_EQUITY = 10_000;
-export const FEE_BPS = 0.001;       // 10 bps
-export const SLIPPAGE_BPS = 0.0005; // 5 bps
+export const FEE_BPS = 0.001;       // 10 bps hoa hồng
+export const SLIPPAGE_BPS = 0.0005; // 5 bps trượt giá cố định
 
 interface SubBotTracker {
   readonly id: QuantBotId;
@@ -101,7 +100,7 @@ export class PaperEngine {
   event: SubBotTracker = createSubBot("event", "EVENT_REACTION", "Alpha 2 · Event Catalyst");
   mean: SubBotTracker = createSubBot("meanrev", "MEAN_REVERSION", "Alpha 3 · Mean Reversion");
   omega: SubBotTracker = createSubBot("omega", "OMEGA_PORTFOLIO", "Omega · Quant Meta-Fund");
-  benchmarkDca: SubBotTracker = createSubBot("benchmark_dca", "BENCHMARK_DCA", "Control · Passive DCA 10%");
+  benchmarkDca: SubBotTracker = createSubBot("benchmark_dca", "BENCHMARK_DCA", "Control · Passive DCA 5%");
   
   latestDecision: DecisionState | null = null;
 
@@ -110,7 +109,7 @@ export class PaperEngine {
     this.event = createSubBot("event", "EVENT_REACTION", "Alpha 2 · Event Catalyst");
     this.mean = createSubBot("meanrev", "MEAN_REVERSION", "Alpha 3 · Mean Reversion");
     this.omega = createSubBot("omega", "OMEGA_PORTFOLIO", "Omega · Quant Meta-Fund");
-    this.benchmarkDca = createSubBot("benchmark_dca", "BENCHMARK_DCA", "Control · Passive DCA 10%");
+    this.benchmarkDca = createSubBot("benchmark_dca", "BENCHMARK_DCA", "Control · Passive DCA 5%");
     this.latestDecision = null;
   }
 
@@ -127,7 +126,7 @@ export class PaperEngine {
     this.reset();
     const lastClosePrice = bars && bars.length > 0 ? (bars.at(-1)?.close ?? 0) : 0;
 
-    // Bắt buộc dữ liệu tối thiểu phải nuôi đủ 125 nến Warmup
+    // Yêu cầu tối thiểu 130 nến để vượt qua 125 nến warmup của Adaptive Trend
     if (!bars || bars.length < 130) {
       return {
         trend: toBotMetrics(this.trend, lastClosePrice),
@@ -152,34 +151,38 @@ export class PaperEngine {
       const macroStore = useMacroStore.getState();
       const seriesList = macroStore?.series ?? [];
 
+      const yld10 = seriesList.find((s) => s.id === "us10y")?.last ?? 4.58;
+      const yld2 = seriesList.find((s) => s.id === "us2y")?.last ?? 4.86;
+      const vixVal = seriesList.find((s) => s.id === "vix")?.last ?? 18.5;
+
       const macroTimeline: PointInTimeMacro[] = [
         {
           asOfTimestamp: pitBars[0]?.timestamp ?? Date.now(),
           regime: (macroStore?.regime?.label as any) ?? "Transitional Mixed",
           regimeScore: macroStore?.regime?.score ?? 50,
-          yield10Y: seriesList.find((s) => s.id === "us10y")?.last ?? 4.588,
-          yield2Y: seriesList.find((s) => s.id === "us2y")?.last ?? 4.865,
-          yieldSpreadBps: -28,
-          vixLevel: seriesList.find((s) => s.id === "vix")?.last ?? 20.85,
-          vixZScore: 1.4,
+          yield10Y: yld10,
+          yield2Y: yld2,
+          yieldSpreadBps: Math.round((yld10 - yld2) * 100),
+          vixLevel: vixVal,
+          vixZScore: vixVal >= 25 ? 2.1 : vixVal >= 20 ? 1.2 : 0.2,
           marketBreadthRatio: 0.45,
-          marketBreadthPctAboveMa20: 38,
-          marketLiquidityRatio: 0.8,
-          foreignNetFlowBillion: -500,
+          marketBreadthPctAboveMa20: 42,
+          marketLiquidityRatio: 0.9,
+          foreignNetFlowBillion: -350,
         },
       ];
 
-      // Đảm bảo event có consensus snapshot trước thời điểm diễn ra
+      // Đặt sự kiện kiểm toán vĩ mô tại mốc 20 nến trước thời điểm hiện tại
       const eventIdx = Math.max(0, pitBars.length - 20);
       const eventTimestamp = pitBars[eventIdx]?.timestamp ?? Date.now();
 
       const eventTimeline: PointInTimeEvent[] = [
         {
-          eventId: "fed-rate-decision",
+          eventId: "fed-policy-decision",
           eventType: "FED_RATE_DECISION",
           eventTimestamp,
           publicationTimestamp: eventTimestamp,
-          consensusSnapshotTimestamp: eventTimestamp - 3600000, // Chốt 1h trước khi ra tin
+          consensusSnapshotTimestamp: eventTimestamp - 3600000,
           actual: 4.75,
           consensus: 5.0,
           previous: 5.25,
@@ -197,10 +200,10 @@ export class PaperEngine {
       };
 
       const config: BacktestConfig = {
-        runId: `run-${Date.now()}`,
+        runId: `run-live-${Date.now()}`,
         startDate: 0,
         endDate: 0,
-        warmupPeriod: 125, // Bắt buộc >= 125
+        warmupPeriod: 125,
         initialCapital: STARTING_EQUITY,
         commissionRate: FEE_BPS,
         slippageModel: { type: "FIXED_BPS", baseBps: SLIPPAGE_BPS * 10000 },
@@ -212,13 +215,13 @@ export class PaperEngine {
       const backtestResult = runBacktest(config, dataset);
       this.latestDecision = backtestResult.timeline.at(-1) ?? null;
 
-      // Đồng bộ dữ liệu từng bar sau warmup
+      // Replay chi tiết từng bước nến sau warmup
       for (const step of backtestResult.timeline) {
         const bar = bars[step.barIndex] ?? bars[bars.length - 1];
         const barPrice = bar?.close ?? lastClosePrice;
         const barTimestampSec = Math.floor(step.timestamp / 1000);
 
-        // A. Cập nhật Omega Meta-Fund
+        // 1. Cập nhật Omega Meta-Fund
         this.omega.equityCurve.push({ time: barTimestampSec, equity: step.nav });
         this.omega.cash = step.cash;
         this.omega.qty = step.positions["BTC"]?.quantity ?? 0;
@@ -226,7 +229,7 @@ export class PaperEngine {
         this.omega.maxDrawdown = Math.max(this.omega.maxDrawdown, step.currentDrawdown);
         this.omega.lastSignalDescription = step.targetWeights.rationale.slice(0, 48);
 
-        // B. Cập nhật 3 Alphas độc lập
+        // 2. Cập nhật 3 Alphas độc lập
         const signalsList = step.signals ?? [];
         const trendSig = signalsList.find((s) => s.strategyId === "ADAPTIVE_TREND");
         const eventSig = signalsList.find((s) => s.strategyId === "EVENT_REACTION");
@@ -236,11 +239,11 @@ export class PaperEngine {
         this.simulateAlphaStrategy(this.event, eventSig?.alphaScore ?? 0, eventSig?.confidence ?? 0, barPrice, barTimestampSec, eventSig?.rationale);
         this.simulateAlphaStrategy(this.mean, mrSig?.alphaScore ?? 0, mrSig?.confidence ?? 0, barPrice, barTimestampSec, mrSig?.rationale);
 
-        // C. Cập nhật Benchmark Đối chứng DCA (Mua tích sản 5% cash mỗi 7 ngày)
+        // 3. Cập nhật Benchmark Đối chứng DCA (Tích sản 5% vốn mỗi 7 phiên)
         this.simulateBenchmarkDca(barPrice, barTimestampSec, step.barIndex);
       }
     } catch (err) {
-      console.error("[QuantEngine] Backtest replay error:", err);
+      console.error("[QuantEngine Live Sync] Replay execution error:", err);
     }
 
     return {
@@ -344,9 +347,8 @@ export class PaperEngine {
   }
 
   private simulateBenchmarkDca(price: number, timestampSec: number, barIndex: number): void {
-    // Mua định kỳ mỗi 7 nến, giải ngân 5% vốn ban đầu ($500) cho đến khi hết tiền mặt
     const dcaInterval = 7;
-    const allocAmount = STARTING_EQUITY * 0.05;
+    const allocAmount = STARTING_EQUITY * 0.05; // Giải ngân $500 mỗi chu kỳ
 
     if (barIndex % dcaInterval === 0 && this.benchmarkDca.cash >= allocAmount && price > 0) {
       const slippedPrice = price * (1 + SLIPPAGE_BPS);
@@ -367,7 +369,7 @@ export class PaperEngine {
         slippage: slippedPrice - price,
         notional: allocAmount,
       });
-      this.benchmarkDca.lastSignalDescription = `PERIODIC_ACCUMULATE $${allocAmount}`;
+      this.benchmarkDca.lastSignalDescription = `ACCUMULATE $${allocAmount}`;
     }
 
     const eq = this.benchmarkDca.cash + this.benchmarkDca.qty * price;
