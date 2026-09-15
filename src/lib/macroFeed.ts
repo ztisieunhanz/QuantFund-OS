@@ -1,9 +1,11 @@
 import type { MacroSeries, TimeSeriesPoint } from "@/types/market";
 import { mulberry32, pctChange } from "@/lib/math";
 
-const YAHOO: Record<Exclude<MacroSeries["id"], "us2y" | "vix">, { ticker: string; name: string }> = {
+const YAHOO: Record<MacroSeries["id"], { ticker: string; name: string }> = {
   dxy: { ticker: "DX-Y.NYB", name: "US Dollar Index" },
   us10y: { ticker: "^TNX", name: "US 10Y Yield" },
+  us2y: { ticker: "US2Y=X", name: "US 2Y Yield" },
+  vix: { ticker: "^VIX", name: "CBOE Volatility Index" },
   gold: { ticker: "GC=F", name: "Gold (XAU)" },
   btc: { ticker: "BTC-USD", name: "Bitcoin" },
 };
@@ -17,7 +19,6 @@ interface YahooChartResponse {
   };
 }
 
-// 1. KÉO GIÁ BTC TRỰC TIẾP TỪ BINANCE (Mở CORS 100%)
 async function fetchBinanceBtc(): Promise<MacroSeries | null> {
   try {
     const url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=120";
@@ -33,12 +34,10 @@ async function fetchBinanceBtc(): Promise<MacroSeries | null> {
 
     return toMacroSeries("btc", "BTCUSDT", "Bitcoin", points, "live");
   } catch (e) {
-    console.warn("Binance BTC fetch failed:", e);
     return null;
   }
 }
 
-// 2. KÉO GIÁ VÀNG TRỰC TIẾP TỪ BINANCE (PAXGUSDT - Bảo chứng 1:1 bằng 1 Troy Ounce Vàng thật)
 async function fetchBinanceGold(): Promise<MacroSeries | null> {
   try {
     const url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=120";
@@ -54,17 +53,14 @@ async function fetchBinanceGold(): Promise<MacroSeries | null> {
 
     return toMacroSeries("gold", "PAXG/XAU", "Gold (XAU)", points, "live");
   } catch (e) {
-    console.warn("Binance Gold (PAXG) fetch failed:", e);
     return null;
   }
 }
 
-// 3. KÉO TÀI SẢN VĨ MÔ QUA CORS-PROXY ĐỂ VƯỢT RÀO CHẶN BROWSER
-async function fetchYahooViaProxy(id: Exclude<MacroSeries["id"], "us2y" | "vix">): Promise<MacroSeries | null> {
+async function fetchYahooViaProxy(id: MacroSeries["id"]): Promise<MacroSeries | null> {
   const meta = YAHOO[id];
   const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=6mo`;
 
-  // Thử lần lượt: Proxy nội bộ Vite -> Proxy công khai
   const proxies = [
     `/api/yahoo/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=6mo`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
@@ -90,7 +86,7 @@ async function fetchYahooViaProxy(id: Exclude<MacroSeries["id"], "us2y" | "vix">
         return toMacroSeries(id, meta.ticker, meta.name, points, "live");
       }
     } catch (e) {
-      // Tiếp tục fallback sang proxy kế tiếp
+      // Thử proxy tiếp theo
     }
   }
 
@@ -120,26 +116,31 @@ function toMacroSeries(
   };
 }
 
-// 4. MÔ HÌNH TOÁN HỌC DỰ PHÒNG NẾU MẤT MẠNG
-function syntheticSeries(id: Exclude<MacroSeries["id"], "us2y" | "vix">): MacroSeries {
+function syntheticSeries(id: MacroSeries["id"]): MacroSeries {
   const meta = YAHOO[id];
-  const seedMap = { dxy: 11, us10y: 22, gold: 33, btc: 44 };
+  const seedMap = { dxy: 11, us10y: 22, us2y: 25, vix: 28, gold: 33, btc: 44 };
   const rand = mulberry32(seedMap[id] + 20260914);
-  const start: Record<typeof id, number> = {
+  const start: Record<MacroSeries["id"], number> = {
     dxy: 104.2,
     us10y: 4.18,
+    us2y: 4.45,
+    vix: 16.5,
     gold: 2485,
     btc: 63800,
   };
-  const vol: Record<typeof id, number> = {
+  const vol: Record<MacroSeries["id"], number> = {
     dxy: 0.0024,
     us10y: 0.012,
+    us2y: 0.011,
+    vix: 0.035,
     gold: 0.007,
     btc: 0.028,
   };
-  const drift: Record<typeof id, number> = {
+  const drift: Record<MacroSeries["id"], number> = {
     dxy: 0.00018,
     us10y: 0.0004,
+    us2y: 0.00035,
+    vix: -0.0001,
     gold: -0.00005,
     btc: -0.0004,
   };
@@ -150,34 +151,28 @@ function syntheticSeries(id: Exclude<MacroSeries["id"], "us2y" | "vix">): MacroS
   const day = 86_400_000;
   for (let i = 120; i >= 0; i -= 1) {
     const shock = (rand() - 0.48) * vol[id];
-    px = Math.max(px * (1 + drift[id] + shock), id === "us10y" ? 0.5 : 1);
+    px = Math.max(px * (1 + drift[id] + shock), id === "us10y" || id === "us2y" ? 0.5 : 1);
     points.push({ time: now - i * day, value: px });
   }
   return toMacroSeries(id, meta.ticker, meta.name, points, "synthetic");
 }
 
 export async function loadMacroUniverse(): Promise<MacroSeries[]> {
-  const ids: Array<Exclude<MacroSeries["id"], "us2y" | "vix">> = ["dxy", "us10y", "gold", "btc"];
+  const ids: MacroSeries["id"][] = ["dxy", "us10y", "us2y", "vix", "gold", "btc"];
 
   const results = await Promise.all(
     ids.map(async (id) => {
-      // BTC: Binance REST API
       if (id === "btc") {
         const btcLive = await fetchBinanceBtc();
         if (btcLive) return btcLive;
       }
-
-      // GOLD: Ưu tiên Binance PAXG (Vàng tokenized thực) trước -> sau đó qua Yahoo Proxy
       if (id === "gold") {
         const goldBinance = await fetchBinanceGold();
         if (goldBinance) return goldBinance;
       }
-
-      // DXY, US10Y & Fallback Gold: Yahoo qua Proxy
       const yahooLive = await fetchYahooViaProxy(id);
       if (yahooLive) return yahooLive;
 
-      // Fallback cuối cùng
       return syntheticSeries(id);
     })
   );
