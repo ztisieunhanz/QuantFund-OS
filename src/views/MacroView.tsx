@@ -43,100 +43,128 @@ interface QuantResponse {
   verdict: "BUY" | "HOLD" | "REDUCE" | "HEDGE" | "WAIT";
   confidence: number;
   thesis: string;
-  signals: string[];
-  divergences: string[];
-  risks: string[];
+  signals: any[];
+  divergences: any[];
+  risks: any[];
   action: string;
-  triggers: string[];
+  triggers: any[];
   invalidation: string;
-  dataQuality: { coverage: number; missing: string[] };
+  dataQuality: { coverage: number; missing: any[] };
 }
 
-const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: string }) => {
-  if (!data) {
-    const lines = text.split('\n');
-    return (
-      <div className="space-y-2 text-[14px] leading-relaxed text-ink font-sans tracking-wide">
-        {lines.map((line, i) => {
-          if (!line.trim()) return <div key={i} className="h-1.5"></div>;
-          const formatted = line
-            .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>')
-            .replace(/\*(.*?)\*/g, '<em class="text-muted italic">$1</em>');
-          return <div key={i} dangerouslySetInnerHTML={{ __html: formatted }} />;
-        })}
-      </div>
-    );
+// BỘ LỌC AN TOÀN: Ép mọi dữ liệu (object, null, array) về chuỗi hợp lệ, chống crash màn hình đen
+const renderItem = (item: any): React.ReactNode => {
+  if (item == null) return "";
+  if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+    return String(item);
   }
+  if (typeof item === "object") {
+    return Object.entries(item)
+      .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`)
+      .join(" | ");
+  }
+  return String(item);
+};
 
-  const verdictColors: Record<string, string> = {
-    BUY: "text-[#00e676] bg-[#00e676]/10 border-[#00e676]/30",
-    HOLD: "text-cyan bg-cyan/10 border-cyan/30",
-    REDUCE: "text-amber bg-amber/10 border-amber/30",
-    HEDGE: "text-[#b388ff] bg-[#b388ff]/10 border-[#b388ff]/30",
-    WAIT: "text-muted bg-panel-2 border-line",
-  };
-  const vColor = verdictColors[data.verdict] || verdictColors.WAIT;
-
+const PlainTextFormatted = ({ text }: { text: string }) => {
+  const lines = (text || "").split("\n");
   return (
-    <div className="space-y-4 font-sans text-[13px] text-ink w-full">
-      <div className="flex items-center justify-between border-b border-line pb-2.5">
-        <div className={clsx("px-2.5 py-1 rounded border font-black text-[12px] tracking-widest uppercase shadow-sm", vColor)}>
-          VERDICT: {data.verdict}
-        </div>
-        <div className="text-cyan font-mono text-[11px] font-bold">
-          CONFIDENCE: {data.confidence}%
-        </div>
-      </div>
-      <div>
-        <span className="font-bold text-[#82b1ff] uppercase text-[11px] tracking-wider font-mono">THESIS</span>
-        <p className="mt-1 text-[14px] leading-relaxed italic text-[#d7e2ee]">{data.thesis}</p>
-      </div>
-      <div className="bg-[#10151e] border border-line p-3.5 rounded-lg shadow-inner space-y-3">
-        <div>
-          <span className="font-bold text-[#00e676] text-[12px] uppercase">⚡ ACTION DIRECTIVE:</span>
-          <p className="mt-1.5 text-[#d7e2ee] text-[13px]">{data.action}</p>
-        </div>
-        {data.triggers && data.triggers.length > 0 && (
-          <div className="pt-2 border-t border-line/50">
-            <span className="font-bold text-amber text-[12px] uppercase">🎯 TRIGGERS:</span>
-            <ul className="list-disc list-inside mt-1 text-muted text-[12px] space-y-1">
-              {data.triggers.map((t, i) => <li key={i}>{t}</li>)}
-            </ul>
-          </div>
-        )}
-        <div className="pt-2 border-t border-line/50">
-          <span className="font-bold text-[#ff3d57] text-[12px] uppercase">⚠️ INVALIDATION:</span>
-          <p className="mt-1 text-[#d7e2ee] text-[12px]">{data.invalidation}</p>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-4 text-[12px] bg-panel-2 p-3 rounded border border-line">
-        {data.signals && data.signals.length > 0 && (
-          <div>
-            <span className="font-bold text-cyan font-mono uppercase tracking-widest text-[10px]">SIGNALS</span>
-            <ul className="list-disc list-inside mt-1.5 text-muted space-y-1">
-              {data.signals.map((s, i) => <li key={i}>{s}</li>)}
-            </ul>
-          </div>
-        )}
-        {data.divergences && data.divergences.length > 0 && (
-          <div>
-            <span className="font-bold text-amber font-mono uppercase tracking-widest text-[10px]">DIVERGENCES</span>
-            <ul className="list-disc list-inside mt-1.5 text-muted space-y-1">
-              {data.divergences.map((d, i) => <li key={i}>{d}</li>)}
-            </ul>
-          </div>
-        )}
-        {data.risks && data.risks.length > 0 && (
-          <div className="col-span-2 pt-2 border-t border-line/50">
-            <span className="font-bold text-[#ff3d57] font-mono uppercase tracking-widest text-[10px]">RISKS</span>
-            <ul className="list-disc list-inside mt-1.5 text-[#ff3d57]/80 space-y-1">
-              {data.risks.map((r, i) => <li key={i}>{r}</li>)}
-            </ul>
-          </div>
-        )}
-      </div>
+    <div className="space-y-2 text-[14px] leading-relaxed text-ink font-sans tracking-wide">
+      {lines.map((line, i) => {
+        if (!line.trim()) return <div key={i} className="h-1.5"></div>;
+        const formatted = line
+          .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>')
+          .replace(/\*(.*?)\*/g, '<em class="text-muted italic">$1</em>');
+        return <div key={i} dangerouslySetInnerHTML={{ __html: formatted }} />;
+      })}
     </div>
   );
+};
+
+const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: string }) => {
+  if (!data || typeof data !== "object") {
+    return <PlainTextFormatted text={text} />;
+  }
+
+  try {
+    const verdictColors: Record<string, string> = {
+      BUY: "text-[#00e676] bg-[#00e676]/10 border-[#00e676]/30",
+      HOLD: "text-cyan bg-cyan/10 border-cyan/30",
+      REDUCE: "text-amber bg-amber/10 border-amber/30",
+      HEDGE: "text-[#b388ff] bg-[#b388ff]/10 border-[#b388ff]/30",
+      WAIT: "text-muted bg-panel-2 border-line",
+    };
+    const vColor = verdictColors[data.verdict] || verdictColors.WAIT;
+
+    return (
+      <div className="space-y-4 font-sans text-[13px] text-ink w-full">
+        <div className="flex items-center justify-between border-b border-line pb-2.5">
+          <div className={clsx("px-2.5 py-1 rounded border font-black text-[12px] tracking-widest uppercase shadow-sm", vColor)}>
+            VERDICT: {renderItem(data.verdict)}
+          </div>
+          <div className="text-cyan font-mono text-[11px] font-bold">
+            CONFIDENCE: {renderItem(data.confidence)}%
+          </div>
+        </div>
+        <div>
+          <span className="font-bold text-[#82b1ff] uppercase text-[11px] tracking-wider font-mono">THESIS</span>
+          <p className="mt-1 text-[14px] leading-relaxed italic text-[#d7e2ee]">{renderItem(data.thesis)}</p>
+        </div>
+        <div className="bg-[#10151e] border border-line p-3.5 rounded-lg shadow-inner space-y-3">
+          <div>
+            <span className="font-bold text-[#00e676] text-[12px] uppercase">⚡ ACTION DIRECTIVE:</span>
+            <p className="mt-1.5 text-[#d7e2ee] text-[13px]">{renderItem(data.action)}</p>
+          </div>
+          {Array.isArray(data.triggers) && data.triggers.length > 0 && (
+            <div className="pt-2 border-t border-line/50">
+              <span className="font-bold text-amber text-[12px] uppercase">🎯 TRIGGERS:</span>
+              <ul className="list-disc list-inside mt-1 text-muted text-[12px] space-y-1">
+                {data.triggers.map((t, i) => <li key={i}>{renderItem(t)}</li>)}
+              </ul>
+            </div>
+          )}
+          <div className="pt-2 border-t border-line/50">
+            <span className="font-bold text-[#ff3d57] text-[12px] uppercase">⚠️ INVALIDATION:</span>
+            <p className="mt-1 text-[#d7e2ee] text-[12px]">{renderItem(data.invalidation)}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4 text-[12px] bg-panel-2 p-3 rounded border border-line">
+          {Array.isArray(data.signals) && data.signals.length > 0 && (
+            <div>
+              <span className="font-bold text-cyan font-mono uppercase tracking-widest text-[10px]">SIGNALS</span>
+              <ul className="list-disc list-inside mt-1.5 text-muted space-y-1">
+                {data.signals.map((s, i) => <li key={i}>{renderItem(s)}</li>)}
+              </ul>
+            </div>
+          )}
+          {Array.isArray(data.divergences) && data.divergences.length > 0 && (
+            <div>
+              <span className="font-bold text-amber font-mono uppercase tracking-widest text-[10px]">DIVERGENCES</span>
+              <ul className="list-disc list-inside mt-1.5 text-muted space-y-1">
+                {data.divergences.map((d, i) => <li key={i}>{renderItem(d)}</li>)}
+              </ul>
+            </div>
+          )}
+          {Array.isArray(data.risks) && data.risks.length > 0 && (
+            <div className="col-span-2 pt-2 border-t border-line/50">
+              <span className="font-bold text-[#ff3d57] font-mono uppercase tracking-widest text-[10px]">RISKS</span>
+              <ul className="list-disc list-inside mt-1.5 text-[#ff3d57]/80 space-y-1">
+                {data.risks.map((r, i) => <li key={i}>{renderItem(r)}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+        <div className="border-t border-line pt-2 flex items-center justify-between text-[10px] text-muted font-mono">
+          <span>DATA COVERAGE: <strong className="text-white">{renderItem(data.dataQuality?.coverage)}%</strong></span>
+          {Array.isArray(data.dataQuality?.missing) && data.dataQuality.missing.length > 0 && (
+            <span className="text-[#ff3d57]">MISSING: {data.dataQuality.missing.map(renderItem).join(", ")}</span>
+          )}
+        </div>
+      </div>
+    );
+  } catch {
+    return <PlainTextFormatted text={text} />;
+  }
 };
 
 export function MacroView() {
@@ -187,7 +215,7 @@ export function MacroView() {
     return { price: `${sjcPrice.toFixed(1)}M`, premium: `+${estimatedDomesticPremium.toFixed(1)}M`, percentile: "94%" };
   }, [series]);
 
-  // Khởi tạo Chat State sạch
+  // Khởi tạo Chat State sạch, lọc bỏ dữ liệu hỏng cũ trong localStorage
   useEffect(() => {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
@@ -256,7 +284,7 @@ export function MacroView() {
       };
 
       const systemPrompt = isReportMode
-        ? `Bạn là Senior Portfolio Manager. Trả về đúng 1 JSON Schema: verdict (BUY/HOLD/REDUCE/HEDGE/WAIT), confidence, thesis, signals, divergences, risks, action, triggers, invalidation, dataQuality (coverage, missing). Dữ liệu:\n${JSON.stringify(marketSnapshot)}`
+        ? `Bạn là Senior Portfolio Manager. Trả về đúng 1 JSON Schema: verdict (BUY/HOLD/REDUCE/HEDGE/WAIT), confidence (number), thesis (string), signals (array of strings), divergences (array of strings), risks (array of strings), action (string), triggers (array of strings), invalidation (string), dataQuality (coverage: number, missing: array of strings). Dữ liệu:\n${JSON.stringify(marketSnapshot)}`
         : `Bạn là Senior Quant Analyst. Trả lời người dùng bằng văn bản tự nhiên, sắc bén, chuyên nghiệp bằng tiếng Việt. Dữ liệu thị trường thật:\n- BTC: $${series.find(s=>s.id==='btc')?.last ?? 76800}\n- Vàng: $${series.find(s=>s.id==='gold')?.last ?? 4289}\n- 3 Bots: Alpha 1 (Trend), Alpha 2 (Event), Alpha 3 (MeanRev), Control DCA. Tuyệt đối không xuất JSON khi người dùng trò chuyện tự do.`;
 
       const cleanHistory: Array<{ role: "user" | "model"; parts: [{ text: string }] }> = [];
@@ -278,7 +306,7 @@ export function MacroView() {
           : { temperature: 0.4 }
       };
 
-      // DUAL-ROUTE: Gọi Proxy nội bộ trước, nếu Bolt nghẽn mạng thì gọi thẳng Google
+      // DUAL-ROUTE: Ưu tiên Proxy nội bộ, nếu Bolt nghẽn mạng thì tự gọi thẳng Google
       let response: Response | null = null;
       try {
         response = await fetch("/api/ai-advisor", {
@@ -291,7 +319,6 @@ export function MacroView() {
       }
 
       if (!response || !response.ok) {
-        // Fallback gọi trực tiếp từ trình duyệt (Bypass hoàn toàn proxy Bolt bị lỗi)
         const directUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
         response = await fetch(directUrl, {
           method: "POST",
