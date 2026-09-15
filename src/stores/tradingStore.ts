@@ -1,14 +1,12 @@
 // ============================================================================
 // FILE: src/stores/tradingStore.ts
-// MODULE: QUANT TRADING & STATE STORE
-// ARCHITECTURE: Zustand Store bridging PaperEngine with Macro and UI Views
+// MODULE: QUANT TRADING & BENCHMARK STATE STORE
 // ============================================================================
 
 import { create } from "zustand";
 import type { BotMetrics, OhlcvBar, QuantBotId } from "@/types/market";
 import type { DecisionState } from "@/lib/quant/types";
 import { PaperEngine, STARTING_EQUITY } from "@/lib/paperEngine";
-import { useMacroStore } from "@/stores/macroStore";
 
 const engine = new PaperEngine();
 
@@ -27,7 +25,7 @@ const emptyBot = (botId: QuantBotId, name: string): BotMetrics => ({
   wins: 0,
   losses: 0,
   position: "FLAT",
-  lastSignal: "INITIALIZING",
+  lastSignal: "AWAITING_WARMUP",
   trades: [],
   equityCurve: [],
 });
@@ -35,62 +33,50 @@ const emptyBot = (botId: QuantBotId, name: string): BotMetrics => ({
 interface TradingState {
   running: boolean;
   trend: BotMetrics;
+  event: BotMetrics;
   mean: BotMetrics;
-  dca: BotMetrics;
   omega: BotMetrics;
+  benchmarkDca: BotMetrics;
   latestDecision: DecisionState | null;
   lastRunAt: number | null;
   runOnBars: (bars: OhlcvBar[]) => void;
-  ingest: (bar: OhlcvBar, history: OhlcvBar[]) => void;
   reset: () => void;
 }
 
 export const useTradingStore = create<TradingState>((set) => ({
   running: true,
-  trend: emptyBot("trend", "Bot 1 · Adaptive Trend"),
-  mean: emptyBot("meanrev", "Bot 3 · Short Mean Reversion"),
-  dca: emptyBot("dca", "Bot 2 · Event Catalyst Driver"),
+  trend: emptyBot("trend", "Alpha 1 · Adaptive Trend"),
+  event: emptyBot("event", "Alpha 2 · Event Catalyst"),
+  mean: emptyBot("meanrev", "Alpha 3 · Mean Reversion"),
   omega: emptyBot("omega", "Omega · Quant Meta-Fund"),
+  benchmarkDca: emptyBot("benchmark_dca", "Control · Passive DCA 10%"),
   latestDecision: null,
   lastRunAt: null,
 
   runOnBars: (bars) => {
-    if (bars.length < 25) return;
-    const regime = useMacroStore.getState().regime;
-    const isRiskOff = Boolean(regime && regime.score < 45);
-    const { trend, mean, dca, omega, latestDecision } = engine.replay(bars, isRiskOff);
+    // Bắt buộc tối thiểu 130 nến để vượt qua 125 nến warmup của Adaptive Trend
+    if (!bars || bars.length < 130) return;
+    const { trend, event, mean, omega, benchmarkDca, latestDecision } = engine.replay(bars);
     set({
       trend,
+      event,
       mean,
-      dca,
       omega,
+      benchmarkDca,
       latestDecision,
       lastRunAt: Date.now(),
       running: true,
     });
   },
 
-  ingest: (bar, history) => {
-    const regime = useMacroStore.getState().regime;
-    const isRiskOff = Boolean(regime && regime.score < 45);
-    const { trend, mean, dca, omega, latestDecision } = engine.ingestBar(bar, history, isRiskOff);
-    set({
-      trend,
-      mean,
-      dca,
-      omega,
-      latestDecision,
-      lastRunAt: Date.now(),
-    });
-  },
-
   reset: () => {
     engine.reset();
     set({
-      trend: emptyBot("trend", "Bot 1 · Adaptive Trend"),
-      mean: emptyBot("meanrev", "Bot 3 · Short Mean Reversion"),
-      dca: emptyBot("dca", "Bot 2 · Event Catalyst Driver"),
+      trend: emptyBot("trend", "Alpha 1 · Adaptive Trend"),
+      event: emptyBot("event", "Alpha 2 · Event Catalyst"),
+      mean: emptyBot("meanrev", "Alpha 3 · Mean Reversion"),
       omega: emptyBot("omega", "Omega · Quant Meta-Fund"),
+      benchmarkDca: emptyBot("benchmark_dca", "Control · Passive DCA 10%"),
       latestDecision: null,
       lastRunAt: null,
     });
