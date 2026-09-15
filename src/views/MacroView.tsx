@@ -132,7 +132,7 @@ function calculateAssetFeatures(history?: number[]) {
 }
 
 // ============================================================================
-// BƯỚC 6: INTERFACES DÀNH CHO VIETNAM MARKET (LIQUIDITY & FOREIGN FLOW)
+// INTERFACES DÀNH CHO VIETNAM MARKET (LIQUIDITY & FOREIGN FLOW)
 // ============================================================================
 interface VietnamLiquidity {
   dailyTurnover: number | null;
@@ -151,7 +151,6 @@ interface VietnamMarketSnapshot {
   liquidity: VietnamLiquidity | "UNAVAILABLE";
   foreignFlow: VietnamForeignFlow | "UNAVAILABLE";
 }
-// ============================================================================
 
 export function MacroView() {
   const { loading, error, series, regime, correlation, load } = useMacroStore();
@@ -165,8 +164,6 @@ export function MacroView() {
 
   // MOCK DATA (Giữ lại CHỈ ĐỂ RENDER UI, không đưa vào System Prompt)
   const enhancedData = {
-    macroSurprise: { cpi: { actual: "3.1%", expected: "2.9%", prev: "3.0%", impact: "INFLATION SURPRISE: +0.2%" }, fedNextMeet: "35% hike, 65% hold (FOMC 15-16/9)" },
-    yieldCurve: { us2y: "4.85%", us10y: "4.58%", spread: "-27 bps (Inverted)" },
     vietnamMarket: {
       vnindex: { price: 1280.5, ret1d: "+0.8%", ret20d: "+5.7%", distMA20: "+2.4%", distMA50: "+4.8%", distMA200: "-1.2%", breadth: "A/D = 145/320", pctAboveMA20: "38%", pctAboveMA50: "31%" },
       foreignFlow: { d1: "-500B", d5: "-1,200B", d20: "+300B" },
@@ -196,7 +193,7 @@ export function MacroView() {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã khởi tạo MarketSnapshot:\n- Dữ liệu Danh mục: Khả dụng\n- Feature Engine (Returns, MA, Volatility): Đã nạp thành công\n- Hiệu suất Bots: Khả dụng\n- Dữ liệu Việt Nam (Liquidity, Foreign Flow): UNAVAILABLE\n\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã khởi tạo MarketSnapshot:\n- Dữ liệu Danh mục: Khả dụng\n- Cross-Asset Macro (DXY, Yields, Gold, BTC): Đã cập nhật\n- Hiệu suất Bots: Khả dụng\n- Dữ liệu Việt Nam: UNAVAILABLE\n\nBạn cần phân tích chiến lược nào?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -222,11 +219,40 @@ export function MacroView() {
     try {
       const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
       
-      // Khởi tạo struct dữ liệu VN trống, vì API/Store thật chưa có
       const vietnamSnapshot: VietnamMarketSnapshot = {
         liquidity: "UNAVAILABLE",
         foreignFlow: "UNAVAILABLE",
       };
+
+      // BƯỚC 7: HELPER LẤY CROSS-ASSET MACRO TỪ SERIES
+      const getCrossAssetData = (id: string) => {
+        const asset = series.find(s => s.id === id);
+        if (!asset) {
+          return { current: null, return1D: null, return5D: null, return20D: null, trend: null, volatility: null, status: "UNAVAILABLE" };
+        }
+        const features = calculateAssetFeatures((asset as any).history);
+        
+        let trend: "UP" | "DOWN" | "FLAT" | null = null;
+        if (features.ma20 !== null && features.ma50 !== null) {
+          trend = features.ma20 > features.ma50 ? "UP" : "DOWN";
+        }
+
+        return {
+          current: asset.last,
+          return1D: features.return1D ?? asset.changePct1d,
+          return5D: features.return5D,
+          return20D: features.return20D ?? asset.changePct20d,
+          trend: trend,
+          volatility: features.volatility20D,
+          status: asset.source === "synthetic" ? "SYNTHETIC" : "LIVE"
+        };
+      };
+
+      const us10yData = getCrossAssetData("us10y");
+      const us2yData = getCrossAssetData("us2y");
+      const yieldCurveSpread = (us10yData.current !== null && us2yData.current !== null) 
+        ? us10yData.current - us2yData.current 
+        : null;
 
       const marketSnapshot = {
         timestamp: new Date().toISOString(),
@@ -250,22 +276,23 @@ export function MacroView() {
           yieldLevel: regime.yieldLevel,
           yieldTrend: regime.yieldTrend
         } : "UNAVAILABLE",
-        assets: series.length > 0 ? series.map(s => {
-          const features = calculateAssetFeatures((s as any).history);
-          return {
-            id: s.id,
-            name: s.name,
-            ticker: s.ticker,
-            lastPrice: s.last,
-            source: s.source,
-            features: {
-              ...features,
-              return1D: features.return1D ?? s.changePct1d,
-              return20D: features.return20D ?? s.changePct20d
-            }
-          };
-        }) : "UNAVAILABLE",
-        vietnam: vietnamSnapshot, // Đã đẩy cấu trúc Liquidity + ForeignFlow vào đây (Status: UNAVAILABLE)
+        
+        // BƯỚC 7: GÁN CROSS-ASSET MACRO CHUẨN
+        crossAssetMacro: {
+          dxy: getCrossAssetData("dxy"),
+          us2y: us2yData,
+          us10y: us10yData,
+          us30y: getCrossAssetData("us30y"),
+          gold: getCrossAssetData("gold"),
+          oil: getCrossAssetData("oil"),
+          vix: getCrossAssetData("vix"),
+          btc: getCrossAssetData("btc"),
+          yieldCurve: {
+            spread10Y2Y: yieldCurveSpread
+          }
+        },
+
+        vietnam: vietnamSnapshot,
         bots: {
           trend: { winRate: trend.winRate, pnl: trend.pnl, totalTrades: trend.totalTrades },
           meanReversion: { winRate: mean.winRate, pnl: mean.pnl, totalTrades: mean.totalTrades },
@@ -276,7 +303,7 @@ export function MacroView() {
       const systemPrompt = `
         Bạn là AI QUANT EXPERT, hoạt động như một Senior Portfolio Manager + Quant Risk Analyst tại một quỹ đầu tư định lượng.
         MỤC TIÊU:
-        1. Xác định market regime.
+        1. Xác định market regime thông qua Cross-Asset Macro.
         2. Phân biệt SIGNAL với NOISE.
         3. Đánh giá risk/reward.
         4. Đưa ra ACTION cụ thể.
@@ -288,8 +315,8 @@ export function MacroView() {
 
         LUẬT LỆ TỐI THƯỢNG:
         - CHỈ SỬ DỤNG dữ liệu có trong MARKET SNAPSHOT JSON ở trên. 
-        - Nếu một trường dữ liệu có giá trị là "UNAVAILABLE" hoặc null, TUYỆT ĐỐI KHÔNG TỰ BỊA DỮ LIỆU. Bạn phải trả lời: "Thiếu dữ liệu [tên trường], không thể phân tích".
-        - Không được tự tạo số liệu về Vietnam Market Liquidity hoặc Foreign Flow.
+        - Nếu một trường dữ liệu có giá trị là null hoặc status là "UNAVAILABLE", TUYỆT ĐỐI KHÔNG TỰ BỊA DỮ LIỆU. Bạn phải trả lời: "Thiếu dữ liệu [tên trường], không thể phân tích".
+        - Phân tích tương quan Cross-Asset (DXY, Yields, Gold, BTC) dựa trên "crossAssetMacro" để xác định dòng tiền đang Risk-on hay Risk-off.
 
         TRẢ LỜI THEO FORMAT BẮT BUỘC SAU KHI USER HỎI:
         ### VERDICT
@@ -342,7 +369,7 @@ export function MacroView() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-3 custom-scrollbar relative bg-[#07090d]">
       
-      {/* 0. DẢI TIN TỨC CHẠY NGANG (MOCK DATA - UI ONLY) */}
+      {/* 0. DẢI TIN TỨC CHẠY NGANG (MOCK DATA UI) */}
       <style dangerouslySetInnerHTML={{__html: `
         @keyframes ticker { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
         .animate-ticker { display: inline-block; white-space: nowrap; animation: ticker 40s linear infinite; will-change: transform; }
@@ -403,7 +430,7 @@ export function MacroView() {
       {/* 3. BẢNG TIN TỨC VĨ MÔ (MOCK DATA) */}
       <MacroNewsTable />
 
-      {/* 4. DỮ LIỆU VĨ MÔ GỐC & BIỂU ĐỒ TRÒN FIX LỖI KHOẢNG TRẮNG */}
+      {/* 4. DỮ LIỆU VĨ MÔ GỐC & BIỂU ĐỒ TRÒN */}
       <div className="grid min-h-[320px] grid-cols-[1.2fr_1fr] gap-3 shrink-0 mt-3">
         <Panel title="Market Regime Engine" right={loading ? "SYNC…" : usingSynthetic ? "YAHOO FALLBACK" : "LIVE FEED"}>
           {error ? <p className="text-sm text-down">{error}</p> : null}
@@ -525,17 +552,17 @@ export function MacroView() {
           ))}
           {isLoading && (
             <div className="flex items-center gap-2 text-cyan font-sans font-medium text-[13px] p-2">
-              <Loader2 size={16} className="animate-spin" /> Engine đang tính toán Signal Confluence & Action...
+              <Loader2 size={16} className="animate-spin" /> Engine đang tính toán Cross-Asset Signals...
             </div>
           )}
         </div>
 
         <div className="px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar border-t border-line bg-panel">
-          <button onClick={() => handleSend("Phân tích tín hiệu thị trường hôm nay và đưa ra ACTION (Tôi đang đầu tư tại VN).")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <MessageSquareText size={14} /> Market Action
+          <button onClick={() => handleSend("Phân tích mối tương quan giữa DXY, Yields (US10Y) và Vàng (XAU) hiện tại. Liệu có sự bất thường (divergence) nào không?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <MessageSquareText size={14} /> Phân tích Cross-Asset
           </button>
-          <button onClick={() => handleSend("Dựa vào dữ liệu Foreign Flow và Liquidity hiện tại, hãy phân tích xu hướng dòng tiền.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <Target size={14} /> Dòng tiền & Thanh khoản
+          <button onClick={() => handleSend("Với việc US2Y, US30Y và Dầu (Oil) đang UNAVAILABLE, AI đánh giá rủi ro gì khi thiếu các dữ liệu này?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <Target size={14} /> Đánh giá Missing Data
           </button>
         </div>
 
