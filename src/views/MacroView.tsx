@@ -31,55 +31,141 @@ function corrColor(v: number): string {
   return "bg-[#4a0d16] text-down";
 }
 
-const FormatMessage = ({ text }: { text: string }) => {
-  const lines = text.split('\n');
-  return (
-    <div className="space-y-2 text-[14px] leading-relaxed text-ink font-sans tracking-wide">
-      {lines.map((line, i) => {
-        if (!line.trim()) return <div key={i} className="h-1.5"></div>;
-        
-        let formatted = line
-          .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>')
-          .replace(/\*(.*?)\*/g, '<em class="text-muted italic">$1</em>');
+// ============================================================================
+// BƯỚC 13: INTERFACE CHO STRUCTURED JSON OUTPUT TỪ AI
+// ============================================================================
+interface QuantResponse {
+  verdict: "BUY" | "HOLD" | "REDUCE" | "HEDGE" | "WAIT";
+  confidence: number;
+  thesis: string;
+  signals: string[];
+  divergences: string[];
+  risks: string[];
+  action: string;
+  triggers: string[];
+  invalidation: string;
+  dataQuality: {
+    coverage: number;
+    missing: string[];
+  };
+}
 
-        if (formatted.startsWith('### ')) return <h3 key={i} className="text-cyan font-bold text-[15px] mt-4 mb-2 uppercase" dangerouslySetInnerHTML={{ __html: formatted.replace('### ', '') }} />;
-        if (formatted.startsWith('## ')) return <h2 key={i} className="text-[#82b1ff] font-bold text-[16px] mt-5 mb-2" dangerouslySetInnerHTML={{ __html: formatted.replace('## ', '') }} />;
-        if (formatted.startsWith('- ') || formatted.startsWith('* ')) return (
-          <div key={i} className="flex gap-2.5 items-start">
-            <span className="text-cyan font-bold mt-0.5">•</span>
-            <span dangerouslySetInnerHTML={{ __html: formatted.substring(2) }} />
+// ============================================================================
+// UI COMPONENT ĐỂ RENDER STRUCTURED JSON DATA THÀNH GIAO DIỆN ĐẸP MẮT
+// ============================================================================
+const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: string }) => {
+  // FALLBACK: Nếu không có data (như tin nhắn chào mừng ban đầu) -> Hiển thị dạng text
+  if (!data) {
+    const lines = text.split('\n');
+    return (
+      <div className="space-y-2 text-[14px] leading-relaxed text-ink font-sans tracking-wide">
+        {lines.map((line, i) => {
+          if (!line.trim()) return <div key={i} className="h-1.5"></div>;
+          let formatted = line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>').replace(/\*(.*?)\*/g, '<em class="text-muted italic">$1</em>');
+          return <div key={i} dangerouslySetInnerHTML={{ __html: formatted }} />;
+        })}
+      </div>
+    );
+  }
+
+  // RENDER DỮ LIỆU STRUCTURED MƯỢT MÀ KHÔNG CHO USER THẤY RAW JSON
+  const verdictColors: Record<string, string> = {
+    BUY: "text-[#00e676] bg-[#00e676]/10 border-[#00e676]/30",
+    HOLD: "text-cyan bg-cyan/10 border-cyan/30",
+    REDUCE: "text-amber bg-amber/10 border-amber/30",
+    HEDGE: "text-[#b388ff] bg-[#b388ff]/10 border-[#b388ff]/30",
+    WAIT: "text-muted bg-panel-2 border-line",
+  };
+  
+  const vColor = verdictColors[data.verdict] || verdictColors.WAIT;
+
+  return (
+    <div className="space-y-4 font-sans text-[13px] text-ink w-full">
+      {/* HEADER */}
+      <div className="flex items-center justify-between border-b border-line pb-2.5">
+        <div className={clsx("px-2.5 py-1 rounded border font-black text-[12px] tracking-widest uppercase shadow-sm", vColor)}>
+          VERDICT: {data.verdict}
+        </div>
+        <div className="text-cyan font-mono text-[11px] font-bold">
+          CONFIDENCE: {data.confidence}%
+        </div>
+      </div>
+      
+      {/* THESIS */}
+      <div>
+        <span className="font-bold text-[#82b1ff] uppercase text-[11px] tracking-wider font-mono">THESIS</span>
+        <p className="mt-1 text-[14px] leading-relaxed italic text-[#d7e2ee]">{data.thesis}</p>
+      </div>
+
+      {/* ACTION BLOCK */}
+      <div className="bg-[#10151e] border border-line p-3.5 rounded-lg shadow-inner space-y-3">
+         <div>
+            <span className="font-bold text-[#00e676] text-[12px] uppercase">⚡ ACTION DIRECTIVE:</span>
+            <p className="mt-1.5 text-[#d7e2ee] text-[13px]">{data.action}</p>
+         </div>
+         {data.triggers && data.triggers.length > 0 && (
+           <div className="pt-2 border-t border-line/50">
+              <span className="font-bold text-amber text-[12px] uppercase">🎯 TRIGGERS:</span>
+              <ul className="list-disc list-inside mt-1 text-muted text-[12px] space-y-1">
+                {data.triggers.map((t, i) => <li key={i}>{t}</li>)}
+              </ul>
+           </div>
+         )}
+         <div className="pt-2 border-t border-line/50">
+            <span className="font-bold text-[#ff3d57] text-[12px] uppercase">⚠️ INVALIDATION:</span>
+            <p className="mt-1 text-[#d7e2ee] text-[12px]">{data.invalidation}</p>
+         </div>
+      </div>
+
+      {/* LISTS BLOCK */}
+      <div className="grid grid-cols-2 gap-4 text-[12px] bg-panel-2 p-3 rounded border border-line">
+        {data.signals && data.signals.length > 0 && (
+          <div>
+            <span className="font-bold text-cyan font-mono uppercase tracking-widest text-[10px]">SIGNALS</span>
+            <ul className="list-disc list-inside mt-1.5 text-muted space-y-1">
+              {data.signals.map((s, i) => <li key={i}>{s}</li>)}
+            </ul>
           </div>
-        );
-        return <div key={i} dangerouslySetInnerHTML={{ __html: formatted }} />;
-      })}
+        )}
+        {data.divergences && data.divergences.length > 0 && (
+          <div>
+            <span className="font-bold text-amber font-mono uppercase tracking-widest text-[10px]">DIVERGENCES</span>
+            <ul className="list-disc list-inside mt-1.5 text-muted space-y-1">
+              {data.divergences.map((d, i) => <li key={i}>{d}</li>)}
+            </ul>
+          </div>
+        )}
+        {data.risks && data.risks.length > 0 && (
+          <div className="col-span-2 pt-2 border-t border-line/50">
+            <span className="font-bold text-[#ff3d57] font-mono uppercase tracking-widest text-[10px]">RISKS</span>
+            <ul className="list-disc list-inside mt-1.5 text-[#ff3d57]/80 space-y-1">
+              {data.risks.map((r, i) => <li key={i}>{r}</li>)}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      {/* DATA QUALITY FOOTER */}
+      <div className="border-t border-line pt-2 flex items-center justify-between text-[10px] text-muted font-mono">
+        <span>DATA COVERAGE: <strong className="text-white">{data.dataQuality?.coverage}%</strong></span>
+        {data.dataQuality?.missing && data.dataQuality.missing.length > 0 && (
+          <span className="text-[#ff3d57]">MISSING: {data.dataQuality.missing.join(", ")}</span>
+        )}
+      </div>
     </div>
   );
 };
 
+
 // ============================================================================
-// FEATURE ENGINE HELPER
+// DATA ENGINE HELPERS (TỪ CÁC BƯỚC TRƯỚC)
 // ============================================================================
 function calculateAssetFeatures(history?: number[]) {
-  const defaultFeatures = {
-    return1D: null as number | null, return5D: null as number | null, return20D: null as number | null,
-    ma20: null as number | null, ma50: null as number | null, ma200: null as number | null,
-    distMa20: null as number | null, distMa50: null as number | null, distMa200: null as number | null,
-    volatility20D: null as number | null,
-  };
-
+  const defaultFeatures = { return1D: null as number | null, return5D: null as number | null, return20D: null as number | null, ma20: null as number | null, ma50: null as number | null, ma200: null as number | null, distMa20: null as number | null, distMa50: null as number | null, distMa200: null as number | null, volatility20D: null as number | null };
   if (!history || !Array.isArray(history) || history.length === 0) return defaultFeatures;
-
-  const len = history.length;
-  const lastPrice = history[len - 1];
-
-  const getReturn = (days: number) => {
-    if (len <= days) return null;
-    return history[len - 1 - days] ? (lastPrice - history[len - 1 - days]!) / history[len - 1 - days]! : null;
-  };
-  const getMA = (days: number) => {
-    if (len < days) return null;
-    return history.slice(len - days).reduce((a, b) => a + b, 0) / days;
-  };
+  const len = history.length, lastPrice = history[len - 1];
+  const getReturn = (days: number) => (len <= days || !history[len - 1 - days] ? null : (lastPrice - history[len - 1 - days]!) / history[len - 1 - days]!);
+  const getMA = (days: number) => (len < days ? null : history.slice(len - days).reduce((a, b) => a + b, 0) / days);
   const getDist = (price: number, ma: number | null) => (ma ? (price - ma) / ma : null);
   const getVol = (days: number) => {
     if (len < days + 1) return null;
@@ -92,19 +178,10 @@ function calculateAssetFeatures(history?: number[]) {
     const varTotal = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
     return Math.sqrt(varTotal) * Math.sqrt(252);
   };
-
   const ma20 = getMA(20), ma50 = getMA(50), ma200 = getMA(200);
-
-  return {
-    return1D: getReturn(1), return5D: getReturn(5), return20D: getReturn(20),
-    ma20, ma50, ma200, distMa20: getDist(lastPrice, ma20), distMa50: getDist(lastPrice, ma50), distMa200: getDist(lastPrice, ma200),
-    volatility20D: getVol(20),
-  };
+  return { return1D: getReturn(1), return5D: getReturn(5), return20D: getReturn(20), ma20, ma50, ma200, distMa20: getDist(lastPrice, ma20), distMa50: getDist(lastPrice, ma50), distMa200: getDist(lastPrice, ma200), volatility20D: getVol(20) };
 }
 
-// ============================================================================
-// SIGNAL CONFLUENCE ENGINE 
-// ============================================================================
 function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: any) {
   const WEIGHTS = { macro: 0.25, liquidity: 0.15, trend: 0.20, breadth: 0.15, flow: 0.15, crossAsset: 0.10 };
   let totalWeight = 0, earnedScore = 0, dataCoverage = 0;
@@ -188,83 +265,51 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: any) 
   };
 }
 
-// ============================================================================
-// BƯỚC 11: PORTFOLIO RISK ENGINE
-// ============================================================================
 function calculatePortfolioRisk(portfolio: any, regime: any, corr: any) {
   const nav = portfolio.getTotalNav();
   const cashPct = nav > 0 ? (portfolio.cashUsd / nav) * 100 : 0;
-
   let largestPosition = { name: "Cash", pct: cashPct };
-  
-  const exposures = {
-    equity: 0,
-    gold: 0,
-    realEstate: 0,
-    crypto: 0,
-    cash: cashPct
-  };
+  const exposures = { equity: 0, gold: 0, realEstate: 0, crypto: 0, cash: cashPct };
 
   const allocation = portfolio.assets.map((a: any) => {
-    if (a.allocationPercent > largestPosition.pct) {
-      largestPosition = { name: a.name, pct: a.allocationPercent };
-    }
-    
+    if (a.allocationPercent > largestPosition.pct) largestPosition = { name: a.name, pct: a.allocationPercent };
     const nameLower = a.name.toLowerCase();
     if (nameLower.includes("equit") || nameLower.includes("cổ phiếu") || nameLower.includes("stock")) exposures.equity += a.allocationPercent;
     else if (nameLower.includes("gold") || nameLower.includes("vàng")) exposures.gold += a.allocationPercent;
     else if (nameLower.includes("estate") || nameLower.includes("bđs") || nameLower.includes("bất động sản")) exposures.realEstate += a.allocationPercent;
     else if (nameLower.includes("crypto") || nameLower.includes("btc") || nameLower.includes("bitcoin")) exposures.crypto += a.allocationPercent;
-    
     return { asset: a.name, weight: a.allocationPercent };
   });
-
   allocation.push({ asset: "USD Cash", weight: cashPct });
 
   const riskFlags: string[] = [];
-
-  // 1. Concentration Risk
-  if (largestPosition.pct > 40) {
-    riskFlags.push(`Concentration Risk: ${largestPosition.name} chiếm tỷ trọng quá lớn (${largestPosition.pct.toFixed(1)}%)`);
-  }
-
-  // 2. Regime Mismatch Risk
+  if (largestPosition.pct > 40) riskFlags.push(`Concentration Risk: ${largestPosition.name} chiếm tỷ trọng quá lớn (${largestPosition.pct.toFixed(1)}%)`);
   if (regime) {
-    if (regime.score <= 45 && exposures.equity > 40) {
-      riskFlags.push(`Regime Mismatch: Tỷ trọng Cổ phiếu cao (${exposures.equity.toFixed(1)}%) trong môi trường Risk-Off (Score: ${regime.score})`);
-    }
-    if (regime.score >= 55 && exposures.cash > 40) {
-      riskFlags.push(`Regime Mismatch: Tiền mặt quá cao (${exposures.cash.toFixed(1)}%) trong môi trường Risk-On (Score: ${regime.score}) -> Cash Drag Risk`);
-    }
+    if (regime.score <= 45 && exposures.equity > 40) riskFlags.push(`Regime Mismatch: Tỷ trọng Cổ phiếu cao (${exposures.equity.toFixed(1)}%) trong môi trường Risk-Off (Score: ${regime.score})`);
+    if (regime.score >= 55 && exposures.cash > 40) riskFlags.push(`Regime Mismatch: Tiền mặt quá cao (${exposures.cash.toFixed(1)}%) trong môi trường Risk-On (Score: ${regime.score}) -> Cash Drag Risk`);
   }
-
-  // 3. Correlated Exposure (Using Correlation Matrix)
   if (corr && corr["btc"] && corr["gold"]) {
     const btcGoldCorr = corr["btc"]["gold"];
-    if (btcGoldCorr > 0.6 && (exposures.crypto + exposures.gold > 50)) {
-      riskFlags.push(`Correlated Exposure: Vàng và Crypto đang đồng pha mạnh (Corr: ${btcGoldCorr.toFixed(2)}) và chiếm >50% danh mục`);
-    }
+    if (btcGoldCorr > 0.6 && (exposures.crypto + exposures.gold > 50)) riskFlags.push(`Correlated Exposure: Vàng và Crypto đang đồng pha mạnh (Corr: ${btcGoldCorr.toFixed(2)}) và chiếm >50% danh mục`);
   }
-
-  return {
-    allocation,
-    concentration: largestPosition,
-    exposure: exposures,
-    riskFlags
-  };
+  return { allocation, concentration: largestPosition, exposure: exposures, riskFlags };
 }
-// ============================================================================
 
+// ============================================================================
+// COMPONENT CHÍNH: MACRO VIEW
+// ============================================================================
 export function MacroView() {
   const { loading, error, series, regime, correlation, load } = useMacroStore();
   const portfolio = usePortfolioStore();
   const { trend, mean, dca } = useTradingStore();
   
+  // Nâng cấp State Message để lưu cả JSON Parsed Data
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<Array<{ sender: "user" | "ai"; text: string }>>([]);
+  const [messages, setMessages] = useState<Array<{ sender: "user" | "ai"; text: string; parsedData?: QuantResponse }>>([]);
   const [isLoading, setIsLoading] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
+  // MOCK DATA UI
   const enhancedData = {
     macroSurprise: { cpi: { actual: "3.1%", expected: "2.9%", prev: "3.0%", impact: "INFLATION SURPRISE: +0.2%" }, fedNextMeet: "35% hike, 65% hold (FOMC 15-16/9)" },
     yieldCurve: { us2y: "4.85%", us10y: "4.58%", spread: "-27 bps (Inverted)" },
@@ -297,7 +342,7 @@ export function MacroView() {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã khởi tạo MarketSnapshot:\n- Asset Feature Engine: Nạp thành công\n- Signal Confluence Engine: Nạp thành công\n- Portfolio Risk Engine: Nạp thành công\n\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã kích hoạt Structured JSON Output Pipeline.\nBạn cần phân tích chiến lược nào?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -335,7 +380,6 @@ export function MacroView() {
 
       const snapshotVietnam = "UNAVAILABLE"; 
 
-      // XÂY DỰNG MARKET SNAPSHOT (DATA CONTRACT)
       const marketSnapshot = {
         timestamp: new Date().toISOString(),
         dataQuality: { status: loading ? "UNAVAILABLE" : usingSynthetic ? "SYNTHETIC" : "LIVE" },
@@ -346,12 +390,8 @@ export function MacroView() {
         macro: snapshotMacro,
         assets: snapshotAssets,
         vietnam: snapshotVietnam,
-        
         signalConfluence: calculateSignalConfluence(snapshotMacro, snapshotAssets, snapshotVietnam),
-        
-        // BƯỚC 11: TÍCH HỢP PORTFOLIO RISK SNAPSHOT
         portfolioRisk: calculatePortfolioRisk(portfolio, regime, corr),
-
         bots: {
           trend: { winRate: trend.winRate, pnl: trend.pnl, totalTrades: trend.totalTrades },
           meanReversion: { winRate: mean.winRate, pnl: mean.pnl, totalTrades: mean.totalTrades },
@@ -359,7 +399,6 @@ export function MacroView() {
         }
       };
 
-      // GIỮ NGUYÊN SYSTEM PROMPT
       const systemPrompt = `
         Bạn là AI QUANT EXPERT, hoạt động như một Senior Portfolio Manager + Quant Risk Analyst tại một quỹ đầu tư định lượng.
         MỤC TIÊU:
@@ -374,29 +413,38 @@ export function MacroView() {
         \`\`\`
 
         LUẬT LỆ TỐI THƯỢNG:
-        - CHỈ SỬ DỤNG dữ liệu có trong MARKET SNAPSHOT JSON ở trên. 
-        - Hãy xem kỹ trường "signalConfluence". Nếu "confidence" thấp do thiếu data ("UNAVAILABLE"), bạn phải cảnh báo rủi ro thiếu dữ liệu.
-        - Đừng tự tính lại Score, Code Engine đã tính rồi, bạn chỉ việc diễn giải ý nghĩa của các Divergences (nếu có) và Factors trong Signal Confluence.
-
-        TRẢ LỜI THEO FORMAT BẮT BUỘC SAU KHI USER HỎI:
-        ### VERDICT
-        BUY / HOLD / REDUCE / HEDGE / WAIT
-
-        ### WHY
-        (3-5 lý do mạnh nhất trích xuất từ json)
-
-        ### CONFIDENCE
-        (0-100%)
-
-        ### ACTION
-        (Tỷ trọng, hành động cụ thể cho danh mục hoặc bot)
-
-        ### TRIGGER
-        (Chờ điều kiện gì để hành động tiếp theo)
-
-        ### INVALIDATION
-        (Khi nào luận điểm này sai)
+        - CHỈ SỬ DỤNG dữ liệu có trong MARKET SNAPSHOT JSON ở trên. Nếu dữ liệu "UNAVAILABLE", điền vào mảng "missing" trong "dataQuality".
+        - Đừng tự tính lại Score, Code Engine đã tính trong signalConfluence. Bạn chỉ diễn giải.
+        - Trả về cấu trúc JSON chính xác theo Schema. Không chứa text thừa.
       `;
+
+      // BƯỚC 13: CẤU HÌNH STRUCTURED JSON SCHEMA CHO GEMINI
+      const generationConfig = {
+        temperature: 0.1,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            verdict: { type: "STRING", description: "Must be one of: BUY, HOLD, REDUCE, HEDGE, WAIT" },
+            confidence: { type: "INTEGER", description: "0 to 100" },
+            thesis: { type: "STRING" },
+            signals: { type: "ARRAY", items: { type: "STRING" } },
+            divergences: { type: "ARRAY", items: { type: "STRING" } },
+            risks: { type: "ARRAY", items: { type: "STRING" } },
+            action: { type: "STRING" },
+            triggers: { type: "ARRAY", items: { type: "STRING" } },
+            invalidation: { type: "STRING" },
+            dataQuality: {
+              type: "OBJECT",
+              properties: {
+                coverage: { type: "INTEGER" },
+                missing: { type: "ARRAY", items: { type: "STRING" } }
+              }
+            }
+          },
+          required: ["verdict", "confidence", "thesis", "signals", "divergences", "risks", "action", "triggers", "invalidation", "dataQuality"]
+        }
+      };
 
       const apiContents = [
         ...messages.slice(1).map(m => ({ role: m.sender === "user" ? "user" : "model", parts: [{ text: m.text }] })),
@@ -408,13 +456,26 @@ export function MacroView() {
         body: JSON.stringify({ 
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: apiContents, 
-          generationConfig: { temperature: 0.1 } 
+          generationConfig 
         })
       });
 
       const data = await response.json();
       if (!response.ok) throw new Error("Lỗi API");
-      setMessages((prev) => [...prev, { sender: "ai", text: data.candidates?.[0]?.content?.parts?.[0]?.text || "Lỗi phản hồi." }]);
+      
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      
+      // PARSE JSON AN TOÀN VÀ LƯU VÀO STATE
+      let parsedResponse: QuantResponse | undefined = undefined;
+      try {
+        if (rawText) {
+          parsedResponse = JSON.parse(rawText);
+        }
+      } catch (e) {
+        console.error("Lỗi Parse Structured JSON từ AI:", e);
+      }
+
+      setMessages((prev) => [...prev, { sender: "ai", text: rawText, parsedData: parsedResponse }]);
     } catch (err) {
       setMessages((prev) => [...prev, { sender: "ai", text: "⚠️ **Lỗi kết nối API.** Kiểm tra lại khóa VITE_GEMINI_API_KEY." }]);
     } finally {
@@ -490,7 +551,7 @@ export function MacroView() {
       {/* 3. BẢNG TIN TỨC VĨ MÔ (MOCK DATA) */}
       <MacroNewsTable />
 
-      {/* 4. DỮ LIỆU VĨ MÔ GỐC & BIỂU ĐỒ TRÒN */}
+      {/* 4. DỮ LIỆU VĨ MÔ GỐC & BIỂU ĐỒ TRÒN FIX LỖI KHOẢNG TRẮNG */}
       <div className="grid min-h-[320px] grid-cols-[1.2fr_1fr] gap-3 shrink-0 mt-3">
         <Panel title="Market Regime Engine" right={loading ? "SYNC…" : usingSynthetic ? "YAHOO FALLBACK" : "LIVE FEED"}>
           {error ? <p className="text-sm text-down">{error}</p> : null}
@@ -597,42 +658,39 @@ export function MacroView() {
         </Panel>
       </div>
 
-      {/* 6. KHUNG CHATBOT AI */}
-      <Panel title="AI QUANT EXPERT · DECISION ENGINE" right="DATA PIPELINE SYNCED" className="shrink-0 mt-3 mb-6 flex flex-col h-[550px]">
+      {/* 6. KHUNG CHATBOT AI STRUCTURED ENGINE */}
+      <Panel title="AI QUANT EXPERT · STRUCTURED DECISION ENGINE" right="JSON PIPELINE SYNCED" className="shrink-0 mt-3 mb-6 flex flex-col h-[650px]">
         <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar bg-[#07090d]">
           {messages.map((msg, idx) => (
-            <div key={idx} className={clsx("flex flex-col max-w-[85%]", msg.sender === "user" ? "ml-auto items-end" : "mr-auto items-start")}>
+            <div key={idx} className={clsx("flex flex-col", msg.sender === "user" ? "ml-auto items-end max-w-[85%]" : "mr-auto items-start w-full")}>
               <div className={clsx(
-                "p-4 rounded-xl shadow-md", 
-                msg.sender === "user" ? "bg-cyan/15 border border-cyan/30 text-cyan rounded-br-none" : "bg-panel-2 border border-line text-ink rounded-bl-none"
+                "p-4 rounded-xl shadow-md w-full", 
+                msg.sender === "user" ? "bg-cyan/15 border border-cyan/30 text-cyan rounded-br-none w-auto max-w-full" : "bg-panel border border-line text-ink rounded-bl-none"
               )}>
-                {msg.sender === "user" ? <span className="whitespace-pre-wrap font-sans font-bold text-[14px]">{msg.text}</span> : <FormatMessage text={msg.text} />}
+                {msg.sender === "user" ? <span className="whitespace-pre-wrap font-sans font-bold text-[14px]">{msg.text}</span> : <FormatStructuredMessage data={msg.parsedData} text={msg.text} />}
               </div>
             </div>
           ))}
           {isLoading && (
             <div className="flex items-center gap-2 text-cyan font-sans font-medium text-[13px] p-2">
-              <Loader2 size={16} className="animate-spin" /> Đang đánh giá rủi ro danh mục qua Portfolio Risk Engine...
+              <Loader2 size={16} className="animate-spin" /> Đang parse Structured JSON Model...
             </div>
           )}
         </div>
 
         <div className="px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar border-t border-line bg-panel">
-          <button onClick={() => handleSend("Phân tích rủi ro danh mục hiện tại của tôi qua con mắt Portfolio Risk Engine.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <MessageSquareText size={14} /> Quét rủi ro danh mục
+          <button onClick={() => handleSend("Phân tích Market Snapshot và kết xuất JSON Format về Action cho tôi.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <MessageSquareText size={14} /> Full Market Verdict
           </button>
-          <button onClick={() => handleSend("Đánh giá sự lệch pha (Regime Mismatch) giữa danh mục của tôi và điểm Vĩ mô toàn cầu hiện tại.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <Target size={14} /> Kiểm tra Regime Mismatch
-          </button>
-          <button onClick={() => handleSend("Tìm các rủi ro tương quan (Correlated Exposure) nguy hiểm nhất đang tồn tại.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <TrendingUp size={14} /> Correlation Audit
+          <button onClick={() => handleSend("Có rủi ro hay sự phân kỳ (Divergence) nào đang xuất hiện trong Data Pipeline không?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <AlertTriangle size={14} /> Quét Risk & Divergences
           </button>
         </div>
 
         <form onSubmit={(e) => { e.preventDefault(); handleSend(input); }} className="p-4 border-t border-line flex gap-4 bg-panel">
           <textarea 
             rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
-            placeholder="Yêu cầu AI phân tích dữ liệu định lượng... (Shift + Enter để xuống dòng)"
+            placeholder="Yêu cầu AI phân tích dữ liệu định lượng và trả về Structured JSON... (Shift + Enter để xuống dòng)"
             className="flex-1 bg-[#0c1017] border border-line text-white px-5 py-3.5 rounded-lg text-[14px] font-sans focus:outline-none focus:border-cyan resize-none min-h-[50px] max-h-32 custom-scrollbar shadow-inner"
           />
           <button type="submit" disabled={isLoading || !input.trim()} className="bg-panel-2 border border-line hover:bg-cyan hover:text-[#0c1017] text-cyan font-black w-14 h-14 rounded-lg flex items-center justify-center transition-all disabled:opacity-50 shrink-0">
