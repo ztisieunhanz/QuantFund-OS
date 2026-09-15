@@ -12,46 +12,46 @@ interface NewsItem {
 }
 
 const mockNews: NewsItem[] = [
-  { id: '1', time: '2026-09-18 01:00 UTC', event: 'FOMC Rate Decision & Projections', impact: 'HIGH', direction: 'BULLISH', description: 'Dự báo FED giữ nguyên lãi suất nhưng phát tín hiệu ôn hòa (dovish), hỗ trợ tài sản rủi ro và vàng.' },
-  { id: '2', time: '2026-09-20 12:30 UTC', event: 'US Core CPI (MoM/YoY)', impact: 'HIGH', direction: 'BEARISH', description: 'Chỉ số giá tiêu dùng lõi có thể nóng hơn dự kiến, gây áp lực tăng lợi suất trái phiếu 10 năm.' },
-  { id: '3', time: '2026-09-24 14:00 UTC', event: 'US Flash Manufacturing PMI', impact: 'MEDIUM', direction: 'NEUTRAL', description: 'Đo lường sức khỏe sản xuất công nghiệp, định hình kịch bản Stagflation hiện tại.' }
+  { id: '1', time: '2026-09-15 01:00 UTC', event: 'Tin đồn: FED cân nhắc cắt giảm 50bps', impact: 'HIGH', direction: 'BULLISH', description: 'Kỳ vọng FED mạnh tay nới lỏng gia tăng, hỗ trợ đà tăng cho Vàng (XAU) và Tiền số (BTC).' },
+  { id: '2', time: '2026-09-14 12:30 UTC', event: 'Căng thẳng Địa chính trị Trung Đông', impact: 'HIGH', direction: 'BEARISH', description: 'Rủi ro gián đoạn chuỗi cung ứng dầu mỏ, đẩy nguy cơ lạm phát quay lại (Stagflation).' },
+  { id: '3', time: '2026-09-13 14:00 UTC', event: 'NHNN Việt Nam hút ròng tín phiếu', impact: 'MEDIUM', direction: 'NEUTRAL', description: 'Động thái ổn định tỷ giá USD/VND, thanh khoản hệ thống ngắn hạn chịu áp lực nhẹ.' }
 ];
 
 export const MacroNewsTable: React.FC = () => {
   return (
-    <div className="border border-line bg-panel p-3">
+    <div className="border border-line bg-panel p-4 mt-3 shrink-0 block w-full relative z-10">
       <div className="flex items-center justify-between mb-3">
-        <div className="font-mono text-[10px] tracking-[0.2em] text-cyan">MACRO EVENT CALENDAR</div>
-        <div className="font-mono text-[10px] text-muted">REAL-TIME FEED</div>
+        <div className="font-mono text-[11px] tracking-[0.2em] text-cyan font-bold">MACRO EVENT CALENDAR · SỰ KIỆN VĨ MÔ</div>
+        <div className="font-mono text-[10px] text-muted border border-line px-2 py-0.5 bg-panel-2">LIVE FEED</div>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse font-mono text-[11px]">
-          <thead className="text-muted border-b border-line">
+        <table className="w-full text-left border-collapse font-mono text-[12px]">
+          <thead className="text-muted border-b border-line bg-panel-2">
             <tr>
-              <th className="pb-2 px-2 font-normal">TIME (UTC)</th>
-              <th className="pb-2 px-2 font-normal">EVENT</th>
-              <th className="pb-2 px-2 text-center font-normal">IMPACT</th>
-              <th className="pb-2 px-2 text-center font-normal">DIRECTION</th>
-              <th className="pb-2 px-2 font-normal">ANALYSIS</th>
+              <th className="py-2.5 px-3 font-normal">THỜI GIAN (UTC)</th>
+              <th className="py-2.5 px-3 font-normal">SỰ KIỆN CHÍNH</th>
+              <th className="py-2.5 px-3 text-center font-normal">MỨC ĐỘ</th>
+              <th className="py-2.5 px-3 text-center font-normal">TÁC ĐỘNG</th>
+              <th className="py-2.5 px-3 font-normal">PHÂN TÍCH CHUYÊN SÂU</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
             {mockNews.map((item) => (
               <tr key={item.id} className="hover:bg-panel-2 transition-colors">
-                <td className="py-3 px-2 text-muted whitespace-nowrap">{item.time}</td>
-                <td className="py-3 px-2 text-ink font-semibold">{item.event}</td>
-                <td className="py-3 px-2 text-center">
-                  <span className={clsx("px-2 py-0.5 rounded text-[9px] font-bold tracking-wider", 
-                    item.impact === 'HIGH' ? "bg-[#ff3d57]/20 text-down" : "bg-[#ffc107]/20 text-amber"
+                <td className="py-3.5 px-3 text-muted whitespace-nowrap">{item.time}</td>
+                <td className="py-3.5 px-3 text-ink font-bold">{item.event}</td>
+                <td className="py-3.5 px-3 text-center">
+                  <span className={clsx("px-2 py-1 rounded text-[10px] font-bold tracking-wider", 
+                    item.impact === 'HIGH' ? "bg-[#ff3d57]/20 text-down border border-[#ff3d57]/30" : "bg-[#ffc107]/20 text-amber border border-[#ffc107]/30"
                   )}>
                     {item.impact}
                   </span>
                 </td>
-                <td className="py-3 px-2">
-                  <div className="flex items-center justify-center gap-1 text-[10px]">
-                    {item.direction === 'BULLISH' && <ArrowUpRight className="w-3 h-3 text-up" />}
-                    {item.direction === 'BEARISH' && <ArrowDownRight className="w-3 h-3 text-down" />}
-                    {item.direction === 'NEUTRAL' && <Minus className="w-3 h-3 text-muted" />}
+                <td className="py-3.5 px-3">
+                  <div className="flex items-center justify-center gap-1.5 text-[11px] font-bold">
+                    {item.direction === 'BULLISH' && <ArrowUpRight className="w-3.5 h-3.5 text-up" />}
+                    {item.direction === 'BEARISH' && <ArrowDownRight className="w-3.5 h-3.5 text-down" />}
+                    {item.direction === 'NEUTRAL' && <Minus className="w-3.5 h-3.5 text-muted" />}
                     <span className={clsx(
                       item.direction === 'BULLISH' ? "text-up" : item.direction === 'BEARISH' ? "text-down" : "text-muted"
                     )}>
@@ -59,7 +59,7 @@ export const MacroNewsTable: React.FC = () => {
                     </span>
                   </div>
                 </td>
-                <td className="py-3 px-2 text-muted leading-relaxed max-w-sm whitespace-normal">{item.description}</td>
+                <td className="py-3.5 px-3 text-muted leading-relaxed whitespace-normal">{item.description}</td>
               </tr>
             ))}
           </tbody>
