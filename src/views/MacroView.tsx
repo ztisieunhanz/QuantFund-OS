@@ -14,6 +14,7 @@ import type { AllocationWeights, AssetKey } from "@/types/market";
 
 const CHAT_EXPIRY_MS = 60 * 60 * 1000;
 
+// MÀU SẮC CHUYÊN NGHIỆP DÀNH CHO TERMINAL
 const PIE_COLORS: Record<keyof AllocationWeights, string> = {
   realEstate: "#26c6da", gold: "#ffc107", usdCash: "#00e676", equities: "#82b1ff", crypto: "#b388ff",
 };
@@ -31,6 +32,7 @@ function corrColor(v: number): string {
   return "bg-[#4a0d16] text-[#ff3d57]";
 }
 
+// FORMAT MARKDOWN CHO CHATBOT (FONT SANS-SERIF DỄ ĐỌC)
 const FormatMessage = ({ text }: { text: string }) => {
   const lines = text.split('\n');
   return (
@@ -65,20 +67,37 @@ export function MacroView() {
   const [isLoading, setIsLoading] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
-  // MOCK DATA: Đang hard-code, chỉ hiển thị UI, không nạp vào System Prompt
+  // ---------------------------------------------------------
+  // MOCKUP FEATURE ENGINE (NÂNG CẤP DỮ LIỆU ĐỂ AI SUY LUẬN TỐT HƠN)
+  // ---------------------------------------------------------
   const enhancedData = {
-    macroSurprise: { cpi: { actual: "3.1%", expected: "2.9%", prev: "3.0%", impact: "INFLATION SURPRISE: +0.2%" }, fedNextMeet: "35% hike, 65% hold (FOMC 15-16/9)" },
-    yieldCurve: { us2y: "4.85%", us10y: "4.58%", spread: "-27 bps (Inverted)" },
+    macroSurprise: {
+      cpi: { actual: "3.1%", expected: "2.9%", prev: "3.0%", impact: "INFLATION SURPRISE: +0.2%" },
+      fedNextMeet: "35% hike, 65% hold (FOMC 15-16/9)",
+    },
+    yieldCurve: {
+      us2y: "4.85%", us10y: "4.58%", spread: "-27 bps (Inverted)"
+    },
     vietnamMarket: {
-      vnindex: { price: 1280.5, ret1d: "+0.8%", ret20d: "+5.7%", distMA20: "+2.4%", distMA50: "+4.8%", distMA200: "-1.2%", breadth: "A/D = 145/320", pctAboveMA20: "38%", pctAboveMA50: "31%" },
+      vnindex: { 
+        price: 1280.5, ret1d: "+0.8%", ret20d: "+5.7%", 
+        distMA20: "+2.4%", distMA50: "+4.8%", distMA200: "-1.2%",
+        breadth: "A/D = 145/320", pctAboveMA20: "38%", pctAboveMA50: "31%" // Breadth yếu dù Index tăng
+      },
       foreignFlow: { d1: "-500B", d5: "-1,200B", d20: "+300B" },
       liquidity: { turnoverRatio20d: 1.32 },
       usdvnd: "25,450 (Ổn định)",
-      sjcGold: { price: "82.5M", premium: "+4M", premiumPercentile: "96%" }
+      sjcGold: { price: "82.5M", premium: "+4M", premiumPercentile: "96%" } // Premium cực cao
     },
     signalConfluence: {
       score: 71, confidence: 68,
-      factors: [ { name: "Inflation", val: "+++", status: "High" }, { name: "Liquidity", val: "++", status: "Neutral" }, { name: "USD", val: "+++", status: "High" }, { name: "Breadth", val: "-", status: "Weak" }, { name: "Foreign", val: "--", status: "Outflow" } ]
+      factors: [
+        { name: "Inflation", val: "+++", status: "High" },
+        { name: "Liquidity", val: "++", status: "Neutral" },
+        { name: "USD", val: "+++", status: "High" },
+        { name: "Breadth", val: "-", status: "Weak" },
+        { name: "Foreign", val: "--", status: "Outflow" }
+      ]
     }
   };
 
@@ -98,7 +117,7 @@ export function MacroView() {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã nạp Dữ liệu thực:\n- Portfolio & Trading Bots\n- Macro Regime & Tickers\n\nCảnh báo: Dữ liệu Việt Nam hiện đang UNAVAILABLE.\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã nạp Data Pipeline:\n- Portfolio & Trading Bots\n- Macro Regime & Tickers\n\nCảnh báo: Dữ liệu Việt Nam hiện đang UNAVAILABLE.\nBạn cần phân tích chiến lược nào?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -177,16 +196,20 @@ export function MacroView() {
         (Khi nào luận điểm này sai)
       `;
 
+      // Cấu trúc API mới: Sử dụng message thật cho conversation history
       const apiContents = [
-        { role: "user", parts: [{ text: systemPrompt }] },
-        { role: "model", parts: [{ text: "System Pipeline loaded. AI Quant Decision Engine is ready. UNAVAILABLE data noted." }] },
         ...messages.slice(1).map(m => ({ role: m.sender === "user" ? "user" : "model", parts: [{ text: m.text }] })),
         { role: "user", parts: [{ text: userText }] }
       ];
 
+      // Gửi yêu cầu với systemInstruction riêng biệt
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: apiContents, generationConfig: { temperature: 0.1 } })
+        body: JSON.stringify({ 
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: apiContents, 
+          generationConfig: { temperature: 0.1 } 
+        })
       });
 
       const data = await response.json();
