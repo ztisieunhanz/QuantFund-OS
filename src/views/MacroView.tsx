@@ -1,6 +1,6 @@
 // ============================================================================
 // FILE: src/views/MacroView.tsx
-// MODULE: BULLETPROOF QUANT MACRO VIEW (INFINITE-LOOP-PROOF & DUAL-ROUTE AI)
+// MODULE: BULLETPROOF QUANT MACRO VIEW (FULL REGIME VELOCITY METRICS RESTORED)
 // ============================================================================
 
 import React, { useEffect, useMemo, useState, useRef } from "react";
@@ -419,6 +419,7 @@ export function MacroView() {
                 </div>
               </div>
               <div className="h-2 w-full bg-[#151b26]"><div className="h-2 bg-gradient-to-r from-down via-amber to-up" style={{ width: `${regime.score}%` }} /></div>
+              
               <div className="grid grid-cols-2 gap-2.5 bg-panel-2 border border-line p-2.5 rounded">
                 <div>
                   <div className="text-[10px] font-bold text-muted">10Y-2Y SPREAD</div>
@@ -428,6 +429,13 @@ export function MacroView() {
                   <div className="text-[10px] font-bold text-muted flex items-center gap-1"><Activity size={12} className="text-cyan"/> VIX VOLATILITY</div>
                   <div className="text-base font-mono font-bold text-ink mt-1">{vixVal.toFixed(2)} (CALM)</div>
                 </div>
+              </div>
+
+              {/* KHÔI PHỤC ĐẦY ĐỦ CÁC CHỈ SỐ VELOCITY & TREND QUAN TRỌNG */}
+              <div className="grid grid-cols-3 gap-3 font-mono text-[11px] pt-1">
+                <Stat label="DXY TREND" value={formatNumber(regime.dxyTrend * 100, 3) + "%/d"} />
+                <Stat label="10Y LEVEL" value={formatNumber(regime.yieldLevel, 3) + "%"} />
+                <Stat label="10Y TREND" value={formatNumber(regime.yieldTrend * 100, 3) + " bps/d"} />
               </div>
             </div>
           ) : (<div className="text-sm text-muted">Computing regime…</div>)}
