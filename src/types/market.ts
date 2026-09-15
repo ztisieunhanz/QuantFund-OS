@@ -58,9 +58,12 @@ export type CorrelationMatrix = Record<AssetKey, Record<AssetKey, number>>;
 
 export type Side = "BUY" | "SELL";
 
+// Mở rộng botId hợp chuẩn: trend (Alpha 1), meanrev (Alpha 3), dca/event (Alpha 2), omega (Meta-Fund)
+export type QuantBotId = "trend" | "meanrev" | "dca" | "event" | "omega";
+
 export interface TradeFill {
   id: string;
-  botId: "trend" | "meanrev";
+  botId: QuantBotId;
   time: number;
   side: Side;
   price: number;
@@ -76,7 +79,7 @@ export interface EquityPoint {
 }
 
 export interface BotMetrics {
-  botId: "trend" | "meanrev";
+  botId: QuantBotId;
   name: string;
   cash: number;
   qty: number;
@@ -89,7 +92,7 @@ export interface BotMetrics {
   totalTrades: number;
   wins: number;
   losses: number;
-  position: "LONG" | "FLAT";
+  position: "LONG" | "FLAT" | "HOLDING";
   lastSignal: string;
   trades: TradeFill[];
   equityCurve: EquityPoint[];
