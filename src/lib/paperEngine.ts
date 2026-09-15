@@ -95,6 +95,44 @@ function toBotMetrics(tracker: SubBotTracker, markPrice: number): BotMetrics {
   };
 }
 
+// BỘ TẠO CHUỖI SỰ KIỆN POINT-IN-TIME THEO CHU KỲ NẾN (KHÔNG PHỤ THUỘC FILE NGOÀI)
+function generateHistoricalEventTimeline(bars: PointInTimeBar[]): PointInTimeEvent[] {
+  const events: PointInTimeEvent[] = [];
+  const eventCycleBars = 45; // Chu kỳ họp FOMC trung bình ~6 tuần (45 phiên)
+
+  const scenarios = [
+    { actual: 5.50, consensus: 5.50, previous: 5.25, surprise: 0.00, novelty: 0.40 },  // In-line
+    { actual: 5.25, consensus: 5.50, previous: 5.50, surprise: -0.25, novelty: 0.85 }, // Hạ lãi suất bất ngờ (Dovish / Risk-On)
+    { actual: 5.25, consensus: 5.25, previous: 5.25, surprise: 0.00, novelty: 0.35 },  // In-line
+    { actual: 5.50, consensus: 5.25, previous: 5.25, surprise: 0.25, novelty: 0.90 },  // Diều hâu bất ngờ (Hawkish / Risk-Off)
+    { actual: 5.00, consensus: 5.25, previous: 5.25, surprise: -0.25, novelty: 0.80 }, // Tiếp tục chu kỳ nới lỏng
+    { actual: 4.75, consensus: 5.00, previous: 5.00, surprise: -0.25, novelty: 0.85 }, // Nới lỏng sâu
+  ];
+
+  let scIdx = 0;
+  for (let i = 35; i < bars.length - 5; i += eventCycleBars) {
+    const bar = bars[i];
+    const sc = scenarios[scIdx % scenarios.length];
+    scIdx++;
+
+    events.push({
+      eventId: `pit-fed-${i}`,
+      eventType: "FED_RATE_DECISION",
+      eventTimestamp: bar.timestamp,
+      publicationTimestamp: bar.timestamp,
+      consensusSnapshotTimestamp: bar.timestamp - 3600000,
+      actual: sc.actual,
+      consensus: sc.consensus,
+      previous: sc.previous,
+      surprise: sc.surprise,
+      sourceQuality: "TIER_1_OFFICIAL",
+      noveltyScore: sc.novelty,
+    });
+  }
+
+  return events;
+}
+
 export class PaperEngine {
   trend: SubBotTracker = createSubBot("trend", "ADAPTIVE_TREND", "Alpha 1 · Adaptive Trend");
   event: SubBotTracker = createSubBot("event", "EVENT_REACTION", "Alpha 2 · Event Catalyst");
@@ -172,25 +210,8 @@ export class PaperEngine {
         },
       ];
 
-      // Đặt sự kiện kiểm toán vĩ mô tại mốc 20 nến trước thời điểm hiện tại
-      const eventIdx = Math.max(0, pitBars.length - 20);
-      const eventTimestamp = pitBars[eventIdx]?.timestamp ?? Date.now();
-
-      const eventTimeline: PointInTimeEvent[] = [
-        {
-          eventId: "fed-policy-decision",
-          eventType: "FED_RATE_DECISION",
-          eventTimestamp,
-          publicationTimestamp: eventTimestamp,
-          consensusSnapshotTimestamp: eventTimestamp - 3600000,
-          actual: 4.75,
-          consensus: 5.0,
-          previous: 5.25,
-          surprise: -0.25,
-          sourceQuality: "TIER_1_OFFICIAL",
-          noveltyScore: 0.85,
-        },
-      ];
+      // Đấu nối chuỗi sự kiện Point-in-Time xuyên suốt 500 nến
+      const eventTimeline: PointInTimeEvent[] = generateHistoricalEventTimeline(pitBars);
 
       const dataset: BacktestDataset = {
         assetBars: { BTC: pitBars },
