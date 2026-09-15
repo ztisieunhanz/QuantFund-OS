@@ -14,40 +14,39 @@ import type { AllocationWeights, AssetKey } from "@/types/market";
 
 const CHAT_EXPIRY_MS = 60 * 60 * 1000;
 
-// MÀU SẮC CHUYÊN NGHIỆP DÀNH CHO TERMINAL
 const PIE_COLORS: Record<keyof AllocationWeights, string> = {
   realEstate: "#26c6da", gold: "#ffc107", usdCash: "#00e676", equities: "#82b1ff", crypto: "#b388ff",
 };
 const PIE_LABELS: Record<keyof AllocationWeights, string> = {
-  realEstate: "Real Estate (BĐS)", gold: "Gold (Vàng)", usdCash: "USD/VND Cash", equities: "Equities (Cổ phiếu)", crypto: "Crypto",
+  realEstate: "Real Estate", gold: "Gold", usdCash: "USD Cash", equities: "Equities", crypto: "Crypto",
 };
 const ASSET_ORDER: AssetKey[] = ["dxy", "us10y", "gold", "btc"];
 const ASSET_LABEL: Record<AssetKey, string> = { dxy: "DXY", us10y: "US10Y", gold: "XAU", btc: "BTC" };
 
 function corrColor(v: number): string {
-  if (v >= 0.6) return "bg-[#0b3d24] text-[#00e676]";
-  if (v >= 0.2) return "bg-[#12301f] text-[#00e676]/80";
-  if (v > -0.2) return "bg-[#151b26] text-[#7d8ea3]";
-  if (v > -0.6) return "bg-[#3a1218] text-[#ff3d57]/80";
-  return "bg-[#4a0d16] text-[#ff3d57]";
+  if (v >= 0.6) return "bg-[#0b3d24] text-up";
+  if (v >= 0.2) return "bg-[#12301f] text-up/80";
+  if (v > -0.2) return "bg-panel-2 text-muted";
+  if (v > -0.6) return "bg-[#3a1218] text-down/80";
+  return "bg-[#4a0d16] text-down";
 }
 
-// FORMAT MARKDOWN CHO CHATBOT (FONT SANS-SERIF DỄ ĐỌC)
 const FormatMessage = ({ text }: { text: string }) => {
   const lines = text.split('\n');
   return (
-    <div className="space-y-2 text-[14px] leading-relaxed text-slate-200 font-sans tracking-wide">
+    <div className="space-y-2 text-[14px] leading-relaxed text-ink font-sans tracking-wide">
       {lines.map((line, i) => {
-        if (!line.trim()) return <div key={i} className="h-1"></div>;
+        if (!line.trim()) return <div key={i} className="h-1.5"></div>;
+        
         let formatted = line
-          .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-black">$1</strong>')
-          .replace(/\*(.*?)\*/g, '<em class="text-[#7d8ea3] italic">$1</em>');
+          .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>')
+          .replace(/\*(.*?)\*/g, '<em class="text-muted italic">$1</em>');
 
-        if (formatted.startsWith('### ')) return <h3 key={i} className="text-[#26c6da] font-bold text-[15px] mt-4 mb-2 uppercase" dangerouslySetInnerHTML={{ __html: formatted.replace('### ', '') }} />;
+        if (formatted.startsWith('### ')) return <h3 key={i} className="text-cyan font-bold text-[15px] mt-4 mb-2 uppercase" dangerouslySetInnerHTML={{ __html: formatted.replace('### ', '') }} />;
         if (formatted.startsWith('## ')) return <h2 key={i} className="text-[#82b1ff] font-bold text-[16px] mt-5 mb-2" dangerouslySetInnerHTML={{ __html: formatted.replace('## ', '') }} />;
         if (formatted.startsWith('- ') || formatted.startsWith('* ')) return (
           <div key={i} className="flex gap-2.5 items-start">
-            <span className="text-[#26c6da] font-bold mt-0.5">•</span>
+            <span className="text-cyan font-bold mt-0.5">•</span>
             <span dangerouslySetInnerHTML={{ __html: formatted.substring(2) }} />
           </div>
         );
@@ -67,37 +66,20 @@ export function MacroView() {
   const [isLoading, setIsLoading] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
-  // ---------------------------------------------------------
-  // MOCKUP FEATURE ENGINE (NÂNG CẤP DỮ LIỆU ĐỂ AI SUY LUẬN TỐT HƠN)
-  // ---------------------------------------------------------
+  // MOCK DATA (Giữ lại CHỈ ĐỂ RENDER UI, không đưa vào System Prompt)
   const enhancedData = {
-    macroSurprise: {
-      cpi: { actual: "3.1%", expected: "2.9%", prev: "3.0%", impact: "INFLATION SURPRISE: +0.2%" },
-      fedNextMeet: "35% hike, 65% hold (FOMC 15-16/9)",
-    },
-    yieldCurve: {
-      us2y: "4.85%", us10y: "4.58%", spread: "-27 bps (Inverted)"
-    },
+    macroSurprise: { cpi: { actual: "3.1%", expected: "2.9%", prev: "3.0%", impact: "INFLATION SURPRISE: +0.2%" }, fedNextMeet: "35% hike, 65% hold (FOMC 15-16/9)" },
+    yieldCurve: { us2y: "4.85%", us10y: "4.58%", spread: "-27 bps (Inverted)" },
     vietnamMarket: {
-      vnindex: { 
-        price: 1280.5, ret1d: "+0.8%", ret20d: "+5.7%", 
-        distMA20: "+2.4%", distMA50: "+4.8%", distMA200: "-1.2%",
-        breadth: "A/D = 145/320", pctAboveMA20: "38%", pctAboveMA50: "31%" // Breadth yếu dù Index tăng
-      },
+      vnindex: { price: 1280.5, ret1d: "+0.8%", ret20d: "+5.7%", distMA20: "+2.4%", distMA50: "+4.8%", distMA200: "-1.2%", breadth: "A/D = 145/320", pctAboveMA20: "38%", pctAboveMA50: "31%" },
       foreignFlow: { d1: "-500B", d5: "-1,200B", d20: "+300B" },
       liquidity: { turnoverRatio20d: 1.32 },
       usdvnd: "25,450 (Ổn định)",
-      sjcGold: { price: "82.5M", premium: "+4M", premiumPercentile: "96%" } // Premium cực cao
+      sjcGold: { price: "82.5M", premium: "+4M", premiumPercentile: "96%" }
     },
     signalConfluence: {
       score: 71, confidence: 68,
-      factors: [
-        { name: "Inflation", val: "+++", status: "High" },
-        { name: "Liquidity", val: "++", status: "Neutral" },
-        { name: "USD", val: "+++", status: "High" },
-        { name: "Breadth", val: "-", status: "Weak" },
-        { name: "Foreign", val: "--", status: "Outflow" }
-      ]
+      factors: [ { name: "Inflation", val: "+++", status: "High" }, { name: "Liquidity", val: "++", status: "Neutral" }, { name: "USD", val: "+++", status: "High" }, { name: "Breadth", val: "-", status: "Weak" }, { name: "Foreign", val: "--", status: "Outflow" } ]
     }
   };
 
@@ -117,7 +99,7 @@ export function MacroView() {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã nạp Data Pipeline:\n- Portfolio & Trading Bots\n- Macro Regime & Tickers\n\nCảnh báo: Dữ liệu Việt Nam hiện đang UNAVAILABLE.\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã khởi tạo MarketSnapshot:\n- Dữ liệu Danh mục: Khả dụng\n- Dữ liệu Vĩ mô & Tickers: Khả dụng\n- Hiệu suất Bots: Khả dụng\n- Dữ liệu Việt Nam: UNAVAILABLE\n\nBạn cần phân tích chiến lược nào?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -143,51 +125,76 @@ export function MacroView() {
     try {
       const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
       
+      // BƯỚC 3: XÂY DỰNG MARKET SNAPSHOT DUY NHẤT LÀM DATA CONTRACT
+      const marketSnapshot = {
+        timestamp: new Date().toISOString(),
+        dataQuality: {
+          status: loading ? "UNAVAILABLE" : usingSynthetic ? "SYNTHETIC" : "LIVE"
+        },
+        portfolio: {
+          nav: portfolio.getTotalNav(),
+          cash: portfolio.cashUsd,
+          assets: portfolio.assets.map(a => ({
+            name: a.name,
+            allocationPercent: a.allocationPercent,
+            currentValue: a.currentValue
+          }))
+        },
+        macro: regime ? {
+          label: regime.label,
+          score: regime.score,
+          thesis: regime.thesis,
+          dxyTrend: regime.dxyTrend,
+          yieldLevel: regime.yieldLevel,
+          yieldTrend: regime.yieldTrend
+        } : "UNAVAILABLE",
+        assets: series.length > 0 ? series.map(s => ({
+          id: s.id,
+          name: s.name,
+          ticker: s.ticker,
+          lastPrice: s.last,
+          changePct1d: s.changePct1d,
+          changePct20d: s.changePct20d,
+          source: s.source
+        })) : "UNAVAILABLE",
+        vietnam: "UNAVAILABLE", // Dữ liệu thật chưa có
+        bots: {
+          trend: { winRate: trend.winRate, pnl: trend.pnl, totalTrades: trend.totalTrades },
+          meanReversion: { winRate: mean.winRate, pnl: mean.pnl, totalTrades: mean.totalTrades },
+          dca: { pnl: dca.pnl, totalTrades: dca.totalTrades }
+        }
+      };
+
       const systemPrompt = `
         Bạn là AI QUANT EXPERT, hoạt động như một Senior Portfolio Manager + Quant Risk Analyst tại một quỹ đầu tư định lượng.
-        MỤC TIÊU: Xác định regime, phân biệt SIGNAL với NOISE, đánh giá risk/reward và đưa ra ACTION cụ thể. KHÔNG bịa data.
+        MỤC TIÊU:
+        1. Xác định market regime.
+        2. Phân biệt SIGNAL với NOISE.
+        3. Đánh giá risk/reward.
+        4. Đưa ra ACTION cụ thể.
 
-        [1. PORTFOLIO & BOTS - NGUỒN: LIVE]
-        - NAV: $${portfolio.getTotalNav()} | CASH: $${portfolio.cashUsd}
-        - Allocation: ${JSON.stringify(portfolio.assets.map(a => ({ asset: a.name, allocation: `${a.allocationPercent}%` })))}
-        - Bot Trend: Thắng ${formatPct(trend.winRate, 1)} | PnL: ${formatUsd(trend.pnl)} | Lệnh đã khớp: ${trend.totalTrades}
-        - Bot MeanRev: Thắng ${formatPct(mean.winRate, 1)} | PnL: ${formatUsd(mean.pnl)} | Lệnh đã khớp: ${mean.totalTrades}
-        - Bot DCA: PnL ${formatUsd(dca.pnl)} | Lệnh đã khớp: ${dca.totalTrades}
+        DƯỚI ĐÂY LÀ MARKET SNAPSHOT (DỮ LIỆU THỰC TẾ TRÍCH XUẤT TỪ HỆ THỐNG):
+        \`\`\`json
+        ${JSON.stringify(marketSnapshot, null, 2)}
+        \`\`\`
 
-        [2. GLOBAL MACRO - NGUỒN: LIVE]
-        - Regime: ${regime?.label ?? 'UNAVAILABLE'} (Score: ${regime?.score ?? 'UNAVAILABLE'}/100)
-        - DXY Trend: ${regime?.dxyTrend ? formatNumber(regime.dxyTrend * 100, 3) + '%/d' : 'UNAVAILABLE'}
-
-        [3. ADVANCED GLOBAL FEATURES - NGUỒN: UNAVAILABLE]
-        - US Yield Curve: UNAVAILABLE
-        - Inflation Surprise: UNAVAILABLE
-        - Event Risk: UNAVAILABLE
-
-        [4. VIETNAM MARKET (FEATURE ENGINE) - NGUỒN: UNAVAILABLE]
-        - VNINDEX: UNAVAILABLE
-        - Breadth (A/D, MA20/50): UNAVAILABLE
-        - Foreign Flow: UNAVAILABLE
-        - Tỷ giá USD/VND: UNAVAILABLE
-        - Vàng SJC (Premium): UNAVAILABLE
-        - Bất động sản: UNAVAILABLE
-
-        [5. MARKET SIGNAL CONFLUENCE - NGUỒN: UNAVAILABLE]
-        - Score: UNAVAILABLE
-
-        Nếu User hỏi về Dữ liệu UNAVAILABLE, bắt buộc trả lời: "Hệ thống hiện thiếu dữ liệu [Tên dữ liệu], không thể đưa ra nhận định chính xác." KHÔNG TỰ CHẾ SỐ LIỆU.
+        LUẬT LỆ:
+        - CHỈ SỬ DỤNG dữ liệu có trong MARKET SNAPSHOT JSON ở trên. 
+        - Nếu một trường dữ liệu (ví dụ: vietnam) có giá trị là "UNAVAILABLE" hoặc null, TUYỆT ĐỐI KHÔNG TỰ BỊA DỮ LIỆU. Bạn phải trả lời: "Thiếu dữ liệu [tên trường], không thể phân tích".
+        - Đưa ra phân tích dựa trên dữ liệu định lượng (VD: "Với DXY Trend hiện tại là X, Bot Trend đang có Win Rate Y, tôi khuyến nghị...").
 
         TRẢ LỜI THEO FORMAT BẮT BUỘC SAU KHI USER HỎI:
         ### VERDICT
-        (BUY / HOLD / REDUCE / HEDGE / WAIT)
+        BUY / HOLD / REDUCE / HEDGE / WAIT
 
         ### WHY
-        (3-5 lý do mạnh nhất từ data LIVE ở trên)
+        (3-5 lý do mạnh nhất trích xuất từ json)
 
         ### CONFIDENCE
-        (0-100% - Phải giảm confidence nếu dữ liệu UNAVAILABLE)
+        (0-100%)
 
         ### ACTION
-        (Tỷ trọng, hành động cụ thể)
+        (Tỷ trọng, hành động cụ thể cho danh mục hoặc bot)
 
         ### TRIGGER
         (Chờ điều kiện gì để hành động tiếp theo)
@@ -196,13 +203,11 @@ export function MacroView() {
         (Khi nào luận điểm này sai)
       `;
 
-      // Cấu trúc API mới: Sử dụng message thật cho conversation history
       const apiContents = [
         ...messages.slice(1).map(m => ({ role: m.sender === "user" ? "user" : "model", parts: [{ text: m.text }] })),
         { role: "user", parts: [{ text: userText }] }
       ];
 
-      // Gửi yêu cầu với systemInstruction riêng biệt
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -229,7 +234,7 @@ export function MacroView() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-3 custom-scrollbar relative bg-[#07090d]">
       
-      {/* 0. DẢI TIN TỨC CHẠY NGANG (MOCK DATA) */}
+      {/* 0. DẢI TIN TỨC CHẠY NGANG (MOCK DATA - UI ONLY) */}
       <style dangerouslySetInnerHTML={{__html: `
         @keyframes ticker { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
         .animate-ticker { display: inline-block; white-space: nowrap; animation: ticker 40s linear infinite; will-change: transform; }
@@ -250,18 +255,18 @@ export function MacroView() {
         </div>
       </div>
 
-      {/* 1. TICKERS GỐC (LIVE DATA) */}
+      {/* 1. TICKERS GỐC */}
       <div className="grid grid-cols-4 gap-3 shrink-0 mt-1">
         {series.map((s) => (
           <MetricCard key={s.id} label={s.name} ticker={s.ticker} value={s.last} changePct={s.changePct1d} digits={s.id === "us10y" ? 3 : s.id === "btc" ? 0 : 2} suffix={s.id === "us10y" ? "%" : undefined} />
         ))}
       </div>
 
-      {/* 2. DỮ LIỆU VIỆT NAM (MOCK DATA) */}
+      {/* 2. DỮ LIỆU VIỆT NAM (MOCK DATA UI) */}
       <div className="border border-[#1c2736] bg-[#10151e] flex flex-col shrink-0 shadow-sm">
         <div className="px-4 py-2 border-b border-[#1c2736] flex justify-between items-center bg-[#0c1017]">
           <span className="font-mono text-[10px] font-bold tracking-[0.2em] text-[#26c6da]">FEATURE ENGINE · VIETNAM MARKET</span>
-          <span className="font-mono text-[10px] text-amber border border-amber px-2 py-0.5 rounded">MOCK DATA</span>
+          <span className="font-mono text-[10px] text-amber border border-amber px-2 py-0.5 rounded">MOCK DATA UI</span>
         </div>
         <div className="p-3 grid grid-cols-4 gap-3">
           <div className="bg-[#151b26] border border-[#1c2736] p-2.5 flex flex-col justify-between">
@@ -287,7 +292,7 @@ export function MacroView() {
         </div>
       </div>
 
-      {/* 3. BẢNG TIN TỨC VĨ MÔ (MOCK DATA) */}
+      {/* 3. BẢNG TIN TỨC VĨ MÔ */}
       <MacroNewsTable />
 
       {/* 4. DỮ LIỆU VĨ MÔ GỐC & BIỂU ĐỒ TRÒN FIX LỖI KHOẢNG TRẮNG */}
@@ -412,13 +417,13 @@ export function MacroView() {
           ))}
           {isLoading && (
             <div className="flex items-center gap-2 text-cyan font-sans font-medium text-[13px] p-2">
-              <Loader2 size={16} className="animate-spin" /> Engine đang tính toán Signal Confluence & Action...
+              <Loader2 size={16} className="animate-spin" /> Engine đang phân tích Market Snapshot...
             </div>
           )}
         </div>
 
         <div className="px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar border-t border-line bg-panel">
-          <button onClick={() => handleSend("Phân tích tín hiệu thị trường hôm nay và đưa ra ACTION (Tôi đang đầu tư tại VN).")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+          <button onClick={() => handleSend("Phân tích tín hiệu thị trường hôm nay và đưa ra ACTION.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
             <MessageSquareText size={14} /> Market Action
           </button>
           <button onClick={() => handleSend("Đánh giá hiệu suất 3 Bot (Trend, Mean, DCA). Tôi nên tắt Bot nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
