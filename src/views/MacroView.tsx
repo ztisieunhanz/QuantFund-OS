@@ -134,7 +134,7 @@ export function MacroView() {
         - Vàng SJC: ${vietnamMarketData.sjcGold.value} (Chênh lệch: ${vietnamMarketData.sjcGold.premium})
         - Bất động sản: ${vietnamMarketData.realEstate.status}
         
-        [HIỆU SUẤT TRADING BOTS] (Khi nào nhắc tới mới cần trình bày)
+        [HIỆU SUẤT TRADING BOTS] Khi nào nhắc tới mới cần trình bày
         1. Bot Trend: Thắng ${formatPct(trend.winRate, 1)} | Lãi/Lỗ: ${formatUsd(trend.pnl)}
         2. Bot Mean Reversion: Thắng ${formatPct(mean.winRate, 1)} | Lãi/Lỗ: ${formatUsd(mean.pnl)}
         3. Bot DCA: Lãi/Lỗ: ${formatUsd(dca.pnl)}
