@@ -44,13 +44,13 @@ export interface VietnamMarketState {
   foreignFlow: VietnamForeignFlow;
 }
 
-const VNINDEX_SERIES_BASE = [
-  1218, 1222, 1225, 1230, 1235, 1228, 1220, 1224, 1232, 1238,
-  1240, 1245, 1242, 1239, 1248, 1252, 1255, 1250, 1246, 1253,
-  1258, 1262, 1260, 1265, 1268, 1264, 1259, 1263, 1267, 1270,
-  1268, 1272, 1275, 1271, 1269, 1274, 1278, 1282, 1279, 1276,
-  1280, 1285, 1282, 1278, 1284, 1288, 1283, 1279, 1281, 1280.5
-];
+// Chuỗi 200 phiên giá đóng cửa cơ sở VN-Index (đảm bảo tính đủ MA200 khi mất kết nối API)
+const VNINDEX_SERIES_BASE = Array.from({ length: 205 }, (_, i) => {
+  const trend = 1180 + i * 0.49; 
+  const cycle = Math.sin(i / 12) * 18;
+  return Math.round((trend + cycle) * 10) / 10;
+});
+VNINDEX_SERIES_BASE[VNINDEX_SERIES_BASE.length - 1] = 1280.5;
 
 export function calculateVietnamFeatures(prices: number[]) {
   const len = prices.length;
@@ -88,11 +88,12 @@ interface YahooChartResponse {
   };
 }
 
+// NÂNG RANGE LÊN 2 NĂM (2y) ĐỂ LẤY ĐỦ >200 PHIÊN TÍNH TOÁN MA200
 async function fetchLiveVietnamIndex(): Promise<{ points: TimeSeriesPoint[]; source: "live" } | null> {
   const ticker = "^VNINDEX";
-  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=6mo`;
+  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=2y`;
   const proxies = [
-    `/api/yahoo/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=6mo`,
+    `/api/yahoo/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=2y`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
   ];
 
@@ -132,7 +133,7 @@ export async function loadVietnamMarket(): Promise<VietnamMarketState> {
   let points: TimeSeriesPoint[];
   let source: "live" | "synthetic";
 
-  if (liveResult) {
+  if (liveResult && liveResult.points.length >= 200) {
     points = liveResult.points;
     prices = points.map(p => p.value);
     source = "live";
@@ -163,7 +164,6 @@ export async function loadVietnamMarket(): Promise<VietnamMarketState> {
     pctAboveMA200: 45.0
   };
 
-  // Dữ liệu thanh khoản thực thi (Khớp lệnh 14,800 tỷ vs TB 20 phiên 18,500 tỷ -> -20%)
   const matchingValueBillion = 14800;
   const ma20ValueBillion = 18500;
   const ratioToMa20 = Math.round((matchingValueBillion / ma20ValueBillion) * 100) / 100;
@@ -174,7 +174,6 @@ export async function loadVietnamMarket(): Promise<VietnamMarketState> {
     status: ratioToMa20 >= 1.15 ? "EXPANDING" : ratioToMa20 <= 0.85 ? "CONTRACTING" : "NORMAL"
   };
 
-  // Dữ liệu dòng tiền ngoại ròng
   const net1dBillion = -500;
   const net5dBillion = -1200;
   const foreignFlow: VietnamForeignFlow = {
