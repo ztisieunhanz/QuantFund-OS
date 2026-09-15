@@ -38,10 +38,10 @@ export async function fetchBtcKlines(
   interval: BinanceInterval = "1h",
   limit = 500,
 ): Promise<{ bars: OhlcvBar[]; source: "live" | "synthetic" }> {
-  // Danh sách các cổng tải nến: Ưu tiên Proxy Vite nội bộ -> Mirror chính thức không chặn CORS
+  // Ưu tiên gọi trực tiếp Binance Vision (CORS Open) để không bao giờ bị dính 502
   const endpoints = [
-    `/api/binance/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`,
     `https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`,
+    `/api/binance/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`,
   ];
 
   for (const url of endpoints) {
@@ -58,7 +58,6 @@ export async function fetchBtcKlines(
     }
   }
 
-  // Nếu toàn bộ mạng Binance bị cắt, fallback tạo nến neo theo mốc giá thực tế năm 2026 (~77,000 USD)
   return { bars: syntheticBtc(interval, limit, 77000), source: "synthetic" };
 }
 
