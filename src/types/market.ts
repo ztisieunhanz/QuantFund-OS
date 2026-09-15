@@ -15,7 +15,7 @@ export interface TimeSeriesPoint {
 }
 
 export interface MacroSeries {
-  id: "dxy" | "us10y" | "gold" | "btc";
+  id: "dxy" | "us10y" | "gold" | "btc" | "us2y" | "vix";
   ticker: string;
   name: string;
   points: TimeSeriesPoint[];
