@@ -28,20 +28,33 @@ function tanh(x: number): number {
   return Math.tanh(x);
 }
 
-export function scoreMacroRegime(series: MacroSeries[]): RegimeResult {
+export interface ExtendedRegimeResult extends RegimeResult {
+  yieldSpreadBps: number;
+  vixLevel: number;
+}
+
+export function scoreMacroRegime(series: MacroSeries[]): ExtendedRegimeResult {
   const dxy = series.find((s) => s.id === "dxy");
-  const yld = series.find((s) => s.id === "us10y");
+  const yld10 = series.find((s) => s.id === "us10y");
+  const yld2 = series.find((s) => s.id === "us2y");
+  const vix = series.find((s) => s.id === "vix");
   const gold = series.find((s) => s.id === "gold");
   const btc = series.find((s) => s.id === "btc");
 
   const dxyVals = dxy?.points.map((p) => p.value) ?? [];
-  const yldVals = yld?.points.map((p) => p.value) ?? [];
+  const yld10Vals = yld10?.points.map((p) => p.value) ?? [];
+  const yld2Vals = yld2?.points.map((p) => p.value) ?? [];
+  const vixVals = vix?.points.map((p) => p.value) ?? [];
   const goldVals = gold?.points.map((p) => p.value) ?? [];
   const btcVals = btc?.points.map((p) => p.value) ?? [];
 
   const dxyTrend = linearSlope(lastN(dxyVals, 30));
-  const yieldTrend = linearSlope(lastN(yldVals, 30));
-  const yieldLevel = yldVals.at(-1) ?? 4;
+  const yieldTrend = linearSlope(lastN(yld10Vals, 30));
+  const yieldLevel = yld10Vals.at(-1) ?? 4;
+  const yield2Level = yld2Vals.at(-1) ?? 4.2;
+  const yieldSpreadBps = Math.round((yieldLevel - yield2Level) * 100); // 10Y - 2Y Spread (bps)
+  const vixLevel = vixVals.at(-1) ?? 16;
+
   const goldTrend = linearSlope(lastN(goldVals, 30));
   const btcTrend = linearSlope(lastN(btcVals, 30));
 
@@ -49,46 +62,44 @@ export function scoreMacroRegime(series: MacroSeries[]): RegimeResult {
   const dxyFalling = dxyTrend < -0.0004;
   const yieldsHigh = yieldLevel >= 4.0;
   const yieldsRising = yieldTrend > 0.002;
+  const isYieldInverted = yieldSpreadBps < 0;
+  const isVixHigh = vixLevel > 22;
 
-  /*
-   * Global Risk/Regime Score in [0, 100].
-   * High = risk-on (liquidity expanding into cyclicals/crypto).
-   * Low = risk-off (dollar + duration tightness draining liquidity).
-   * DXY trend and 10Y yield dominate by design.
-   */
-  const raw =
+  // Global Risk/Regime Score trong [0, 100], điều chỉnh theo Yield Spread và VIX
+  let raw =
     50 -
     28 * tanh(dxyTrend * 120) -
     18 * tanh((yieldLevel - 3.75) / 1.35) -
     16 * tanh(yieldTrend * 80) +
     8 * tanh(btcTrend * 40) -
-    4 * tanh(goldTrend * 50);
+    4 * tanh(goldTrend * 50) +
+    0.05 * yieldSpreadBps -
+    0.8 * (vixLevel - 16);
+
   const score = clamp(raw, 0, 100);
 
   let label: RegimeLabel = "Transitional Mixed";
   let thesis =
     "Cross-currents in the dollar and the front of the Treasury curve leave no dominant liquidity impulse.";
 
-  if (dxyRising && yieldsHigh) {
+  if (isVixHigh) {
+    label = "Flight to Dollar";
+    thesis = `Market volatility spike (VIX: ${vixLevel.toFixed(1)}). Capital shifting rapidly to safety, raising cash and gold reserves.`;
+  } else if (isYieldInverted) {
     label = "Liquidity Drain";
-    thesis =
-      "Rising DXY plus elevated real-policy tightness is a classic liquidity drain: de-risk beta, raise USD cash, keep a gold hedge.";
+    thesis = `Yield curve inverted (${yieldSpreadBps} bps). Tight policy squeezing credit creation and testing equity valuations.`;
+  } else if (dxyRising && yieldsHigh) {
+    label = "Liquidity Drain";
+    thesis = "Rising DXY plus elevated real-policy tightness is a classic liquidity drain: de-risk beta, raise USD cash, keep a gold hedge.";
   } else if (dxyFalling && !yieldsHigh && !yieldsRising) {
     label = "Risk-On Expansion";
-    thesis =
-      "A softer dollar and contained yields expand global dollar liquidity. Overweight equities and crypto; keep cash at a tactical minimum.";
+    thesis = "A softer dollar and contained yields expand global dollar liquidity. Overweight equities and crypto; keep cash at a tactical minimum.";
   } else if (!dxyRising && yieldsHigh) {
     label = "Stagflation Hedge";
-    thesis =
-      "Yields remain restrictive while the dollar is not confirming. Real assets (gold, select real estate) hedge fiscal/inflation risk better than duration.";
-  } else if (dxyRising && !yieldsHigh) {
-    label = "Flight to Dollar";
-    thesis =
-      "Dollar bid with still-moderate yields: funding-stress / risk-off. Hold cash and gold; cut crypto beta hard.";
+    thesis = "Yields remain restrictive while the dollar is not confirming. Real assets (gold, select real estate) hedge fiscal/inflation risk better than duration.";
   } else if (score >= 62 && goldTrend < 0) {
     label = "Goldilocks";
-    thesis =
-      "Disinflationary growth mix: yields not spiking, dollar not squeezing. Equities lead; gold is the funding source.";
+    thesis = "Disinflationary growth mix: yields not spiking, dollar not squeezing. Equities lead; gold is the funding source.";
   }
 
   const allocation = buildAllocation({
@@ -98,7 +109,7 @@ export function scoreMacroRegime(series: MacroSeries[]): RegimeResult {
     score,
   });
 
-  return { score, label, thesis, dxyTrend, yieldLevel, yieldTrend, allocation };
+  return { score, label, thesis, dxyTrend, yieldLevel, yieldTrend, yieldSpreadBps, vixLevel, allocation };
 }
 
 function buildAllocation(input: {
