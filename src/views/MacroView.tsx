@@ -3,7 +3,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip } 
 import { BrainCircuit, Loader2, Send, MessageSquareText, Target, TrendingUp, AlertTriangle } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
 import { MetricCard } from "@/components/ui/MetricCard";
-import { MacroNewsTable, mockNews } from "@/components/MacroNewsTable"; // Import mockNews
+import { MacroNewsTable } from "@/components/MacroNewsTable";
 import { thirtyDayCorrelation } from "@/lib/correlation";
 import { clsx } from "@/lib/clsx";
 import { formatNumber, formatPct, formatUsd } from "@/lib/math";
@@ -57,7 +57,7 @@ const FormatMessage = ({ text }: { text: string }) => {
 };
 
 // ============================================================================
-// FEATURE ENGINE HELPER 
+// FEATURE ENGINE HELPER (TÍNH TOÁN CÁC CHỈ SỐ LỊCH SỬ CHO TỪNG ASSET)
 // ============================================================================
 function calculateAssetFeatures(history?: number[]) {
   const defaultFeatures = {
@@ -73,7 +73,9 @@ function calculateAssetFeatures(history?: number[]) {
     volatility20D: null as number | null,
   };
 
-  if (!history || !Array.isArray(history) || history.length === 0) return defaultFeatures;
+  if (!history || !Array.isArray(history) || history.length === 0) {
+    return defaultFeatures;
+  }
 
   const len = history.length;
   const lastPrice = history[len - 1];
@@ -100,7 +102,11 @@ function calculateAssetFeatures(history?: number[]) {
     const returns = [];
     for (let i = len - days; i < len; i++) {
       const prev = history[i - 1];
-      returns.push(prev ? (history[i] - prev) / prev : 0);
+      if (prev) {
+        returns.push((history[i] - prev) / prev);
+      } else {
+        returns.push(0);
+      }
     }
     const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
     const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
@@ -125,9 +131,45 @@ function calculateAssetFeatures(history?: number[]) {
   };
 }
 
-interface VietnamLiquidity { dailyTurnover: number | null; turnoverVs20D: number | null; turnoverVs60D: number | null; volumeTrend: "RISING" | "FALLING" | "FLAT" | null; }
-interface VietnamForeignFlow { net1D: number | null; cumulative5D: number | null; cumulative20D: number | null; }
-interface VietnamMarketSnapshot { liquidity: VietnamLiquidity | "UNAVAILABLE"; foreignFlow: VietnamForeignFlow | "UNAVAILABLE"; }
+// ============================================================================
+// BƯỚC 6 & 9: INTERFACES DÀNH CHO VIETNAM MARKET (LIQUIDITY, FOREIGN FLOW & MACRO)
+// ============================================================================
+interface VietnamLiquidity {
+  dailyTurnover: number | null;
+  turnoverVs20D: number | null;
+  turnoverVs60D: number | null;
+  volumeTrend: "RISING" | "FALLING" | "FLAT" | null;
+}
+
+interface VietnamForeignFlow {
+  net1D: number | null;
+  cumulative5D: number | null;
+  cumulative20D: number | null;
+}
+
+interface MacroDataField<T> {
+  value: T | null;
+  timestamp: string | null;
+  source: string | null;
+  status: "LIVE" | "DELAYED" | "UNAVAILABLE";
+}
+
+interface VietnamMacroSnapshot {
+  usdVnd: MacroDataField<number>;
+  sbvReferenceRate: MacroDataField<number>;
+  interbankRate: MacroDataField<number>;
+  policyRate: MacroDataField<number>;
+  creditGrowth: MacroDataField<number>;
+  m2Growth: MacroDataField<number>;
+  liquidityOperations: MacroDataField<string>;
+}
+
+interface VietnamMarketSnapshot {
+  liquidity: VietnamLiquidity | "UNAVAILABLE";
+  foreignFlow: VietnamForeignFlow | "UNAVAILABLE";
+  macro: VietnamMacroSnapshot | "UNAVAILABLE";
+}
+// ============================================================================
 
 export function MacroView() {
   const { loading, error, series, regime, correlation, load } = useMacroStore();
@@ -172,7 +214,7 @@ export function MacroView() {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã khởi tạo MarketSnapshot:\n- Feature Engine: Đã nạp.\n- Event Risk: Khả dụng.\n- Cảnh báo: Dữ liệu Việt Nam hiện đang UNAVAILABLE.\n\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã khởi tạo MarketSnapshot:\n- Dữ liệu Danh mục: Khả dụng\n- Feature Engine (Returns, MA, Volatility): Khả dụng\n- Hiệu suất Bots: Khả dụng\n- Vietnam Macro (Liquidity, Foreign Flow, FX, Rates): UNAVAILABLE\n\nBạn cần phân tích chiến lược nào?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -198,12 +240,23 @@ export function MacroView() {
     try {
       const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
       
+      const emptyMacroField = { value: null, timestamp: null, source: null, status: "UNAVAILABLE" as const };
+      
+      // BƯỚC 9: BỔ SUNG CẤU TRÚC VN MACRO VÀO MÔI TRƯỜNG DỮ LIỆU
       const vietnamSnapshot: VietnamMarketSnapshot = {
         liquidity: "UNAVAILABLE",
         foreignFlow: "UNAVAILABLE",
+        macro: {
+          usdVnd: emptyMacroField,
+          sbvReferenceRate: emptyMacroField,
+          interbankRate: emptyMacroField,
+          policyRate: emptyMacroField,
+          creditGrowth: emptyMacroField,
+          m2Growth: emptyMacroField,
+          liquidityOperations: emptyMacroField,
+        }
       };
 
-      // XÂY DỰNG MARKET SNAPSHOT DUY NHẤT LÀM DATA CONTRACT
       const marketSnapshot = {
         timestamp: new Date().toISOString(),
         dataQuality: {
@@ -230,8 +283,10 @@ export function MacroView() {
           const features = calculateAssetFeatures((s as any).history);
           return {
             id: s.id,
+            name: s.name,
             ticker: s.ticker,
             lastPrice: s.last,
+            source: s.source,
             features: {
               ...features,
               return1D: features.return1D ?? s.changePct1d,
@@ -244,37 +299,26 @@ export function MacroView() {
           trend: { winRate: trend.winRate, pnl: trend.pnl, totalTrades: trend.totalTrades },
           meanReversion: { winRate: mean.winRate, pnl: mean.pnl, totalTrades: mean.totalTrades },
           dca: { pnl: dca.pnl, totalTrades: dca.totalTrades }
-        },
-        // BƯỚC 8: MAP EVENT RISK TỪ MOCKNEWS SANG DATA CONTRACT VỚI NGUYÊN TẮC SOURCE STATUS
-        eventRisk: mockNews.map(n => ({
-          timestamp: n.timestamp,
-          event: n.event,
-          impact: n.impact,
-          direction: n.direction,
-          sourceStatus: n.sourceStatus,
-          source: n.source
-        }))
+        }
       };
 
       const systemPrompt = `
-        Bạn là AI QUANT EXPERT tại một quỹ đầu tư định lượng.
+        Bạn là AI QUANT EXPERT, hoạt động như một Senior Portfolio Manager + Quant Risk Analyst tại một quỹ đầu tư định lượng.
         MỤC TIÊU:
         1. Xác định market regime.
         2. Phân biệt SIGNAL với NOISE.
         3. Đánh giá risk/reward.
         4. Đưa ra ACTION cụ thể.
 
-        DƯỚI ĐÂY LÀ MARKET SNAPSHOT:
+        DƯỚI ĐÂY LÀ MARKET SNAPSHOT (DỮ LIỆU THỰC TẾ TRÍCH XUẤT TỪ HỆ THỐNG):
         \`\`\`json
         ${JSON.stringify(marketSnapshot, null, 2)}
         \`\`\`
 
-        LUẬT LỆ TỐI THƯỢNG (DATA QUALITY CONTROL):
-        - Nếu một trường dữ liệu có giá trị là "UNAVAILABLE", TUYỆT ĐỐI KHÔNG TỰ BỊA DỮ LIỆU. Bạn phải trả lời: "Thiếu dữ liệu [tên trường], không thể phân tích".
-        - ĐỐI VỚI TRƯỜNG "eventRisk": Bạn phải phân biệt rõ Source Status.
-           + VERIFIED: Được dùng làm luận điểm chính (Fact).
-           + UNVERIFIED: Chỉ dùng để đánh giá rủi ro kịch bản (Scenario risk), KHÔNG coi là sự thật.
-           + MOCK: BỎ QUA HOÀN TOÀN, không đưa vào phân tích thực tế.
+        LUẬT LỆ TỐI THƯỢNG:
+        - CHỈ SỬ DỤNG dữ liệu có trong MARKET SNAPSHOT JSON ở trên. 
+        - Nếu một trường dữ liệu có giá trị là "UNAVAILABLE" hoặc null, TUYỆT ĐỐI KHÔNG TỰ BỊA DỮ LIỆU. Bạn phải trả lời: "Thiếu dữ liệu [tên trường], không thể phân tích".
+        - Không được tự tạo số liệu về Vietnam Market (Liquidity, Foreign Flow, Macro).
 
         TRẢ LỜI THEO FORMAT BẮT BUỘC SAU KHI USER HỎI:
         ### VERDICT
@@ -287,7 +331,7 @@ export function MacroView() {
         (0-100%)
 
         ### ACTION
-        (Tỷ trọng, hành động cụ thể)
+        (Tỷ trọng, hành động cụ thể cho danh mục hoặc bot)
 
         ### TRIGGER
         (Chờ điều kiện gì để hành động tiếp theo)
@@ -385,7 +429,7 @@ export function MacroView() {
         </div>
       </div>
 
-      {/* 3. BẢNG TIN TỨC VĨ MÔ */}
+      {/* 3. BẢNG TIN TỨC VĨ MÔ (MOCK DATA) */}
       <MacroNewsTable />
 
       {/* 4. DỮ LIỆU VĨ MÔ GỐC & BIỂU ĐỒ TRÒN FIX LỖI KHOẢNG TRẮNG */}
@@ -516,11 +560,14 @@ export function MacroView() {
         </div>
 
         <div className="px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar border-t border-line bg-panel">
-          <button onClick={() => handleSend("Phân tích tín hiệu thị trường hôm nay và đưa ra ACTION.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+          <button onClick={() => handleSend("Phân tích tín hiệu thị trường hôm nay và đưa ra ACTION (Tôi đang đầu tư tại VN).")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
             <MessageSquareText size={14} /> Market Action
           </button>
-          <button onClick={() => handleSend("Sự kiện FED và NHNN hút tín phiếu là rủi ro kịch bản. Tôi nên điều chỉnh tỷ trọng Bot Trend không?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <Target size={14} /> Kịch bản Rủi ro & Bots
+          <button onClick={() => handleSend("Đánh giá hiệu suất 3 Bot (Trend, Mean, DCA). Tôi nên tắt Bot nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <Target size={14} /> Bot Performance Audit
+          </button>
+          <button onClick={() => handleSend("Với rủi ro vĩ mô hiện tại, tôi nên HEDGE danh mục thế nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <TrendingUp size={14} /> Portfolio Hedging
           </button>
         </div>
 
