@@ -505,7 +505,6 @@ export function MacroView() {
   const { loading, error, series, regime, correlation, load } = useMacroStore();
   const portfolio = usePortfolioStore();
   
-  // FIX: Destructure chuẩn 3 Alphas và Benchmark DCA, an toàn tuyệt đối
   const { trend, event, mean, benchmarkDca, runOnBars } = useTradingStore();
   const { bars, load: loadBars } = useMarketStore();
 
@@ -690,7 +689,6 @@ export function MacroView() {
       const liveFeeds = series.filter(s => s.source === "live").length;
       const dataQualityStatus = loading ? "SYNCING" : liveFeeds > 0 ? "LIVE_HYBRID" : "SYNTHETIC";
 
-      // FIX: Bảo toàn null-safety tuyệt đối cho các bot
       const marketSnapshot = {
         timestamp: new Date().toISOString(),
         dataQuality: { 
@@ -797,16 +795,16 @@ ${JSON.stringify(marketSnapshot, null, 2)}
         bodyPayload.generationConfig = generationConfig;
       }
 
-      // Gửi qua proxy /api/ai-advisor để xử lý Bearer auth an toàn
+      // 1. Thử gửi qua proxy nội bộ
       let response = await fetch("/api/ai-advisor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(bodyPayload)
       });
 
-      // Fallback gọi trực tiếp nếu server chưa nạp proxy
+      // 2. Fallback gọi trực tiếp Google nếu proxy 404 (chuẩn model gemini-flash-latest)
       if (!response.ok && response.status === 404) {
-        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(bodyPayload)
