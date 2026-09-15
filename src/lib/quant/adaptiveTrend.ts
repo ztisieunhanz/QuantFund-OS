@@ -49,7 +49,7 @@ function calculateTrueRange(current: PointInTimeBar, previous: PointInTimeBar): 
 }
 
 function calculateAtr(bars: readonly PointInTimeBar[], period: number): number | null {
-  if (bars.length < period + 1) return null;
+  if (bars.length < period + 1 || period <= 0) return null;
   const slice = bars.slice(-period - 1);
   let trSum = 0;
   for (let i = 1; i < slice.length; i++) {
@@ -59,7 +59,7 @@ function calculateAtr(bars: readonly PointInTimeBar[], period: number): number |
 }
 
 function calculateRealizedVolAnnualized(bars: readonly PointInTimeBar[], period: number): number | null {
-  if (bars.length < period + 1) return null;
+  if (bars.length < period + 1 || period <= 1) return null;
   const slice = bars.slice(-period - 1);
   const logReturns: number[] = [];
 
@@ -70,14 +70,15 @@ function calculateRealizedVolAnnualized(bars: readonly PointInTimeBar[], period:
     logReturns.push(Math.log(curr / prev));
   }
 
-  if (logReturns.length === 0) return null;
+  // Khắc phục Lỗi 2: Tránh chia cho 0 khi chỉ có 1 phần tử
+  if (logReturns.length <= 1) return null;
   const mean = logReturns.reduce((sum, r) => sum + r, 0) / logReturns.length;
   const variance = logReturns.reduce((sum, r) => sum + (r - mean) ** 2, 0) / (logReturns.length - 1);
   return Math.sqrt(variance * 252);
 }
 
 function calculateSMA(bars: readonly PointInTimeBar[], period: number): number | null {
-  if (bars.length < period) return null;
+  if (bars.length < period || period <= 0) return null;
   const slice = bars.slice(-period);
   const sum = slice.reduce((acc, bar) => acc + bar.close, 0);
   return sum / period;
@@ -94,8 +95,15 @@ export function evaluateAdaptiveTrend(
 ): SignalOutput {
   const { priceHistory, currentPrice, currentBarTimestamp, strategyId, assetId } = context;
 
-  // WARM-UP GUARD: Bắt buộc đủ số nến lookback tối đa để tránh bóp méo thống kê
-  if (priceHistory.length < config.lookbackLongBars) {
+  // Khắc phục Lỗi 1: Bắt buộc tối thiểu (lookbackLongBars + 1) nến để tránh index âm (-1)
+  const requiredBars = Math.max(
+    config.lookbackLongBars + 1,
+    config.lookbackMediumBars + 1,
+    config.lookbackShortBars + 1,
+    config.atrPeriodBars + 1
+  );
+
+  if (priceHistory.length < requiredBars) {
     return {
       strategyId,
       assetId,
@@ -107,25 +115,25 @@ export function evaluateAdaptiveTrend(
       holdingPeriod: config.baseHoldingPeriodBars,
       decayRate: null,
       validUntil: null,
-      rationale: `INSUFFICIENT_WARMUP: History length (${priceHistory.length}) < LookbackLong (${config.lookbackLongBars})`,
-      metadata: { warmupRemainingBars: config.lookbackLongBars - priceHistory.length },
+      rationale: `INSUFFICIENT_WARMUP: History length (${priceHistory.length}) < Required (${requiredBars})`,
+      metadata: { warmupRemainingBars: requiredBars - priceHistory.length },
     };
   }
 
   const len = priceHistory.length;
-  const pCurrent = currentPrice > 0 ? currentPrice : priceHistory[len - 1].close;
+  const pCurrent = currentPrice > 0 ? currentPrice : (priceHistory[len - 1]?.close ?? 0);
 
-  // 1. TÍNH LỢI NHUẬN ĐA KỲ HẠN (MULTI-HORIZON RETURN MOMENTUM)
-  const pShort = priceHistory[len - 1 - config.lookbackShortBars].close;
-  const pMedium = priceHistory[len - 1 - config.lookbackMediumBars].close;
-  const pLong = priceHistory[len - 1 - config.lookbackLongBars].close;
+  // Truy xuất an toàn với fallback về nến đầu tiên nếu có bất thường
+  const pShort = (priceHistory[len - 1 - config.lookbackShortBars] ?? priceHistory[0]).close;
+  const pMedium = (priceHistory[len - 1 - config.lookbackMediumBars] ?? priceHistory[0]).close;
+  const pLong = (priceHistory[len - 1 - config.lookbackLongBars] ?? priceHistory[0]).close;
 
-  const returnShort = (pCurrent - pShort) / pShort;
-  const returnMedium = (pCurrent - pMedium) / pMedium;
-  const returnLong = (pCurrent - pLong) / pLong;
+  // 1. TÍNH LỢI NHUẬN ĐA KỲ HẠN
+  const returnShort = pShort > 0 ? (pCurrent - pShort) / pShort : 0;
+  const returnMedium = pMedium > 0 ? (pCurrent - pMedium) / pMedium : 0;
+  const returnLong = pLong > 0 ? (pCurrent - pLong) / pLong : 0;
 
-  // 2. ĐO LƯỜNG TÍNH KIÊN ĐỊNH CỦA XU HƯỚNG (TREND PERSISTENCE)
-  // Tỷ lệ số nến đóng cửa trên đường MA ngắn hạn trong chu kỳ trung hạn
+  // 2. ĐO LƯỜNG TÍNH KIÊN ĐỊNH CỦA XU HƯỚNG
   const smaShort = calculateSMA(priceHistory, config.lookbackShortBars);
   const mediumWindow = priceHistory.slice(-config.lookbackMediumBars);
   let aboveSmaCount = 0;
@@ -135,12 +143,14 @@ export function evaluateAdaptiveTrend(
       aboveSmaCount++;
     }
   }
-  const persistenceRatio = aboveSmaCount / config.lookbackMediumBars;
+  const persistenceRatio = config.lookbackMediumBars > 0
+    ? aboveSmaCount / config.lookbackMediumBars
+    : 0.5;
 
-  // 3. BIẾN ĐỘNG DỰ BÁO (FORECAST VOLATILITY TỪ LOG RETURN ĐÃ QUA)
+  // 3. BIẾN ĐỘNG DỰ BÁO
   const forecastVol = calculateRealizedVolAnnualized(priceHistory, config.lookbackShortBars) ?? 0.20;
 
-  // 4. KIỂM TRA CHANDELIER TRAILING STOP LEVEL (KHÔNG PHỤC VỤ CUT LOSS, DÙNG ĐỂ NHẬN DIỆN EXHAUSTION)
+  // 4. KIỂM TRA CHANDELIER TRAILING STOP
   const atr = calculateAtr(priceHistory, config.atrPeriodBars);
   let chandelierExitTriggered = false;
 
@@ -154,37 +164,37 @@ export function evaluateAdaptiveTrend(
   }
 
   // 5. TỔNG HỢP VECTOR TÍN HIỆU ALPHA SCORE [-1.0 .. +1.0]
-  // Gán trọng số giảm dần từ dài hạn đến ngắn hạn: Long(40%), Med(35%), Short(25%)
   const signShort = Math.sign(returnShort);
   const signMed = Math.sign(returnMedium);
   const signLong = Math.sign(returnLong);
 
   let rawScore = signLong * 0.40 + signMed * 0.35 + signShort * 0.25;
 
-  // Điều chỉnh xung lực xu hướng nếu tính kiên định (persistence) vượt ngưỡng
   if (rawScore > 0 && persistenceRatio >= config.trendPersistenceThreshold) {
     rawScore = Math.min(1.0, rawScore * (1 + (persistenceRatio - config.trendPersistenceThreshold)));
   } else if (rawScore < 0 && (1 - persistenceRatio) >= config.trendPersistenceThreshold) {
     rawScore = Math.max(-1.0, rawScore * (1 + ((1 - persistenceRatio) - config.trendPersistenceThreshold)));
   }
 
-  // Nếu vi phạm Chandelier Stop trong pha tăng, bẻ gãy Alpha Score về Neutral
   if (rawScore > 0 && chandelierExitTriggered) {
     rawScore = 0.0;
   }
 
-  // 6. ĐÁNH GIÁ ĐỘ TIN CẬY THỐNG KÊ (CONFIDENCE [0.0 .. 1.0])
-  // Đồng thuận 3 khung = độ tin cậy tối đa; phân kỳ giữa các khung = độ tin cậy thấp
-  const directionalAgreement = (signShort === signMed && signMed === signLong) ? 1.0 : (signMed === signLong ? 0.65 : 0.30);
-  const confidence = Math.min(1.0, Math.max(0.1, directionalAgreement * (persistenceRatio >= 0.5 ? persistenceRatio : 1 - persistenceRatio)));
+  // 6. ĐÁNH GIÁ ĐỘ TIN CẬY THỐNG KÊ
+  const directionalAgreement = (signShort === signMed && signMed === signLong)
+    ? 1.0
+    : (signMed === signLong ? 0.65 : 0.30);
+  const confidence = Math.min(
+    1.0,
+    Math.max(0.1, directionalAgreement * (persistenceRatio >= 0.5 ? persistenceRatio : 1 - persistenceRatio))
+  );
 
-  // 7. DỰ BÁO TỶ SUẤT KỲ VỌNG (EXPECTED RETURN)
-  // Phỏng theo nguyên lý Grinold-Kahn: Expected Return = AlphaScore * ForecastVol * IR
+  // 7. DỰ BÁO TỶ SUẤT KỲ VỌNG (GRINOLD-KAHN)
   const expectedReturn = rawScore * forecastVol * config.assumedInformationRatio;
 
-  // 8. TÍNH TOÁN HOLDING PERIOD LINH HOẠT THEO ĐỘ MẠNH CỦA TREND
-  const holdingPeriod = directionalAgreement === 1.0 
-    ? Math.round(config.baseHoldingPeriodBars * 1.5) 
+  // 8. TÍNH TOÁN HOLDING PERIOD
+  const holdingPeriod = directionalAgreement === 1.0
+    ? Math.round(config.baseHoldingPeriodBars * 1.5)
     : config.baseHoldingPeriodBars;
 
   return {
@@ -196,10 +206,11 @@ export function evaluateAdaptiveTrend(
     confidence: Math.round(confidence * 100) / 100,
     forecastVol: Math.round(forecastVol * 1000) / 1000,
     holdingPeriod,
-    decayRate: null, // Trend Strategy không dùng exponential time decay như Event Strategy
+    decayRate: null,
     validUntil: currentBarTimestamp + holdingPeriod * 86_400_000,
     rationale: `AdaptiveTrend[${signLong >= 0 ? "+" : "-"}${signMed >= 0 ? "+" : "-"}${signShort >= 0 ? "+" : "-"}]: Persistence=${persistenceRatio.toFixed(2)}, ChandelierBreak=${chandelierExitTriggered}`,
-    rawFeatures: {
+    // Khắc phục Lỗi 3: Đổi rawFeatures sang metadata đúng chuẩn types.ts
+    metadata: {
       returnShort,
       returnMedium,
       returnLong,
