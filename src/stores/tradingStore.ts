@@ -1,12 +1,18 @@
+// ============================================================================
+// FILE: src/stores/tradingStore.ts
+// MODULE: QUANT TRADING & STATE STORE
+// ARCHITECTURE: Zustand Store bridging PaperEngine with Macro and UI Views
+// ============================================================================
+
 import { create } from "zustand";
-import type { BotMetrics, OhlcvBar } from "@/types/market";
+import type { BotMetrics, OhlcvBar, QuantBotId } from "@/types/market";
 import type { DecisionState } from "@/lib/quant/types";
 import { PaperEngine, STARTING_EQUITY } from "@/lib/paperEngine";
 import { useMacroStore } from "@/stores/macroStore";
 
 const engine = new PaperEngine();
 
-const emptyBot = (botId: BotMetrics["botId"], name: string): BotMetrics => ({
+const emptyBot = (botId: QuantBotId, name: string): BotMetrics => ({
   botId,
   name,
   cash: STARTING_EQUITY,
@@ -44,7 +50,7 @@ export const useTradingStore = create<TradingState>((set) => ({
   trend: emptyBot("trend", "Bot 1 · Adaptive Trend"),
   mean: emptyBot("meanrev", "Bot 3 · Short Mean Reversion"),
   dca: emptyBot("dca", "Bot 2 · Event Catalyst Driver"),
-  omega: emptyBot("dca" as any, "Omega · Quant Meta-Fund"),
+  omega: emptyBot("omega", "Omega · Quant Meta-Fund"),
   latestDecision: null,
   lastRunAt: null,
 
@@ -53,14 +59,29 @@ export const useTradingStore = create<TradingState>((set) => ({
     const regime = useMacroStore.getState().regime;
     const isRiskOff = Boolean(regime && regime.score < 45);
     const { trend, mean, dca, omega, latestDecision } = engine.replay(bars, isRiskOff);
-    set({ trend, mean, dca, omega, latestDecision, lastRunAt: Date.now(), running: true });
+    set({
+      trend,
+      mean,
+      dca,
+      omega,
+      latestDecision,
+      lastRunAt: Date.now(),
+      running: true,
+    });
   },
 
   ingest: (bar, history) => {
     const regime = useMacroStore.getState().regime;
     const isRiskOff = Boolean(regime && regime.score < 45);
     const { trend, mean, dca, omega, latestDecision } = engine.ingestBar(bar, history, isRiskOff);
-    set({ trend, mean, dca, omega, latestDecision, lastRunAt: Date.now() });
+    set({
+      trend,
+      mean,
+      dca,
+      omega,
+      latestDecision,
+      lastRunAt: Date.now(),
+    });
   },
 
   reset: () => {
@@ -69,7 +90,7 @@ export const useTradingStore = create<TradingState>((set) => ({
       trend: emptyBot("trend", "Bot 1 · Adaptive Trend"),
       mean: emptyBot("meanrev", "Bot 3 · Short Mean Reversion"),
       dca: emptyBot("dca", "Bot 2 · Event Catalyst Driver"),
-      omega: emptyBot("dca" as any, "Omega · Quant Meta-Fund"),
+      omega: emptyBot("omega", "Omega · Quant Meta-Fund"),
       latestDecision: null,
       lastRunAt: null,
     });
