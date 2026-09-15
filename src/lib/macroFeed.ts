@@ -1,3 +1,8 @@
+// ============================================================================
+// FILE: src/lib/macroFeed.ts
+// MODULE: MACRO UNIVERSE FEED WITH CORS-FREE BINANCE PROXIES
+// ============================================================================
+
 import type { MacroSeries, TimeSeriesPoint } from "@/types/market";
 import { mulberry32, pctChange } from "@/lib/math";
 
@@ -19,54 +24,68 @@ interface YahooChartResponse {
   };
 }
 
-// 1. KÉO NẾN BTC (250 PHIÊN ĐỂ TÍNH ĐỦ MA200)
+// 1. KÉO NẾN BTC QUA PROXY NỘI BỘ VÀ MIRROR (TRÁNH CORS)
 async function fetchBinanceBtc(): Promise<MacroSeries | null> {
-  try {
-    const url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250";
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!Array.isArray(data) || data.length < 25) return null;
+  const endpoints = [
+    "/api/binance/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250",
+    "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250",
+  ];
 
-    const points: TimeSeriesPoint[] = data.map((k: any) => ({
-      time: Number(k[0]),
-      value: parseFloat(k[4]),
-    }));
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (!Array.isArray(data) || data.length < 25) continue;
 
-    return toMacroSeries("btc", "BTCUSDT", "Bitcoin", points, "live");
-  } catch (e) {
-    return null;
+      const points: TimeSeriesPoint[] = data.map((k: any) => ({
+        time: Number(k[0]),
+        value: parseFloat(k[4]),
+      }));
+
+      return toMacroSeries("btc", "BTCUSDT", "Bitcoin", points, "live");
+    } catch {
+      // Tiếp tục thử mirror
+    }
   }
+  return null;
 }
 
-// 2. KÉO NẾN VÀNG PAXG (250 PHIÊN ĐỂ TÍNH ĐỦ MA200)
+// 2. KÉO NẾN VÀNG PAXG QUA PROXY NỘI BỘ VÀ MIRROR
 async function fetchBinanceGold(): Promise<MacroSeries | null> {
-  try {
-    const url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=250";
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!Array.isArray(data) || data.length < 25) return null;
+  const endpoints = [
+    "/api/binance/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=250",
+    "https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=250",
+  ];
 
-    const points: TimeSeriesPoint[] = data.map((k: any) => ({
-      time: Number(k[0]),
-      value: parseFloat(k[4]),
-    }));
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (!Array.isArray(data) || data.length < 25) continue;
 
-    return toMacroSeries("gold", "PAXG/XAU", "Gold (XAU)", points, "live");
-  } catch (e) {
-    return null;
+      const points: TimeSeriesPoint[] = data.map((k: any) => ({
+        time: Number(k[0]),
+        value: parseFloat(k[4]),
+      }));
+
+      return toMacroSeries("gold", "PAXG/XAU", "Gold (XAU)", points, "live");
+    } catch {
+      // Tiếp tục thử mirror
+    }
   }
+  return null;
 }
 
-// 3. KÉO YAHOO SERIES VỚI RANGE 2 NĂM
+// 3. KÉO YAHOO SERIES QUA PROXY VITE
 async function fetchYahooViaProxy(id: MacroSeries["id"]): Promise<MacroSeries | null> {
   const meta = YAHOO[id];
   const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=2y`;
 
   const proxies = [
     `/api/yahoo/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=2y`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
   ];
 
   for (const url of proxies) {
@@ -88,8 +107,8 @@ async function fetchYahooViaProxy(id: MacroSeries["id"]): Promise<MacroSeries | 
       if (points.length >= 25) {
         return toMacroSeries(id, meta.ticker, meta.name, points, "live");
       }
-    } catch (e) {
-      // Tiếp tục fallback
+    } catch {
+      // Thử proxy kế tiếp
     }
   }
 
@@ -119,7 +138,6 @@ function toMacroSeries(
   };
 }
 
-// 4. MÔ PHỎNG DỰ PHÒNG CẤP ĐỦ 250 PHIÊN ĐỂ TÍNH ĐƯỢC MA200
 function syntheticSeries(id: MacroSeries["id"]): MacroSeries {
   const meta = YAHOO[id];
   const seedMap = { dxy: 11, us10y: 22, us2y: 25, vix: 28, gold: 33, btc: 44 };
