@@ -57,7 +57,7 @@ const FormatMessage = ({ text }: { text: string }) => {
 };
 
 // ============================================================================
-// FEATURE ENGINE HELPER (TÍNH TOÁN CÁC CHỈ SỐ LỊCH SỬ CHO TỪNG ASSET)
+// FEATURE ENGINE HELPER
 // ============================================================================
 function calculateAssetFeatures(history?: number[]) {
   const defaultFeatures = {
@@ -73,9 +73,7 @@ function calculateAssetFeatures(history?: number[]) {
     volatility20D: null as number | null,
   };
 
-  if (!history || !Array.isArray(history) || history.length === 0) {
-    return defaultFeatures;
-  }
+  if (!history || !Array.isArray(history) || history.length === 0) return defaultFeatures;
 
   const len = history.length;
   const lastPrice = history[len - 1];
@@ -102,11 +100,7 @@ function calculateAssetFeatures(history?: number[]) {
     const returns = [];
     for (let i = len - days; i < len; i++) {
       const prev = history[i - 1];
-      if (prev) {
-        returns.push((history[i] - prev) / prev);
-      } else {
-        returns.push(0);
-      }
+      returns.push(prev ? (history[i] - prev) / prev : 0);
     }
     const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
     const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
@@ -132,42 +126,150 @@ function calculateAssetFeatures(history?: number[]) {
 }
 
 // ============================================================================
-// BƯỚC 6 & 9: INTERFACES DÀNH CHO VIETNAM MARKET (LIQUIDITY, FOREIGN FLOW & MACRO)
+// BƯỚC 10: SIGNAL CONFLUENCE ENGINE 
 // ============================================================================
-interface VietnamLiquidity {
-  dailyTurnover: number | null;
-  turnoverVs20D: number | null;
-  turnoverVs60D: number | null;
-  volumeTrend: "RISING" | "FALLING" | "FLAT" | null;
-}
+function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: any) {
+  // Trọng số (Weights) được cấu hình rõ ràng, không cảm tính
+  const WEIGHTS = {
+    macro: 0.25,
+    liquidity: 0.15,
+    trend: 0.20,
+    breadth: 0.15,
+    flow: 0.15,
+    crossAsset: 0.10
+  };
 
-interface VietnamForeignFlow {
-  net1D: number | null;
-  cumulative5D: number | null;
-  cumulative20D: number | null;
-}
+  let totalWeight = 0;
+  let earnedScore = 0;
+  const factors = [];
+  const divergences = [];
+  let dataCoverage = 0;
+  const totalDataFields = 6;
 
-interface MacroDataField<T> {
-  value: T | null;
-  timestamp: string | null;
-  source: string | null;
-  status: "LIVE" | "DELAYED" | "UNAVAILABLE";
-}
+  // 1. MACRO SCORE
+  if (macroRegime && typeof macroRegime.score === 'number') {
+    totalWeight += WEIGHTS.macro;
+    earnedScore += (macroRegime.score / 100) * WEIGHTS.macro;
+    factors.push({ name: "Macro", score: macroRegime.score, status: macroRegime.score >= 55 ? "BULLISH" : macroRegime.score <= 45 ? "BEARISH" : "NEUTRAL" });
+    dataCoverage++;
+  } else {
+    factors.push({ name: "Macro", score: null, status: "UNAVAILABLE" });
+  }
 
-interface VietnamMacroSnapshot {
-  usdVnd: MacroDataField<number>;
-  sbvReferenceRate: MacroDataField<number>;
-  interbankRate: MacroDataField<number>;
-  policyRate: MacroDataField<number>;
-  creditGrowth: MacroDataField<number>;
-  m2Growth: MacroDataField<number>;
-  liquidityOperations: MacroDataField<string>;
-}
+  // 2. LIQUIDITY SCORE
+  if (vietnam && vietnam.liquidity && vietnam.liquidity !== "UNAVAILABLE") {
+    let score = 50;
+    if (vietnam.liquidity.volumeTrend === "RISING") score += 20;
+    else if (vietnam.liquidity.volumeTrend === "FALLING") score -= 20;
+    if (vietnam.liquidity.turnoverVs20D > 1) score += 15;
+    else if (vietnam.liquidity.turnoverVs20D < 1) score -= 15;
+    
+    totalWeight += WEIGHTS.liquidity;
+    earnedScore += (score / 100) * WEIGHTS.liquidity;
+    factors.push({ name: "Liquidity", score, status: score > 50 ? "BULLISH" : "BEARISH" });
+    dataCoverage++;
+  } else {
+    factors.push({ name: "Liquidity", score: null, status: "UNAVAILABLE" });
+  }
 
-interface VietnamMarketSnapshot {
-  liquidity: VietnamLiquidity | "UNAVAILABLE";
-  foreignFlow: VietnamForeignFlow | "UNAVAILABLE";
-  macro: VietnamMacroSnapshot | "UNAVAILABLE";
+  // 3. TREND SCORE
+  let trendScore = null;
+  let isPriceUp = false;
+  if (vietnam && vietnam.index && vietnam.index !== "UNAVAILABLE") {
+    trendScore = 50;
+    if (vietnam.index.ret20d > 0) { trendScore += 25; isPriceUp = true; }
+    else { trendScore -= 25; }
+    if (vietnam.index.distMa50 > 0) trendScore += 25;
+    else trendScore -= 25;
+  } else {
+    // Nếu chưa có Index VN, dùng BTC làm proxy tạm thời đo trend rủi ro
+    const btc = assets !== "UNAVAILABLE" ? assets.find((a: any) => a.id === "btc") : null;
+    if (btc && btc.features && btc.features.return20D !== null) {
+      trendScore = 50;
+      if (btc.features.return20D > 0) { trendScore += 25; isPriceUp = true; }
+      else trendScore -= 25;
+      if (btc.features.distMa50 !== null && btc.features.distMa50 > 0) trendScore += 25;
+      else trendScore -= 25;
+    }
+  }
+
+  if (trendScore !== null) {
+    totalWeight += WEIGHTS.trend;
+    earnedScore += (trendScore / 100) * WEIGHTS.trend;
+    factors.push({ name: "Price/Trend", score: Math.max(0, Math.min(100, trendScore)), status: trendScore >= 55 ? "BULLISH" : trendScore <= 45 ? "BEARISH" : "NEUTRAL" });
+    dataCoverage++;
+  } else {
+    factors.push({ name: "Price/Trend", score: null, status: "UNAVAILABLE" });
+  }
+
+  // 4. BREADTH SCORE
+  let isBreadthWeak = false;
+  if (vietnam && vietnam.breadth && vietnam.breadth !== "UNAVAILABLE") {
+    let score = 50;
+    if (vietnam.breadth.pctAboveMA20 > 50) score += 25;
+    else { score -= 25; isBreadthWeak = true; }
+    if (vietnam.breadth.adRatio > 1) score += 25;
+    else score -= 25;
+    
+    totalWeight += WEIGHTS.breadth;
+    earnedScore += (score / 100) * WEIGHTS.breadth;
+    factors.push({ name: "Breadth", score: Math.max(0, Math.min(100, score)), status: score >= 55 ? "BULLISH" : score <= 45 ? "BEARISH" : "NEUTRAL" });
+    dataCoverage++;
+  } else {
+    factors.push({ name: "Breadth", score: null, status: "UNAVAILABLE" });
+  }
+
+  // 5. FOREIGN FLOW SCORE
+  let isForeignOutflow = false;
+  if (vietnam && vietnam.foreignFlow && vietnam.foreignFlow !== "UNAVAILABLE") {
+    let score = 50;
+    if (vietnam.foreignFlow.cumulative5D > 0) score += 25;
+    else { score -= 25; isForeignOutflow = true; }
+    if (vietnam.foreignFlow.net1D > 0) score += 25;
+    else score -= 25;
+
+    totalWeight += WEIGHTS.flow;
+    earnedScore += (score / 100) * WEIGHTS.flow;
+    factors.push({ name: "Foreign Flow", score: Math.max(0, Math.min(100, score)), status: score >= 55 ? "BULLISH" : score <= 45 ? "BEARISH" : "NEUTRAL" });
+    dataCoverage++;
+  } else {
+    factors.push({ name: "Foreign Flow", score: null, status: "UNAVAILABLE" });
+  }
+
+  // 6. CROSS-ASSET SCORE (DXY vs US10Y)
+  const dxy = assets !== "UNAVAILABLE" ? assets.find((a: any) => a.id === "dxy") : null;
+  const us10y = assets !== "UNAVAILABLE" ? assets.find((a: any) => a.id === "us10y") : null;
+  if (dxy && dxy.features && us10y && us10y.features) {
+    let score = 50;
+    // DXY giảm & Lợi suất giảm = Hỗ trợ tích cực cho tài sản rủi ro
+    if (dxy.features.return20D !== null && dxy.features.return20D < 0) score += 25;
+    else score -= 25;
+    if (us10y.features.return20D !== null && us10y.features.return20D < 0) score += 25;
+    else score -= 25;
+    
+    totalWeight += WEIGHTS.crossAsset;
+    earnedScore += (score / 100) * WEIGHTS.crossAsset;
+    factors.push({ name: "Cross-Asset", score: Math.max(0, Math.min(100, score)), status: score >= 55 ? "BULLISH" : score <= 45 ? "BEARISH" : "NEUTRAL" });
+    dataCoverage++;
+  } else {
+    factors.push({ name: "Cross-Asset", score: null, status: "UNAVAILABLE" });
+  }
+
+  // DIVERGENCE DETECTION (PHÁT HIỆN PHÂN KỲ)
+  if (isPriceUp && isBreadthWeak) divergences.push("Index Up + Breadth Weak");
+  if (isPriceUp && vietnam?.liquidity?.volumeTrend === "FALLING") divergences.push("Price Up + Volume Weak");
+  if (isPriceUp && isForeignOutflow) divergences.push("Index Up + Foreign Outflow");
+
+  const confluenceScore = totalWeight > 0 ? Math.round((earnedScore / totalWeight) * 100) : null;
+  const confidence = Math.round((dataCoverage / totalDataFields) * 100);
+
+  return {
+    score: confluenceScore,
+    confidence,
+    factors,
+    divergences,
+    dataCoverage: `${dataCoverage}/${totalDataFields}`
+  };
 }
 // ============================================================================
 
@@ -181,7 +283,7 @@ export function MacroView() {
   const [isLoading, setIsLoading] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
-  // MOCK DATA (Giữ lại CHỈ ĐỂ RENDER UI, không đưa vào System Prompt)
+  // MOCK DATA UI
   const enhancedData = {
     macroSurprise: { cpi: { actual: "3.1%", expected: "2.9%", prev: "3.0%", impact: "INFLATION SURPRISE: +0.2%" }, fedNextMeet: "35% hike, 65% hold (FOMC 15-16/9)" },
     yieldCurve: { us2y: "4.85%", us10y: "4.58%", spread: "-27 bps (Inverted)" },
@@ -214,7 +316,7 @@ export function MacroView() {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã khởi tạo MarketSnapshot:\n- Dữ liệu Danh mục: Khả dụng\n- Feature Engine (Returns, MA, Volatility): Khả dụng\n- Hiệu suất Bots: Khả dụng\n- Vietnam Macro (Liquidity, Foreign Flow, FX, Rates): UNAVAILABLE\n\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã khởi tạo MarketSnapshot:\n- Feature Engine & Asset Data: Khả dụng\n- Signal Confluence Engine: Sẵn sàng (Confidence Level sẽ tự động điều chỉnh nếu thiếu data)\n\nBạn cần phân tích chiến lược nào?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -240,61 +342,33 @@ export function MacroView() {
     try {
       const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
       
-      const emptyMacroField = { value: null, timestamp: null, source: null, status: "UNAVAILABLE" as const };
+      // XÂY DỰNG MARKET SNAPSHOT DUY NHẤT
+      const snapshotMacro = regime ? { label: regime.label, score: regime.score, thesis: regime.thesis, dxyTrend: regime.dxyTrend, yieldLevel: regime.yieldLevel, yieldTrend: regime.yieldTrend } : "UNAVAILABLE";
       
-      // BƯỚC 9: BỔ SUNG CẤU TRÚC VN MACRO VÀO MÔI TRƯỜNG DỮ LIỆU
-      const vietnamSnapshot: VietnamMarketSnapshot = {
-        liquidity: "UNAVAILABLE",
-        foreignFlow: "UNAVAILABLE",
-        macro: {
-          usdVnd: emptyMacroField,
-          sbvReferenceRate: emptyMacroField,
-          interbankRate: emptyMacroField,
-          policyRate: emptyMacroField,
-          creditGrowth: emptyMacroField,
-          m2Growth: emptyMacroField,
-          liquidityOperations: emptyMacroField,
-        }
-      };
+      const snapshotAssets = series.length > 0 ? series.map(s => {
+        const features = calculateAssetFeatures((s as any).history);
+        return {
+          id: s.id, name: s.name, ticker: s.ticker, lastPrice: s.last, source: s.source,
+          features: { ...features, return1D: features.return1D ?? s.changePct1d, return20D: features.return20D ?? s.changePct20d }
+        };
+      }) : "UNAVAILABLE";
+
+      const snapshotVietnam = "UNAVAILABLE"; 
 
       const marketSnapshot = {
         timestamp: new Date().toISOString(),
-        dataQuality: {
-          status: loading ? "UNAVAILABLE" : usingSynthetic ? "SYNTHETIC" : "LIVE"
-        },
+        dataQuality: { status: loading ? "UNAVAILABLE" : usingSynthetic ? "SYNTHETIC" : "LIVE" },
         portfolio: {
-          nav: portfolio.getTotalNav(),
-          cash: portfolio.cashUsd,
-          assets: portfolio.assets.map(a => ({
-            name: a.name,
-            allocationPercent: a.allocationPercent,
-            currentValue: a.currentValue
-          }))
+          nav: portfolio.getTotalNav(), cash: portfolio.cashUsd,
+          assets: portfolio.assets.map(a => ({ name: a.name, allocationPercent: a.allocationPercent, currentValue: a.currentValue }))
         },
-        macro: regime ? {
-          label: regime.label,
-          score: regime.score,
-          thesis: regime.thesis,
-          dxyTrend: regime.dxyTrend,
-          yieldLevel: regime.yieldLevel,
-          yieldTrend: regime.yieldTrend
-        } : "UNAVAILABLE",
-        assets: series.length > 0 ? series.map(s => {
-          const features = calculateAssetFeatures((s as any).history);
-          return {
-            id: s.id,
-            name: s.name,
-            ticker: s.ticker,
-            lastPrice: s.last,
-            source: s.source,
-            features: {
-              ...features,
-              return1D: features.return1D ?? s.changePct1d,
-              return20D: features.return20D ?? s.changePct20d
-            }
-          };
-        }) : "UNAVAILABLE",
-        vietnam: vietnamSnapshot,
+        macro: snapshotMacro,
+        assets: snapshotAssets,
+        vietnam: snapshotVietnam,
+        
+        // TÍCH HỢP SIGNAL CONFLUENCE ENGINE VÀO ĐÂY (AI SẼ CHỈ ĐỌC KẾT QUẢ TỪ HÀM NÀY, KHÔNG ĐƯỢC TỰ BỊA ĐIỂM)
+        signalConfluence: calculateSignalConfluence(snapshotMacro, snapshotAssets, snapshotVietnam),
+
         bots: {
           trend: { winRate: trend.winRate, pnl: trend.pnl, totalTrades: trend.totalTrades },
           meanReversion: { winRate: mean.winRate, pnl: mean.pnl, totalTrades: mean.totalTrades },
@@ -317,8 +391,8 @@ export function MacroView() {
 
         LUẬT LỆ TỐI THƯỢNG:
         - CHỈ SỬ DỤNG dữ liệu có trong MARKET SNAPSHOT JSON ở trên. 
-        - Nếu một trường dữ liệu có giá trị là "UNAVAILABLE" hoặc null, TUYỆT ĐỐI KHÔNG TỰ BỊA DỮ LIỆU. Bạn phải trả lời: "Thiếu dữ liệu [tên trường], không thể phân tích".
-        - Không được tự tạo số liệu về Vietnam Market (Liquidity, Foreign Flow, Macro).
+        - Hãy xem kỹ trường "signalConfluence". Nếu "confidence" thấp do thiếu data ("UNAVAILABLE"), bạn phải cảnh báo rủi ro thiếu dữ liệu.
+        - Đừng tự tính lại Score, Code Engine đã tính rồi, bạn chỉ việc diễn giải ý nghĩa của các Divergences (nếu có) và Factors trong Signal Confluence.
 
         TRẢ LỜI THEO FORMAT BẮT BUỘC SAU KHI USER HỎI:
         ### VERDICT
@@ -554,20 +628,17 @@ export function MacroView() {
           ))}
           {isLoading && (
             <div className="flex items-center gap-2 text-cyan font-sans font-medium text-[13px] p-2">
-              <Loader2 size={16} className="animate-spin" /> Engine đang tính toán Signal Confluence & Action...
+              <Loader2 size={16} className="animate-spin" /> Engine đang tính toán Signal Confluence...
             </div>
           )}
         </div>
 
         <div className="px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar border-t border-line bg-panel">
-          <button onClick={() => handleSend("Phân tích tín hiệu thị trường hôm nay và đưa ra ACTION (Tôi đang đầu tư tại VN).")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <MessageSquareText size={14} /> Market Action
+          <button onClick={() => handleSend("Đánh giá điểm Signal Confluence hiện tại và giải thích các yếu tố cấu thành.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <MessageSquareText size={14} /> Phân Tích Confluence
           </button>
-          <button onClick={() => handleSend("Đánh giá hiệu suất 3 Bot (Trend, Mean, DCA). Tôi nên tắt Bot nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <Target size={14} /> Bot Performance Audit
-          </button>
-          <button onClick={() => handleSend("Với rủi ro vĩ mô hiện tại, tôi nên HEDGE danh mục thế nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <TrendingUp size={14} /> Portfolio Hedging
+          <button onClick={() => handleSend("Có sự phân kỳ (divergence) nào nguy hiểm trên thị trường lúc này không?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <Target size={14} /> Kiểm Tra Phân Kỳ (Divergence)
           </button>
         </div>
 
