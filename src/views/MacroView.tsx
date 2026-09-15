@@ -794,9 +794,10 @@ ${JSON.stringify(marketSnapshot, null, 2)}
         bodyPayload.generationConfig = generationConfig;
       }
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(bodyPayload)
+      const response = await fetch("/api/ai-advisor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(bodyPayload),
       });
 
       const data = await response.json();
