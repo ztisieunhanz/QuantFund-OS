@@ -32,7 +32,7 @@ function corrColor(v: number): string {
 }
 
 // ============================================================================
-// BƯỚC 13: INTERFACE CHO STRUCTURED JSON OUTPUT TỪ AI
+// INTERFACE CHO STRUCTURED JSON OUTPUT TỪ AI
 // ============================================================================
 interface QuantResponse {
   verdict: "BUY" | "HOLD" | "REDUCE" | "HEDGE" | "WAIT";
@@ -51,10 +51,9 @@ interface QuantResponse {
 }
 
 // ============================================================================
-// UI COMPONENT ĐỂ RENDER STRUCTURED JSON DATA THÀNH GIAO DIỆN ĐẸP MẮT
+// UI COMPONENT ĐỂ RENDER STRUCTURED JSON DATA THÀNH GIAO DIỆN
 // ============================================================================
 const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: string }) => {
-  // FALLBACK: Nếu không có data (như tin nhắn chào mừng ban đầu) -> Hiển thị dạng text
   if (!data) {
     const lines = text.split('\n');
     return (
@@ -68,7 +67,6 @@ const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: s
     );
   }
 
-  // RENDER DỮ LIỆU STRUCTURED MƯỢT MÀ KHÔNG CHO USER THẤY RAW JSON
   const verdictColors: Record<string, string> = {
     BUY: "text-[#00e676] bg-[#00e676]/10 border-[#00e676]/30",
     HOLD: "text-cyan bg-cyan/10 border-cyan/30",
@@ -81,7 +79,6 @@ const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: s
 
   return (
     <div className="space-y-4 font-sans text-[13px] text-ink w-full">
-      {/* HEADER */}
       <div className="flex items-center justify-between border-b border-line pb-2.5">
         <div className={clsx("px-2.5 py-1 rounded border font-black text-[12px] tracking-widest uppercase shadow-sm", vColor)}>
           VERDICT: {data.verdict}
@@ -91,13 +88,11 @@ const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: s
         </div>
       </div>
       
-      {/* THESIS */}
       <div>
         <span className="font-bold text-[#82b1ff] uppercase text-[11px] tracking-wider font-mono">THESIS</span>
         <p className="mt-1 text-[14px] leading-relaxed italic text-[#d7e2ee]">{data.thesis}</p>
       </div>
 
-      {/* ACTION BLOCK */}
       <div className="bg-[#10151e] border border-line p-3.5 rounded-lg shadow-inner space-y-3">
          <div>
             <span className="font-bold text-[#00e676] text-[12px] uppercase">⚡ ACTION DIRECTIVE:</span>
@@ -117,7 +112,6 @@ const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: s
          </div>
       </div>
 
-      {/* LISTS BLOCK */}
       <div className="grid grid-cols-2 gap-4 text-[12px] bg-panel-2 p-3 rounded border border-line">
         {data.signals && data.signals.length > 0 && (
           <div>
@@ -145,7 +139,6 @@ const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: s
         )}
       </div>
 
-      {/* DATA QUALITY FOOTER */}
       <div className="border-t border-line pt-2 flex items-center justify-between text-[10px] text-muted font-mono">
         <span>DATA COVERAGE: <strong className="text-white">{data.dataQuality?.coverage}%</strong></span>
         {data.dataQuality?.missing && data.dataQuality.missing.length > 0 && (
@@ -156,9 +149,8 @@ const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: s
   );
 };
 
-
 // ============================================================================
-// DATA ENGINE HELPERS (TỪ CÁC BƯỚC TRƯỚC)
+// DATA ENGINE HELPERS
 // ============================================================================
 function calculateAssetFeatures(history?: number[]) {
   const defaultFeatures = { return1D: null as number | null, return5D: null as number | null, return20D: null as number | null, ma20: null as number | null, ma50: null as number | null, ma200: null as number | null, distMa20: null as number | null, distMa50: null as number | null, distMa200: null as number | null, volatility20D: null as number | null };
@@ -303,13 +295,11 @@ export function MacroView() {
   const portfolio = usePortfolioStore();
   const { trend, mean, dca } = useTradingStore();
   
-  // Nâng cấp State Message để lưu cả JSON Parsed Data
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Array<{ sender: "user" | "ai"; text: string; parsedData?: QuantResponse }>>([]);
   const [isLoading, setIsLoading] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
-  // MOCK DATA UI
   const enhancedData = {
     macroSurprise: { cpi: { actual: "3.1%", expected: "2.9%", prev: "3.0%", impact: "INFLATION SURPRISE: +0.2%" }, fedNextMeet: "35% hike, 65% hold (FOMC 15-16/9)" },
     yieldCurve: { us2y: "4.85%", us10y: "4.58%", spread: "-27 bps (Inverted)" },
@@ -399,26 +389,46 @@ export function MacroView() {
         }
       };
 
+      // ============================================================================
+      // BƯỚC 14: SYSTEM PROMPT MỚI - NGẮN GỌN, TẬP TRUNG VÀO QUY TRÌNH TƯ DUY (REASONING)
+      // ============================================================================
       const systemPrompt = `
-        Bạn là AI QUANT EXPERT, hoạt động như một Senior Portfolio Manager + Quant Risk Analyst tại một quỹ đầu tư định lượng.
-        MỤC TIÊU:
-        1. Xác định market regime.
-        2. Phân biệt SIGNAL với NOISE.
-        3. Đánh giá risk/reward.
-        4. Đưa ra ACTION cụ thể.
+Bạn là AI QUANT EXPERT - Senior Portfolio Manager & Quant Risk Analyst.
 
-        DƯỚI ĐÂY LÀ MARKET SNAPSHOT (DỮ LIỆU THỰC TẾ TRÍCH XUẤT TỪ HỆ THỐNG):
-        \`\`\`json
-        ${JSON.stringify(marketSnapshot, null, 2)}
-        \`\`\`
+NGUYÊN TẮC HOẠT ĐỘNG:
+- Bạn chỉ nhận đầu vào là MarketSnapshot và câu hỏi của User.
+- KHÔNG tự tính toán indicator nếu Engine đã cung cấp. KHÔNG tự tạo market data.
+- Dữ liệu "UNAVAILABLE", "MOCK", "SYNTHETIC" KHÔNG được coi là sự thật (FACT). Báo cáo vào mảng 'missing'.
+- Phân biệt rõ: FACT (dữ liệu), SIGNAL (tín hiệu), DIVERGENCE (phân kỳ), INFERENCE (suy luận), ACTION (hành động).
 
-        LUẬT LỆ TỐI THƯỢNG:
-        - CHỈ SỬ DỤNG dữ liệu có trong MARKET SNAPSHOT JSON ở trên. Nếu dữ liệu "UNAVAILABLE", điền vào mảng "missing" trong "dataQuality".
-        - Đừng tự tính lại Score, Code Engine đã tính trong signalConfluence. Bạn chỉ diễn giải.
-        - Trả về cấu trúc JSON chính xác theo Schema. Không chứa text thừa.
+QUY TẮC PHẢN HỒI:
+- KHÔNG kể lể lại toàn bộ số liệu. Đi thẳng vào vấn đề, ngắn gọn, sắc bén.
+- Ưu tiên tối đa 3 SIGNAL mạnh nhất để lý giải quyết định.
+- Nếu các signal trái ngược nhau, phải ghi nhận: "MARKET SIGNALS ARE CONFLICTED".
+- KHÔNG ép phải BUY/SELL nếu confidence thấp (dưới 50%). Dùng WAIT hoặc HEDGE.
+- KHÔNG dự đoán chắc chắn giá tương lai. KHÔNG nói vuốt đuôi (hindsight).
+- Mục tiêu tối thượng: Tối ưu risk-adjusted decision, tránh drawdown lớn, không phải cố đoán đúng 100%.
+
+QUY TRÌNH TƯ DUY 10 BƯỚC (Áp dụng ngầm trước khi xuất JSON):
+1. Xác định đối tượng User hỏi (Asset/Portfolio/Bot/Macro).
+2. Trích xuất dữ liệu liên quan.
+3. Kiểm tra Data Quality.
+4. Đọc Regime từ Engine.
+5. Đánh giá Signal Confluence.
+6. Tìm Divergence.
+7. Đánh giá Portfolio Impact.
+8. Đưa ra Verdict.
+9. Đặt Trigger hành động.
+10. Đặt Invalidation (Điều kiện sai).
+
+DƯỚI ĐÂY LÀ MARKET SNAPSHOT (DỮ LIỆU THỰC TẾ TRÍCH XUẤT TỪ HỆ THỐNG):
+\`\`\`json
+${JSON.stringify(marketSnapshot, null, 2)}
+\`\`\`
+
+Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yêu cầu. Không kèm text thừa.
       `;
 
-      // BƯỚC 13: CẤU HÌNH STRUCTURED JSON SCHEMA CHO GEMINI
       const generationConfig = {
         temperature: 0.1,
         responseMimeType: "application/json",
@@ -465,12 +475,9 @@ export function MacroView() {
       
       const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       
-      // PARSE JSON AN TOÀN VÀ LƯU VÀO STATE
       let parsedResponse: QuantResponse | undefined = undefined;
       try {
-        if (rawText) {
-          parsedResponse = JSON.parse(rawText);
-        }
+        if (rawText) parsedResponse = JSON.parse(rawText);
       } catch (e) {
         console.error("Lỗi Parse Structured JSON từ AI:", e);
       }
