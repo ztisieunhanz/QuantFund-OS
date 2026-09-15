@@ -1,8 +1,3 @@
-// ============================================================================
-// FILE: src/lib/macroFeed.ts
-// MODULE: MACRO UNIVERSE FEED WITHOUT CORS PROXY LEAKS
-// ============================================================================
-
 import type { MacroSeries, TimeSeriesPoint } from "@/types/market";
 import { mulberry32, pctChange } from "@/lib/math";
 
@@ -24,67 +19,32 @@ interface YahooChartResponse {
   };
 }
 
-// 1. KÉO NẾN BTC (ƯU TIÊN BINANCE VISION TRỰC TIẾP)
 async function fetchBinanceBtc(): Promise<MacroSeries | null> {
-  const endpoints = [
-    "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250",
-    "/api/binance/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250",
-  ];
-
-  for (const url of endpoints) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (!Array.isArray(data) || data.length < 25) continue;
-
-      const points: TimeSeriesPoint[] = data.map((k: any) => ({
-        time: Number(k[0]),
-        value: parseFloat(k[4]),
-      }));
-
-      return toMacroSeries("btc", "BTCUSDT", "Bitcoin", points, "live");
-    } catch {
-      // Tiếp tục fallback
-    }
-  }
-  return null;
+  try {
+    const res = await fetch("https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250");
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length < 25) return null;
+    const points: TimeSeriesPoint[] = data.map((k: any) => ({ time: Number(k[0]), value: parseFloat(k[4]) }));
+    return toMacroSeries("btc", "BTCUSDT", "Bitcoin", points, "live");
+  } catch { return null; }
 }
 
-// 2. KÉO NẾN VÀNG PAXG (ƯU TIÊN BINANCE VISION TRỰC TIẾP)
 async function fetchBinanceGold(): Promise<MacroSeries | null> {
-  const endpoints = [
-    "https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=250",
-    "/api/binance/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=250",
-  ];
-
-  for (const url of endpoints) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (!Array.isArray(data) || data.length < 25) continue;
-
-      const points: TimeSeriesPoint[] = data.map((k: any) => ({
-        time: Number(k[0]),
-        value: parseFloat(k[4]),
-      }));
-
-      return toMacroSeries("gold", "PAXG/XAU", "Gold (XAU)", points, "live");
-    } catch {
-      // Tiếp tục fallback
-    }
-  }
-  return null;
+  try {
+    const res = await fetch("https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=250");
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length < 25) return null;
+    const points: TimeSeriesPoint[] = data.map((k: any) => ({ time: Number(k[0]), value: parseFloat(k[4]) }));
+    return toMacroSeries("gold", "PAXG/XAU", "Gold (XAU)", points, "live");
+  } catch { return null; }
 }
 
-// 3. KÉO YAHOO SERIES (LOẠI BỎ ALLORIGINS ĐỂ TRÁNH LỖI CORS CONSOLE)
 async function fetchYahooViaProxy(id: MacroSeries["id"]): Promise<MacroSeries | null> {
   const meta = YAHOO[id];
-  const url = `/api/yahoo/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=2y`;
-
   try {
-    const res = await fetch(url);
+    const res = await fetch(`/api/yahoo/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=2y`);
     if (!res.ok) return null;
     const json = (await res.json()) as YahooChartResponse;
     const result = json.chart?.result?.[0];
@@ -98,67 +58,25 @@ async function fetchYahooViaProxy(id: MacroSeries["id"]): Promise<MacroSeries | 
       points.push({ time: stamps[i] * 1000, value: close });
     }
 
-    if (points.length >= 25) {
-      return toMacroSeries(id, meta.ticker, meta.name, points, "live");
-    }
-  } catch {
-    // Trả về null an toàn, để hàm loadMacroUniverse tự fallback số liệu
-  }
-
+    if (points.length >= 25) return toMacroSeries(id, meta.ticker, meta.name, points, "live");
+  } catch {}
   return null;
 }
 
-function toMacroSeries(
-  id: MacroSeries["id"],
-  ticker: string,
-  name: string,
-  points: TimeSeriesPoint[],
-  source: MacroSeries["source"],
-): MacroSeries {
+function toMacroSeries(id: MacroSeries["id"], ticker: string, name: string, points: TimeSeriesPoint[], source: MacroSeries["source"]): MacroSeries {
   const last = points.at(-1)!.value;
   const prev = points.at(-2)?.value ?? last;
   const ago20 = points.at(-21)?.value ?? points[0].value;
-  return {
-    id,
-    ticker,
-    name,
-    points,
-    last,
-    change1d: last - prev,
-    changePct1d: pctChange(prev, last),
-    changePct20d: pctChange(ago20, last),
-    source,
-  };
+  return { id, ticker, name, points, last, change1d: last - prev, changePct1d: pctChange(prev, last), changePct20d: pctChange(ago20, last), source };
 }
 
 function syntheticSeries(id: MacroSeries["id"]): MacroSeries {
   const meta = YAHOO[id];
   const seedMap = { dxy: 11, us10y: 22, us2y: 25, vix: 28, gold: 33, btc: 44 };
   const rand = mulberry32(seedMap[id] + 20260914);
-  const start: Record<MacroSeries["id"], number> = {
-    dxy: 99.6,
-    us10y: 4.58,
-    us2y: 4.86,
-    vix: 20.8,
-    gold: 4277,
-    btc: 76800,
-  };
-  const vol: Record<MacroSeries["id"], number> = {
-    dxy: 0.0024,
-    us10y: 0.012,
-    us2y: 0.011,
-    vix: 0.035,
-    gold: 0.007,
-    btc: 0.028,
-  };
-  const drift: Record<MacroSeries["id"], number> = {
-    dxy: 0.0001,
-    us10y: 0.0002,
-    us2y: 0.0002,
-    vix: -0.0001,
-    gold: 0.0002,
-    btc: 0.0003,
-  };
+  const start: Record<MacroSeries["id"], number> = { dxy: 99.6, us10y: 4.58, us2y: 4.86, vix: 20.8, gold: 4289, btc: 76800 };
+  const vol: Record<MacroSeries["id"], number> = { dxy: 0.0024, us10y: 0.012, us2y: 0.011, vix: 0.035, gold: 0.007, btc: 0.028 };
+  const drift: Record<MacroSeries["id"], number> = { dxy: 0.0001, us10y: 0.0002, us2y: 0.0002, vix: -0.0001, gold: 0.0002, btc: 0.0003 };
 
   const points: TimeSeriesPoint[] = [];
   let px = start[id];
@@ -174,31 +92,27 @@ function syntheticSeries(id: MacroSeries["id"]): MacroSeries {
 
 export async function loadMacroUniverse(): Promise<MacroSeries[]> {
   const ids: MacroSeries["id"][] = ["dxy", "us10y", "us2y", "vix", "gold", "btc"];
-
   let us10yLive: MacroSeries | null = null;
 
   const results = await Promise.all(
     ids.map(async (id) => {
       if (id === "btc") {
-        const btcLive = await fetchBinanceBtc();
-        if (btcLive) return btcLive;
+        const btc = await fetchBinanceBtc();
+        if (btc) return btc;
       }
       if (id === "gold") {
-        const goldBinance = await fetchBinanceGold();
-        if (goldBinance) return goldBinance;
+        const gold = await fetchBinanceGold();
+        if (gold) return gold;
       }
-      const yahooLive = await fetchYahooViaProxy(id);
-      if (yahooLive) {
-        if (id === "us10y") us10yLive = yahooLive;
-        return yahooLive;
+      const yahoo = await fetchYahooViaProxy(id);
+      if (yahoo) {
+        if (id === "us10y") us10yLive = yahoo;
+        return yahoo;
       }
-
-      // Giữ tính đồng bộ: nếu us2y không kéo được trực tiếp thì neo theo us10y thật
       if (id === "us2y" && us10yLive) {
         const points = us10yLive.points.map((p) => ({ time: p.time, value: p.value + 0.28 }));
         return toMacroSeries("us2y", "2YY=F", "US 2Y Yield", points, "live");
       }
-
       return syntheticSeries(id);
     })
   );
