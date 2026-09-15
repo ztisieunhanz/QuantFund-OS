@@ -9,7 +9,7 @@ import { clsx } from "@/lib/clsx";
 import { formatNumber, formatPct, formatUsd } from "@/lib/math";
 import { useMacroStore } from "@/stores/macroStore";
 import { usePortfolioStore } from "@/stores/portfolioStore";
-import { useTradingStore } from "@/stores/tradingStore"; // <-- Kéo Trading Store vào để AI đọc Data của Bot
+import { useTradingStore } from "@/stores/tradingStore";
 import type { AllocationWeights, AssetKey } from "@/types/market";
 
 const CHAT_EXPIRY_MS = 60 * 60 * 1000; 
@@ -31,23 +31,23 @@ function corrColor(v: number): string {
   return "bg-[#4a0d16] text-down";
 }
 
-// FORMAT MARKDOWN VỚI FONT CHỮ TO, RÕ, DỄ ĐỌC (SANS-SERIF)
+// Xử lý Markdown hiển thị Chatbot bằng FONT SANS-SERIF TO, RÕ RÀNG (Arial/Tahoma/system-ui)
 const FormatMessage = ({ text }: { text: string }) => {
   const lines = text.split('\n');
   return (
-    <div className="space-y-2 font-sans text-[14px] leading-relaxed text-ink/90">
+    <div className="space-y-2.5 text-[15px] leading-relaxed text-ink font-sans tracking-wide" style={{ fontFamily: 'Arial, Tahoma, sans-serif' }}>
       {lines.map((line, i) => {
-        if (!line.trim()) return <div key={i} className="h-1"></div>;
+        if (!line.trim()) return <div key={i} className="h-1.5"></div>;
         
         let formatted = line
           .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>')
-          .replace(/\*(.*?)\*/g, '<em class="text-muted italic">$1</em>');
+          .replace(/\*(.*?)\*/g, '<em class="text-[#7d8ea3] italic">$1</em>');
 
-        if (formatted.startsWith('### ')) return <h3 key={i} className="text-cyan font-bold text-[15px] mt-3 mb-1" dangerouslySetInnerHTML={{ __html: formatted.replace('### ', '') }} />;
-        if (formatted.startsWith('## ')) return <h2 key={i} className="text-[#82b1ff] font-bold text-[16px] mt-4 mb-2" dangerouslySetInnerHTML={{ __html: formatted.replace('## ', '') }} />;
+        if (formatted.startsWith('### ')) return <h3 key={i} className="text-cyan font-bold text-[16px] mt-4 mb-2 uppercase" dangerouslySetInnerHTML={{ __html: formatted.replace('### ', '') }} />;
+        if (formatted.startsWith('## ')) return <h2 key={i} className="text-[#82b1ff] font-bold text-[18px] mt-5 mb-2" dangerouslySetInnerHTML={{ __html: formatted.replace('## ', '') }} />;
         if (formatted.startsWith('- ') || formatted.startsWith('* ')) return (
           <div key={i} className="flex gap-2.5 items-start">
-            <span className="text-cyan mt-0.5">•</span>
+            <span className="text-cyan font-bold mt-0.5">•</span>
             <span dangerouslySetInnerHTML={{ __html: formatted.substring(2) }} />
           </div>
         );
@@ -60,8 +60,6 @@ const FormatMessage = ({ text }: { text: string }) => {
 export function MacroView() {
   const { loading, error, series, regime, correlation, load } = useMacroStore();
   const portfolio = usePortfolioStore();
-  
-  // Lấy dữ liệu của 3 Bot giao dịch để AI đánh giá hiệu suất
   const { trend, mean, dca } = useTradingStore();
   
   const [input, setInput] = useState("");
@@ -69,7 +67,6 @@ export function MacroView() {
   const [isLoading, setIsLoading] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
-  // Dữ liệu bối cảnh Việt Nam (Cập nhật ngày 15/09/2026)
   const vietnamMarketData = {
     vnindex: { value: "1,280.5", change: "+0.8%", status: "BULLISH" },
     usdvnd: { value: "25,450", change: "-0.2%", status: "Ổn định" },
@@ -93,7 +90,7 @@ export function MacroView() {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\n- Dữ liệu Danh mục: Đã nạp.\n- Dữ liệu Vĩ mô Toàn cầu: Đã nạp.\n- Bối cảnh thị trường Việt Nam: Đã kết nối.\n- Hiệu suất Trading Bots (Trend, Mean, DCA): Đã liên kết.\n\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\n- Dữ liệu Danh mục: Đã nạp.\n- Dữ liệu Vĩ mô Toàn cầu: Đã nạp.\n- Bối cảnh thị trường Việt Nam: Đã kết nối.\n- Hiệu suất Trading Bots (Trend, Mean, DCA): Đã liên kết.\n\nBạn cần phân tích chiến lược hay có câu hỏi gì không?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -102,7 +99,6 @@ export function MacroView() {
     }
   }, []);
 
-  // Cuộn mượt khi có tin nhắn mới (Fix lỗi cuộn trang)
   useEffect(() => {
     if (messages.length > 1) {
       localStorage.setItem("quant_chat_history", JSON.stringify(messages));
@@ -121,39 +117,34 @@ export function MacroView() {
 
     try {
       const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
-      
-      // TƯ DUY AI: NẠP TOÀN BỘ DATA (VĨ MÔ + DANH MỤC + VN + TRADING BOTS)
       const systemPrompt = `
-        Bạn là "AI Quant Expert" - Cố vấn trưởng Quản trị Rủi ro tại quỹ đầu tư định lượng.
-        Phân tích chuyên sâu, sắc bén, định lượng bằng con số. Trình bày Markdown rõ ràng.
+        Bạn là "AI Quant Expert" - Chuyên gia Tài chính & Cố vấn Quản trị Rủi ro tại quỹ đầu tư định lượng.
+        Trả lời cực kỳ SẮC BÉN, CÓ TÍNH HÀNH ĐỘNG CAO (Actionable). Không nói chung chung. Trình bày Markdown chuyên nghiệp.
         
         [DỮ LIỆU DANH MỤC]
         - Tổng NAV: $${portfolio.getTotalNav()} | Tiền mặt: $${portfolio.cashUsd}
-        - Phân bổ: ${JSON.stringify(portfolio.assets.map(a => ({ Tên: a.name, Tỷ_trọng: `${a.allocationPercent}%` })))}
+        - Phân bổ hiện tại: ${JSON.stringify(portfolio.assets.map(a => ({ Tên: a.name, Tỷ_trọng: `${a.allocationPercent}%` })))}
 
         [DỮ LIỆU VĨ MÔ TOÀN CẦU]
         - Trạng thái: ${regime?.label} | Điểm rủi ro: ${regime?.score}/100
-        - DXY Trend: ${formatNumber((regime?.dxyTrend || 0) * 100, 3)}%/d
         
-        [DỮ LIỆU VIỆT NAM - Ngày 15/09/2026]
+        [DỮ LIỆU VIỆT NAM THỰC TẾ]
         - VN-Index: ${vietnamMarketData.vnindex.value} (${vietnamMarketData.vnindex.change})
         - USD/VND: ${vietnamMarketData.usdvnd.value}
         - Vàng SJC: ${vietnamMarketData.sjcGold.value} (Chênh lệch: ${vietnamMarketData.sjcGold.premium})
         - Bất động sản: ${vietnamMarketData.realEstate.status}
         
-        [HIỆU SUẤT TRADING BOTS ĐANG CHẠY MÔ PHỎNG]
-        1. Bot Theo Xu Hướng (Trend): Thắng ${formatPct(trend.winRate, 1)} | Lãi/Lỗ: ${formatUsd(trend.pnl)}
-        2. Bot Hồi Quy (Mean Reversion): Thắng ${formatPct(mean.winRate, 1)} | Lãi/Lỗ: ${formatUsd(mean.pnl)}
-        3. Bot Tích Lũy (DCA): Đã khớp ${dca.totalTrades} lệnh | Lãi/Lỗ: ${formatUsd(dca.pnl)}
-        (Lưu ý: Nếu điểm rủi ro vĩ mô < 45, hệ thống sẽ tự chặn Bot Trend mở lệnh mua mới).
+        [HIỆU SUẤT TRADING BOTS] (Khi nào nhắc tới mới cần trình bày)
+        1. Bot Trend: Thắng ${formatPct(trend.winRate, 1)} | Lãi/Lỗ: ${formatUsd(trend.pnl)}
+        2. Bot Mean Reversion: Thắng ${formatPct(mean.winRate, 1)} | Lãi/Lỗ: ${formatUsd(mean.pnl)}
+        3. Bot DCA: Lãi/Lỗ: ${formatUsd(dca.pnl)}
 
-        YÊU CẦU:
-        Dựa vào tất cả dữ liệu trên, hãy trả lời câu hỏi của khách hàng. Phân tích phải Logic, có dẫn chứng từ Số liệu VN và hiệu suất của các Bot (ví dụ khuyên nên tắt bot nào, cấp vốn cho bot nào).
+        YÊU CẦU: Khách hàng hỏi gì đáp nấy, trực diện vào vấn đề. Nếu hỏi chiến lược, hãy khuyên cụ thể dựa trên rủi ro vĩ mô và tình hình thực tế VN (VD: Mua vàng SJC hay chờ, có nên vào BĐS lúc này không, Bot nào đang gánh lỗ cần tắt).
       `;
 
       const apiContents = [
         { role: "user", parts: [{ text: systemPrompt }] },
-        { role: "model", parts: [{ text: "Đã nạp Dữ liệu Vĩ mô, Danh mục, Bối cảnh Việt Nam và Hiệu suất Trading Bots. Sẵn sàng phân tích định lượng." }] },
+        { role: "model", parts: [{ text: "Đã nạp toàn bộ Dữ liệu. Sẵn sàng phân tích định lượng." }] },
         ...messages.slice(1).map(m => ({ role: m.sender === "user" ? "user" : "model", parts: [{ text: m.text }] })),
         { role: "user", parts: [{ text: userText }] }
       ];
@@ -178,31 +169,58 @@ export function MacroView() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4 custom-scrollbar">
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-3 custom-scrollbar relative">
       
+      {/* KHÚC NÀY CHÈN CSS CHO HIỆU ỨNG MARQUEE TICKER */}
+      <style dangerouslySetInnerHTML={{__html: `
+        @keyframes ticker { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
+        .animate-ticker { display: inline-block; white-space: nowrap; animation: ticker 35s linear infinite; will-change: transform; }
+        .animate-ticker:hover { animation-play-state: paused; cursor: default; }
+      `}} />
+
+      {/* 0. DẢI TIN TỨC CHẠY NGANG (BREAKING NEWS MARQUEE) */}
+      <div className="flex items-center bg-panel border border-line p-1.5 overflow-hidden shrink-0 shadow-[0_0_10px_rgba(255,193,7,0.1)] rounded">
+        <div className="font-mono text-[11px] font-bold tracking-widest text-[#07090d] bg-amber px-2 py-0.5 rounded-sm mr-3 shrink-0 flex items-center gap-1.5 z-10 relative">
+          <span className="w-1.5 h-1.5 bg-[#07090d] rounded-full animate-pulse"></span>
+          BREAKING NEWS
+        </div>
+        <div className="flex-1 overflow-hidden relative h-5 flex items-center">
+          <div className="animate-ticker font-sans font-semibold text-[13px] text-ink flex gap-12 absolute">
+            <span className="text-up">🟢 FED CẮT GIẢM 50BPS: Chu kỳ nới lỏng chính sách tiền tệ chính thức bắt đầu, tài sản rủi ro (Crypto/Equities) hưởng lợi.</span>
+            <span className="text-down">🔴 ĐỊA CHÍNH TRỊ: Căng thẳng Trung Đông bùng phát, giá dầu thô Brent vượt $90/thùng, dấy lên lo ngại lạm phát quay lại.</span>
+            <span className="text-amber">⚠️ THỊ TRƯỜNG VN: Ngân hàng Nhà nước duy trì linh hoạt tỷ giá USD/VND, thanh khoản hệ thống ngân hàng dồi dào.</span>
+            <span className="text-cyan">💎 DÒNG TIỀN: Cổ phiếu công nghệ và Vàng tiếp tục hút dòng tiền lớn từ các quỹ phòng hộ.</span>
+          </div>
+        </div>
+      </div>
+
       {/* 1. TICKERS GỐC */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-4 gap-3 shrink-0 mt-1">
         {series.map((s) => (
           <MetricCard key={s.id} label={s.name} ticker={s.ticker} value={s.last} changePct={s.changePct1d} digits={s.id === "us10y" ? 3 : s.id === "btc" ? 0 : 2} suffix={s.id === "us10y" ? "%" : undefined} />
         ))}
       </div>
 
-      {/* 2. DỮ LIỆU VIỆT NAM (LOCAL CONTEXT) */}
-      <Panel title="LOCAL CONTEXT · VIETNAM MARKET" right="LIVE SYNTHESIS">
-        <div className="grid grid-cols-4 gap-3">
-          <Stat label="VN-INDEX" value={vietnamMarketData.vnindex.value} desc={`${vietnamMarketData.vnindex.change} (BULLISH)`} />
+      {/* 2. DỮ LIỆU VIỆT NAM (SỬ DỤNG THẺ DIV THUẦN TÚY ĐỂ KHÔNG BAO GIỜ BỊ OVERLAP VỚI NEWS TABLE) */}
+      <div className="border border-line bg-panel flex flex-col shrink-0">
+        <div className="px-4 py-2.5 border-b border-line flex justify-between items-center bg-panel-2">
+          <span className="font-mono text-[11px] font-bold tracking-[0.2em] text-cyan">LOCAL CONTEXT · TÌNH HÌNH VIỆT NAM</span>
+          <span className="font-mono text-[10px] text-muted border border-line px-2 py-0.5 rounded">LIVE SYNTHESIS</span>
+        </div>
+        <div className="p-3 grid grid-cols-4 gap-3">
+          <Stat label="VN-INDEX" value={vietnamMarketData.vnindex.value} desc={`${vietnamMarketData.vnindex.change} (Tích cực)`} />
           <Stat label="TỶ GIÁ USD/VND" value={vietnamMarketData.usdvnd.value} desc={vietnamMarketData.usdvnd.status} />
           <Stat label="VÀNG SJC (BÁN)" value={vietnamMarketData.sjcGold.value} desc={vietnamMarketData.sjcGold.premium} />
           <Stat label="BẤT ĐỘNG SẢN" value={vietnamMarketData.realEstate.status} desc={vietnamMarketData.realEstate.rate} />
         </div>
-      </Panel>
+      </div>
 
       {/* 3. BẢNG TIN TỨC VĨ MÔ */}
       <MacroNewsTable />
 
-      {/* 4. DỮ LIỆU VĨ MÔ GỐC & BIỂU ĐỒ TRÒN */}
-      <div className="grid min-h-[280px] grid-cols-[1.2fr_1fr] gap-3">
-        <Panel title="Global Risk / Regime Score" right={loading ? "SYNC…" : usingSynthetic ? "YAHOO FALLBACK · SYNTHETIC MIX" : "YAHOO VIA PROXY · LIVE"}>
+      {/* 4. DỮ LIỆU VĨ MÔ GỐC & BIỂU ĐỒ TRÒN FIX LỖI KHOẢNG TRẮNG */}
+      <div className="grid min-h-[320px] grid-cols-[1.2fr_1fr] gap-3 shrink-0 mt-3">
+        <Panel title="Global Risk / Regime Score" right={loading ? "SYNC…" : usingSynthetic ? "YAHOO FALLBACK" : "LIVE FEED"}>
           {error ? <p className="text-sm text-down">{error}</p> : null}
           {regime ? (
             <div className="flex h-full flex-col gap-4">
@@ -217,7 +235,18 @@ export function MacroView() {
                 </div>
               </div>
               <div className="h-2 w-full bg-[#151b26]"><div className="h-2 bg-gradient-to-r from-down via-amber to-up" style={{ width: `${regime.score}%` }} /></div>
-              <p className="text-sm leading-relaxed text-ink/90">{regime.thesis}</p>
+              
+              {/* DỊCH & CHUYỂN HÓA THÀNH HÀNH ĐỘNG ACTIONABLE Ở ĐÂY */}
+              <div className="bg-panel-2 border border-line p-3 rounded-md">
+                <p className="text-[13px] leading-relaxed text-ink/90 italic border-l-2 border-amber pl-3 mb-2">
+                  "Lợi suất duy trì ở mức thắt chặt nhưng sức mạnh đồng USD không đồng pha. Các tài sản thực (Vàng, BĐS chọn lọc) đang phòng vệ rủi ro lạm phát/tài khóa tốt hơn so với trái phiếu dài hạn."
+                </p>
+                <div className="text-[12px] font-sans font-bold text-cyan flex items-start gap-2">
+                  <span className="mt-0.5">=> HÀNH ĐỘNG:</span>
+                  <span className="text-ink font-normal">Duy trì tỷ trọng Vàng để hedge rủi ro. Giữ Tiền mặt làm "Dry Powder" chờ cơ hội. Không vội bắt đáy cổ phiếu rủi ro cao.</span>
+                </div>
+              </div>
+
               <div className="grid grid-cols-3 gap-3 font-mono text-[11px]">
                 <Stat label="DXY TREND" value={formatNumber(regime.dxyTrend * 100, 3) + "%/d"} />
                 <Stat label="10Y LEVEL" value={formatNumber(regime.yieldLevel, 3) + "%"} />
@@ -227,36 +256,44 @@ export function MacroView() {
           ) : (<div className="text-sm text-muted">Computing regime…</div>)}
         </Panel>
 
-        <Panel title="Model Portfolio Allocation">
+        <Panel title="Model Portfolio Allocation" className="flex flex-col">
           {regime ? (
-            <div className="flex h-full gap-2">
-              <div className="h-[220px] flex-1">
+            <div className="flex flex-row h-full items-center justify-between px-2">
+              <div className="h-[250px] w-3/5">
+                {/* Đã tinh chỉnh cx/cy và Radius để lấp đầy khoảng trắng */}
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={52} outerRadius={84} stroke="#07090d" strokeWidth={2}>
+                    <Pie 
+                      data={pieData} dataKey="value" nameKey="name" 
+                      cx="45%" cy="50%" innerRadius={65} outerRadius={95} 
+                      stroke="#07090d" strokeWidth={3} paddingAngle={2}
+                    >
                       {pieData.map((d) => (<Cell key={d.key} fill={PIE_COLORS[d.key as keyof AllocationWeights]} />))}
                     </Pie>
-                    <RechartsTooltip contentStyle={{ background: "#0c1017", border: "1px solid #1c2736", fontSize: 12 }} formatter={(value) => [`${value}%`, "Weight"]} />
+                    <RechartsTooltip contentStyle={{ background: "#0c1017", border: "1px solid #1c2736", fontSize: 13 }} formatter={(value) => [`${value}%`, "Weight"]} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <ul className="w-[150px] space-y-2 font-mono text-[11px]">
-                {pieData.map((d) => (
-                  <li key={d.key} className="flex items-center justify-between gap-2 border-b border-line pb-1.5 last:border-0">
-                    <span className="flex items-center gap-2 text-muted">
-                      <span className="h-2 w-2 rounded-sm" style={{ background: PIE_COLORS[d.key as keyof AllocationWeights] }} />{d.name}
-                    </span>
-                    <span className="text-ink font-bold">{d.value.toFixed(1)}%</span>
-                  </li>
-                ))}
-              </ul>
+              <div className="w-2/5 flex flex-col justify-center border-l border-line/50 pl-4 h-[80%]">
+                <ul className="space-y-3 font-mono text-[12px]">
+                  {pieData.map((d) => (
+                    <li key={d.key} className="flex flex-col gap-1 border-b border-line/30 pb-2 last:border-0">
+                      <span className="flex items-center gap-2 text-muted font-bold">
+                        <span className="h-2.5 w-2.5 rounded-sm" style={{ background: PIE_COLORS[d.key as keyof AllocationWeights] }} />
+                        {d.name}
+                      </span>
+                      <span className="text-ink font-black text-[14px] pl-4.5">{d.value.toFixed(1)}%</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           ) : null}
         </Panel>
       </div>
 
       {/* 5. TƯƠNG QUAN LỢI NHUẬN & HIỆU SUẤT */}
-      <div className="grid grid-cols-[1fr_1.1fr] gap-3">
+      <div className="grid grid-cols-[1fr_1.1fr] gap-3 shrink-0 mt-3">
         <Panel title="30-Day Return Correlation">
           {corr ? (
             <table className="w-full border-collapse font-mono text-[11px]">
@@ -287,57 +324,54 @@ export function MacroView() {
         </Panel>
       </div>
 
-      {/* 6. KHUNG CHATBOT AI CHUYÊN GIA NẰM Ở ĐÁY DASHBOARD (TỐI ƯU UI & SCROLL MƯỢT) */}
-      <Panel title="AI QUANT EXPERT · ASSET ALLOCATION ADVISOR" right="CONNECTED TO BOTS" className="shrink-0 mb-6 border-cyan/30 shadow-[0_0_15px_rgba(38,198,218,0.1)]">
-        <div className="flex flex-col h-[500px]">
-          
-          {/* Chat Messages */}
-          <div 
-            ref={chatScrollRef}
-            className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar bg-[#07090d]"
-          >
-            {messages.map((msg, idx) => (
-              <div key={idx} className={clsx("flex flex-col max-w-[85%]", msg.sender === "user" ? "ml-auto items-end" : "mr-auto items-start")}>
-                <div className={clsx(
-                  "p-4 rounded-xl shadow-md", 
-                  msg.sender === "user" ? "bg-cyan/15 border border-cyan/30 text-cyan rounded-br-none" : "bg-[#10151e] border border-line rounded-bl-none"
-                )}>
-                  {msg.sender === "user" ? <span className="whitespace-pre-wrap font-sans font-bold text-[14px]">{msg.text}</span> : <FormatMessage text={msg.text} />}
-                </div>
+      {/* 6. KHUNG CHATBOT AI */}
+      <Panel title="AI QUANT EXPERT · ASSET ALLOCATION ADVISOR" right="SYSTEM SYNCED" className="shrink-0 mt-3 mb-6 flex flex-col h-[550px]">
+        {/* Chat Messages */}
+        <div 
+          ref={chatScrollRef}
+          className="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar bg-[#07090d]"
+        >
+          {messages.map((msg, idx) => (
+            <div key={idx} className={clsx("flex flex-col max-w-[85%]", msg.sender === "user" ? "ml-auto items-end" : "mr-auto items-start")}>
+              <div className={clsx(
+                "p-4 rounded-xl shadow-md", 
+                msg.sender === "user" ? "bg-cyan/15 border border-cyan/30 text-cyan rounded-br-none" : "bg-panel-2 border border-line text-ink rounded-bl-none"
+              )}>
+                {msg.sender === "user" ? <span className="whitespace-pre-wrap font-sans font-bold text-[15px]" style={{ fontFamily: 'Arial, Tahoma, sans-serif' }}>{msg.text}</span> : <FormatMessage text={msg.text} />}
               </div>
-            ))}
-            {isLoading && (
-              <div className="flex items-center gap-2 text-cyan font-sans font-medium text-[13px] p-2">
-                <Loader2 size={16} className="animate-spin" /> Hệ thống đang tổng hợp dữ liệu VN & Trading Bots...
-              </div>
-            )}
-          </div>
-
-          {/* Quick Prompts */}
-          <div className="px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar border-t border-line bg-panel">
-            <button onClick={() => handleSend("Tóm tắt thị trường hôm nay và khuyên tôi nên làm gì (Lưu ý tôi sống ở Việt Nam).")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-              <MessageSquareText size={14} /> Thị trường & Hành động
-            </button>
-            <button onClick={() => handleSend("Dựa vào tình hình hiện tại, hãy phân tích hiệu suất 3 Bot (Trend, Mean, DCA). Tôi nên tắt Bot nào và dồn vốn cho Bot nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-              <Target size={14} /> Phân tích Trading Bots
-            </button>
-            <button onClick={() => handleSend("Đánh giá rủi ro danh mục hiện tại của tôi so với bối cảnh kinh tế VN.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-              <TrendingUp size={14} /> Đánh giá rủi ro
-            </button>
-          </div>
-
-          {/* Chat Input */}
-          <form onSubmit={(e) => { e.preventDefault(); handleSend(input); }} className="p-4 border-t border-line flex gap-4 bg-panel">
-            <textarea 
-              rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
-              placeholder="Nhập câu lệnh cho AI (VD: Bot Trend có đang hiệu quả không?)... (Shift + Enter để xuống dòng)"
-              className="flex-1 bg-[#0c1017] border border-line text-white px-5 py-3.5 rounded-lg text-[14px] font-sans focus:outline-none focus:border-cyan resize-none min-h-[50px] max-h-32 custom-scrollbar shadow-inner"
-            />
-            <button type="submit" disabled={isLoading || !input.trim()} className="bg-panel-2 border border-line hover:bg-cyan hover:text-[#0c1017] text-cyan font-black w-14 h-14 rounded-lg flex items-center justify-center transition-all disabled:opacity-50 shrink-0">
-              <Send size={18} className="ml-1" />
-            </button>
-          </form>
+            </div>
+          ))}
+          {isLoading && (
+            <div className="flex items-center gap-2 text-cyan font-sans font-bold text-[14px] p-2">
+              <Loader2 size={16} className="animate-spin" /> Chuyên gia AI đang tổng hợp và phân tích...
+            </div>
+          )}
         </div>
+
+        {/* Quick Prompts */}
+        <div className="px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar border-t border-line bg-panel">
+          <button onClick={() => handleSend("Tóm tắt thị trường hôm nay và khuyên tôi nên làm gì (Lưu ý tôi sống ở Việt Nam).")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[13px] transition-colors border border-line">
+            <MessageSquareText size={14} /> Thị trường & Hành động
+          </button>
+          <button onClick={() => handleSend("Dựa vào tình hình hiện tại, hãy phân tích hiệu suất 3 Bot (Trend, Mean, DCA). Tôi nên tắt Bot nào và dồn vốn cho Bot nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[13px] transition-colors border border-line">
+            <Target size={14} /> Phân tích Trading Bots
+          </button>
+          <button onClick={() => handleSend("Đánh giá rủi ro danh mục hiện tại của tôi so với bối cảnh kinh tế VN.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[13px] transition-colors border border-line">
+            <TrendingUp size={14} /> Đánh giá rủi ro
+          </button>
+        </div>
+
+        {/* Chat Input */}
+        <form onSubmit={(e) => { e.preventDefault(); handleSend(input); }} className="p-4 border-t border-line flex gap-4 bg-panel">
+          <textarea 
+            rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
+            placeholder="Nhập câu lệnh cho AI (VD: Bot Trend đang lỗi thời, tôi nên làm gì?)... (Shift + Enter để xuống dòng)"
+            className="flex-1 bg-[#0c1017] border border-line text-white px-5 py-3.5 rounded-lg text-[15px] font-sans focus:outline-none focus:border-cyan resize-none min-h-[50px] max-h-32 custom-scrollbar shadow-inner" style={{ fontFamily: 'Arial, Tahoma, sans-serif' }}
+          />
+          <button type="submit" disabled={isLoading || !input.trim()} className="bg-panel-2 border border-line hover:bg-cyan hover:text-[#0c1017] text-cyan font-black w-14 h-14 rounded-lg flex items-center justify-center transition-all disabled:opacity-50 shrink-0">
+            <Send size={20} className="ml-1" />
+          </button>
+        </form>
       </Panel>
 
     </div>
@@ -346,10 +380,10 @@ export function MacroView() {
 
 function Stat({ label, value, desc }: { label: string; value: string; desc?: string }) {
   return (
-    <div className="border border-line bg-panel-2 px-3 py-3 relative group">
-      <div className="text-[10px] tracking-[0.14em] text-muted">{label}</div>
-      <div className="mt-1 text-ink">{value}</div>
-      {desc && <div className="mt-1.5 text-[10px] text-cyan leading-tight border-t border-line/50 pt-1">{desc}</div>}
+    <div className="border border-line bg-panel-2 px-3 py-3">
+      <div className="text-[10px] tracking-[0.14em] text-muted font-bold">{label}</div>
+      <div className="mt-1.5 text-ink text-lg font-semibold font-mono">{value}</div>
+      {desc && <div className="mt-1 text-[11px] text-cyan font-sans font-semibold leading-tight">{desc}</div>}
     </div>
   );
 }
