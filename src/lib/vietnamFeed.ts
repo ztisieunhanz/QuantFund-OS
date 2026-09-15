@@ -1,4 +1,5 @@
 import type { TimeSeriesPoint } from "@/types/market";
+import { pctChange } from "@/lib/math";
 
 export interface VietnamBreadth {
   advancing: number;
@@ -28,7 +29,7 @@ export interface VietnamMarketState {
   breadth: VietnamBreadth;
 }
 
-// 50 phiên giá đóng cửa thực tế gần nhất của VN-Index
+// 50 phiên giá đóng cửa cơ sở (Fallback phòng khi mất mạng)
 const VNINDEX_SERIES_BASE = [
   1218, 1222, 1225, 1230, 1235, 1228, 1220, 1224, 1232, 1238,
   1240, 1245, 1242, 1239, 1248, 1252, 1255, 1250, 1246, 1253,
@@ -64,34 +65,91 @@ export function calculateVietnamFeatures(prices: number[]) {
   };
 }
 
+interface YahooChartResponse {
+  chart?: {
+    result?: Array<{
+      timestamp?: number[];
+      indicators?: { quote?: Array<{ close?: Array<number | null> }> };
+    }>;
+  };
+}
+
+// KÉO DỮ LIỆU VN-INDEX THẬT TỪ YAHOO FINANCE (^VNINDEX) QUA PROXY
+async function fetchLiveVietnamIndex(): Promise<{ points: TimeSeriesPoint[]; source: "live" } | null> {
+  const ticker = "^VNINDEX";
+  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=6mo`;
+  const proxies = [
+    `/api/yahoo/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=6mo`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+  ];
+
+  for (const url of proxies) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const json = (await res.json()) as YahooChartResponse;
+      const result = json.chart?.result?.[0];
+      const stamps = result?.timestamp ?? [];
+      const closes = result?.indicators?.quote?.[0]?.close ?? [];
+      const points: TimeSeriesPoint[] = [];
+
+      for (let i = 0; i < stamps.length; i += 1) {
+        const close = closes[i];
+        if (close == null || !Number.isFinite(close)) continue;
+        points.push({ time: stamps[i] * 1000, value: close });
+      }
+
+      if (points.length >= 25) {
+        return { points, source: "live" };
+      }
+    } catch (e) {
+      // Thử proxy kế tiếp
+    }
+  }
+  return null;
+}
+
 export async function loadVietnamMarket(): Promise<VietnamMarketState> {
   const now = Date.now();
   const DAY_MS = 86400000;
+
+  // Thử gọi API lấy dữ liệu thật VN-Index
+  const liveResult = await fetchLiveVietnamIndex();
   
-  // Xây dựng chuỗi TimeSeriesPoints 50 ngày
-  const points: TimeSeriesPoint[] = VNINDEX_SERIES_BASE.map((val, idx) => ({
-    time: now - (VNINDEX_SERIES_BASE.length - 1 - idx) * DAY_MS,
-    value: val
-  }));
+  let prices: number[];
+  let points: TimeSeriesPoint[];
+  let source: "live" | "synthetic";
 
-  const lastPrice = VNINDEX_SERIES_BASE[VNINDEX_SERIES_BASE.length - 1];
-  const prevPrice = VNINDEX_SERIES_BASE[VNINDEX_SERIES_BASE.length - 2];
+  if (liveResult) {
+    points = liveResult.points;
+    prices = points.map(p => p.value);
+    source = "live";
+  } else {
+    points = VNINDEX_SERIES_BASE.map((val, idx) => ({
+      time: now - (VNINDEX_SERIES_BASE.length - 1 - idx) * DAY_MS,
+      value: val
+    }));
+    prices = VNINDEX_SERIES_BASE;
+    source = "synthetic";
+  }
+
+  const len = prices.length;
+  const lastPrice = prices[len - 1];
+  const prevPrice = prices[len - 2] ?? lastPrice;
   const change1d = lastPrice - prevPrice;
-  const changePct1d = change1d / prevPrice;
+  const changePct1d = pctChange(prevPrice, lastPrice);
 
-  const features = calculateVietnamFeatures(VNINDEX_SERIES_BASE);
+  const features = calculateVietnamFeatures(prices);
 
-  // Snapshot Market Breadth phản ánh đúng hiện tượng phân kỳ:
-  // Index giữ sắc xanh (+0.8%), nhưng số mã giảm áp đảo (145 tăng / 320 giảm)
-  // và chỉ có 38% số cổ phiếu giữ được đường MA20
+  // Snapshot Market Breadth phản ánh cấu trúc phân kỳ
   const breadth: VietnamBreadth = {
     advancing: 145,
     declining: 320,
     unchanged: 65,
-    adRatio: Math.round((145 / 320) * 100) / 100, // 0.45 (Rất yếu)
-    pctAboveMA20: 38.0, // 38%
-    pctAboveMA50: 31.0, // 31%
-    pctAboveMA200: 45.0 // 45%
+    adRatio: Math.round((145 / 320) * 100) / 100,
+    pctAboveMA20: 38.0,
+    pctAboveMA50: 31.0,
+    pctAboveMA200: 45.0
   };
 
   return {
@@ -104,7 +162,7 @@ export async function loadVietnamMarket(): Promise<VietnamMarketState> {
       distMa50: features.distMa50,
       distMa200: features.distMa200,
       points,
-      source: "synthetic",
+      source,
       timestamp: now
     },
     breadth
