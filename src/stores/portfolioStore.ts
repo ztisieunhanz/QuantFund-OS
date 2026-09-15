@@ -18,7 +18,7 @@ interface PortfolioState {
 }
 
 // CHUẨN HÓA DỮ LIỆU DANH MỤC (TỔNG CHÍNH XÁC 100%, NAV = $100,000)
-// Tiền mặt được gom về một nguồn duy nhất (USD Cash: $20,000 = 20%)
+// Phân bổ: Equities (35%) + Gold (25%) + USD Cash (20%) + Real Estate (12%) + Crypto (8%) = 100%
 export const usePortfolioStore = create<PortfolioState>((set, get) => ({
   cashUsd: 20000,
   totalNav: 100000,
