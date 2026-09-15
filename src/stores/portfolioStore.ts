@@ -17,15 +17,17 @@ interface PortfolioState {
   getTotalNav: () => number;
 }
 
+// CHUẨN HÓA DỮ LIỆU DANH MỤC (TỔNG CHÍNH XÁC 100%, NAV = $100,000)
+// Tiền mặt được gom về một nguồn duy nhất (USD Cash: $20,000 = 20%)
 export const usePortfolioStore = create<PortfolioState>((set, get) => ({
-  cashUsd: 15000,
+  cashUsd: 20000,
   totalNav: 100000,
   assets: [
-    { id: 'realestate', name: 'Real Estate', category: 'Real Estate', currentValue: 12800, allocationPercent: 12.8 },
-    { id: 'gold', name: 'Gold', category: 'Gold', currentValue: 28600, allocationPercent: 28.6 },
-    { id: 'usdCash', name: 'USD Cash', category: 'Cash', currentValue: 21900, allocationPercent: 21.9 },
-    { id: 'equities', name: 'Equities', category: 'Equities', currentValue: 36100, allocationPercent: 36.1 },
-    { id: 'crypto', name: 'Crypto', category: 'Crypto', allocationPercent: 8.6, currentValue: 8600 }
+    { id: 'equities', name: 'Equities', category: 'Equities', currentValue: 35000, allocationPercent: 35.0 },
+    { id: 'gold', name: 'Gold', category: 'Gold', currentValue: 25000, allocationPercent: 25.0 },
+    { id: 'usdCash', name: 'USD Cash', category: 'Cash', currentValue: 20000, allocationPercent: 20.0 },
+    { id: 'realestate', name: 'Real Estate', category: 'Real Estate', currentValue: 12000, allocationPercent: 12.0 },
+    { id: 'crypto', name: 'Crypto', category: 'Crypto', currentValue: 8000, allocationPercent: 8.0 }
   ],
   setCash: (cash: number) => set({ cashUsd: cash }),
   setTotalNav: (nav: number) => set({ totalNav: nav }),
