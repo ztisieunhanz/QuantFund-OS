@@ -1,35 +1,31 @@
 // ============================================================================
 // FILE: src/lib/quant/executionEngine.ts
-// MODULE: EXECUTION ENGINE & TRANSACTION AUDIT SIMULATOR
-// ARCHITECTURE: TargetPortfolioWeight + AccountState -> Fills -> UpdatedAccountState
+// MODULE: DETERMINISTIC REBALANCE & POSITION ACCOUNTING SIMULATOR
 // ============================================================================
 
 import type {
   AssetId,
   ExecutionRecord,
   ExecutionRule,
+  OrderSide,
   PointInTimeBar,
-  Side,
+  PositionRecord,
   SlippageModelConfig,
   TargetPortfolioWeight,
 } from "@/lib/quant/types";
-
-// ----------------------------------------------------------------------------
-// 1. CONTEXT & CONFIGURATION CONTRACTS
-// ----------------------------------------------------------------------------
 
 export interface ExecutionContext {
   readonly decisionTimestamp: number;
   readonly executionTimestamp: number;
   readonly executionRule: ExecutionRule;
-  readonly commissionRate: number; // Ví dụ 0.001 = 10 bps
+  readonly commissionRate: number;
   readonly slippageConfig: SlippageModelConfig;
-  readonly minRebalanceThresholdUsd?: number; // Ngưỡng bỏ qua các lệnh tái cân bằng vụn vặt (mặc định $50)
+  readonly minRebalanceThresholdUsd?: number;
 }
 
 export interface PortfolioAccountState {
   readonly cash: number;
-  readonly holdings: Readonly<Record<AssetId, number>>;
+  readonly positions: Readonly<Record<AssetId, PositionRecord>>;
 }
 
 export interface ExecutionEngineResult {
@@ -40,36 +36,29 @@ export interface ExecutionEngineResult {
   readonly netCashFlowUsd: number;
 }
 
-// ----------------------------------------------------------------------------
-// 2. SLIPPAGE & TRANSACTION COST CALCULATION
-// ----------------------------------------------------------------------------
-
 interface PriceImpactResult {
   readonly executionPrice: number;
-  readonly slippagePerUnit: number;
   readonly slippageBps: number;
   readonly slippageCostUsd: number;
 }
 
 function calculatePriceImpact(
   basePrice: number,
-  side: "BUY" | "SELL",
+  side: OrderSide,
   quantity: number,
   barVolume: number,
   config: SlippageModelConfig
 ): PriceImpactResult {
   if (basePrice <= 0 || quantity <= 0) {
-    return { executionPrice: basePrice, slippagePerUnit: 0, slippageBps: 0, slippageCostUsd: 0 };
+    return { executionPrice: basePrice, slippageBps: 0, slippageCostUsd: 0 };
   }
 
   let effectiveBps = Math.max(0, config.baseBps);
 
-  // Mô hình trượt giá theo thị phần thanh khoản (Square-root law of market impact)
   if (config.type === "VOLUME_SHARE_IMPACT" && barVolume > 0) {
     const impactCoeff = config.impactFactor ?? 0.1;
     const volumeShare = Math.min(1.0, quantity / barVolume);
-    const dynamicImpactBps = impactCoeff * Math.sqrt(volumeShare) * 10000;
-    effectiveBps += dynamicImpactBps;
+    effectiveBps += impactCoeff * Math.sqrt(volumeShare) * 10000;
   } else if (config.type === "LINEAR_SLIPPAGE" && barVolume > 0) {
     const impactCoeff = config.impactFactor ?? 0.05;
     const volumeShare = Math.min(1.0, quantity / barVolume);
@@ -78,29 +67,18 @@ function calculatePriceImpact(
 
   const slippageFactor = effectiveBps / 10000;
   const slippagePerUnit = basePrice * slippageFactor;
-
-  // Chi phí trượt giá luôn bất lợi: Mua giá cao hơn (+), Bán giá thấp hơn (-)
-  const executionPrice = side === "BUY" 
-    ? basePrice + slippagePerUnit 
-    : Math.max(0.0001, basePrice - slippagePerUnit);
-
-  const slippageCostUsd = quantity * slippagePerUnit;
+  const executionPrice = side === "BUY" ? basePrice + slippagePerUnit : Math.max(0.0001, basePrice - slippagePerUnit);
 
   return {
     executionPrice,
-    slippagePerUnit,
     slippageBps: effectiveBps,
-    slippageCostUsd,
+    slippageCostUsd: quantity * slippagePerUnit,
   };
 }
 
-// ----------------------------------------------------------------------------
-// 3. REBALANCE DELTA RESOLVER & EXECUTION LOGIC
-// ----------------------------------------------------------------------------
-
 interface OrderIntent {
   readonly assetId: AssetId;
-  readonly side: Side;
+  readonly side: OrderSide;
   readonly targetUnitsDelta: number;
   readonly notionalUsd: number;
 }
@@ -112,23 +90,23 @@ export function executeRebalance(
   context: ExecutionContext
 ): ExecutionEngineResult {
   const minThresholdUsd = context.minRebalanceThresholdUsd ?? 50.0;
-  const holdings = { ...currentAccount.holdings };
+  const currentPositions = { ...currentAccount.positions };
   let cash = currentAccount.cash;
 
-  // 1. TÍNH TOÁN NAV HIỆN HỮU TẠI THỜI ĐIỂM KHỚP LỆNH
+  // 1. TÍNH TOÁN NAV CHÍNH XÁC THEO GIÁ THỰC THI (Mở cửa nến T+1 hoặc Đóng cửa T)
   let currentNav = cash;
-  for (const [assetId, units] of Object.entries(holdings)) {
+  for (const [assetId, pos] of Object.entries(currentPositions)) {
     const bar = assetBars[assetId];
-    if (bar && units > 0) {
+    if (bar && pos.quantity > 0) {
       const price = context.executionRule === "NEXT_BAR_OPEN" ? bar.open : bar.close;
-      currentNav += units * price;
+      currentNav += pos.quantity * price;
     }
   }
 
-  // 2. TÍNH TOÁN SAI LỆCH VỊ THẾ (REBALANCE DELTAS)
+  // 2. TÍNH TOÁN DELTA VỊ THẾ
   const allAssetIds = Array.from(
-    new Set([...Object.keys(holdings), ...Object.keys(targetWeights.assetWeights)])
-  );
+    new Set([...Object.keys(currentPositions), ...Object.keys(targetWeights.assetWeights)])
+  ).sort(); // Deterministic asset order
 
   const rawIntents: OrderIntent[] = [];
 
@@ -139,20 +117,18 @@ export function executeRebalance(
     const basePrice = context.executionRule === "NEXT_BAR_OPEN" ? bar.open : bar.close;
     if (basePrice <= 0) continue;
 
-    const currentUnits = holdings[assetId] ?? 0;
+    const currentUnits = currentPositions[assetId]?.quantity ?? 0;
     const currentNotional = currentUnits * basePrice;
 
-    const targetWeight = targetWeights.assetWeights[assetId] ?? 0;
-    const targetNotional = Math.max(0, targetWeight * currentNav);
+    // Trong phiên bản Long-Only có kiểm soát, trọng số âm được đưa về 0
+    const targetWeight = Math.max(0, targetWeights.assetWeights[assetId] ?? 0);
+    const targetNotional = targetWeight * currentNav;
     const deltaNotional = targetNotional - currentNotional;
 
-    // Bỏ qua nếu chênh lệch danh nghĩa nhỏ hơn ngưỡng tối thiểu
-    if (Math.abs(deltaNotional) < minThresholdUsd) {
-      continue;
-    }
+    if (Math.abs(deltaNotional) < minThresholdUsd) continue;
 
     const deltaUnits = Math.abs(deltaNotional) / basePrice;
-    const side: Side = deltaNotional > 0 ? "BUY" : "SELL";
+    const side: OrderSide = deltaNotional > 0 ? "BUY" : "SELL";
 
     rawIntents.push({
       assetId,
@@ -162,12 +138,13 @@ export function executeRebalance(
     });
   }
 
-  // 3. THỰC THI NGUYÊN TẮC: BÁN TRƯỚC - MUA SAU (SELL-FIRST EXECUTION ORDER)
-  // Đảm bảo dòng tiền được giải phóng trước khi phân bổ lệnh mua, tránh thâm hụt tiền mặt giả định
+  // 3. DETERMINISTIC SORT KEY: Bán trước, Mua sau. 
+  // Đối với nhiều lệnh Mua: ưu tiên Notional lớn nhất, sau đó đến thứ tự bảng chữ cái của AssetId
   const sortedIntents = [...rawIntents].sort((a, b) => {
     if (a.side === "SELL" && b.side === "BUY") return -1;
     if (a.side === "BUY" && b.side === "SELL") return 1;
-    return 0;
+    if (b.notionalUsd !== a.notionalUsd) return b.notionalUsd - a.notionalUsd;
+    return a.assetId.localeCompare(b.assetId);
   });
 
   const records: ExecutionRecord[] = [];
@@ -182,14 +159,12 @@ export function executeRebalance(
     const basePrice = context.executionRule === "NEXT_BAR_OPEN" ? bar.open : bar.close;
     let executableUnits = intent.targetUnitsDelta;
 
-    // Kiểm tra tính khả dụng của số dư với lệnh BÁN
     if (intent.side === "SELL") {
-      const currentHolding = holdings[intent.assetId] ?? 0;
-      executableUnits = Math.min(currentHolding, executableUnits);
+      const currentUnits = currentPositions[intent.assetId]?.quantity ?? 0;
+      executableUnits = Math.min(currentUnits, executableUnits);
       if (executableUnits <= 0) continue;
     }
 
-    // Tính toán trượt giá (Slippage)
     const impact = calculatePriceImpact(
       basePrice,
       intent.side,
@@ -201,37 +176,67 @@ export function executeRebalance(
     let grossTradeValue = executableUnits * impact.executionPrice;
     let fees = grossTradeValue * context.commissionRate;
 
-    // Kiểm tra khả năng chi trả với lệnh MUA (kể cả phí)
     if (intent.side === "BUY") {
-      const totalCost = grossTradeValue + fees;
-      if (totalCost > cash) {
-        // Tự động thu hẹp khối lượng mua nếu tiền mặt còn lại không đủ
+      const totalRequired = grossTradeValue + fees;
+      if (totalRequired > cash) {
         const affordableValue = Math.max(0, cash / (1 + context.commissionRate));
         executableUnits = affordableValue / impact.executionPrice;
         grossTradeValue = executableUnits * impact.executionPrice;
         fees = grossTradeValue * context.commissionRate;
       }
-      if (executableUnits <= 0) continue;
+      if (executableUnits <= 1e-8) continue;
     }
 
-    // Cập nhật số dư tiền mặt và khối lượng tài sản
     let netCashImpact = 0;
+    const existingPos = currentPositions[intent.assetId];
+
     if (intent.side === "SELL") {
       netCashImpact = grossTradeValue - fees;
       cash += netCashImpact;
-      holdings[intent.assetId] = Math.max(0, (holdings[intent.assetId] ?? 0) - executableUnits);
+      const remainingUnits = Math.max(0, (existingPos?.quantity ?? 0) - executableUnits);
+
+      if (remainingUnits > 1e-8) {
+        currentPositions[intent.assetId] = {
+          assetId: intent.assetId,
+          side: "LONG",
+          status: "OPEN",
+          quantity: remainingUnits,
+          entryPrice: existingPos?.entryPrice ?? impact.executionPrice,
+          unrealizedPnl: (basePrice - (existingPos?.entryPrice ?? impact.executionPrice)) * remainingUnits,
+        };
+      } else {
+        currentPositions[intent.assetId] = {
+          assetId: intent.assetId,
+          side: "FLAT",
+          status: "CLOSED",
+          quantity: 0,
+          entryPrice: 0,
+          unrealizedPnl: 0,
+        };
+      }
     } else {
       netCashImpact = -(grossTradeValue + fees);
       cash += netCashImpact;
-      holdings[intent.assetId] = (holdings[intent.assetId] ?? 0) + executableUnits;
+      const prevQty = existingPos?.quantity ?? 0;
+      const prevEntry = existingPos?.entryPrice ?? impact.executionPrice;
+      const newQty = prevQty + executableUnits;
+      const newEntry = (prevQty * prevEntry + executableUnits * impact.executionPrice) / newQty;
+
+      currentPositions[intent.assetId] = {
+        assetId: intent.assetId,
+        side: "LONG",
+        status: "OPEN",
+        quantity: newQty,
+        entryPrice: newEntry,
+        unrealizedPnl: (basePrice - newEntry) * newQty,
+      };
     }
 
     totalFeesUsd += fees;
     totalSlippageCostUsd += impact.slippageCostUsd;
     netCashFlowUsd += netCashImpact;
 
-    // Ghi biên lai kiểm toán chính xác tại thời điểm khớp lệnh
-    const record: ExecutionRecord = {
+    records.push({
       executionId: `exec-${intent.assetId}-${context.executionTimestamp}-${intent.side}`,
       orderId: `ord-${intent.assetId}-${context.decisionTimestamp}`,
       strategyId: "OMEGA_REBALANCE",
@@ -248,22 +253,13 @@ export function executeRebalance(
       slippage: Math.round(impact.slippageBps * 10) / 10,
       fees: Math.round(fees * 100) / 100,
       netCashImpact: Math.round(netCashImpact * 100) / 100,
-    };
-
-    records.push(record);
-  }
-
-  // Dọn dẹp các vị thế đã bán sạch (zero-units)
-  for (const assetId of Object.keys(holdings)) {
-    if (holdings[assetId] < 1e-8) {
-      delete holdings[assetId];
-    }
+    });
   }
 
   return {
     updatedAccount: {
       cash: Math.round(cash * 100) / 100,
-      holdings,
+      positions: currentPositions,
     },
     records,
     totalFeesUsd: Math.round(totalFeesUsd * 100) / 100,
