@@ -17,7 +17,7 @@ interface YahooChartResponse {
   };
 }
 
-// 1. KÉO GIÁ BTC TRỰC TIẾP TỪ BINANCE (Mở CORS 100%, giá chuẩn theo từng giây)
+// 1. KÉO GIÁ BTC TRỰC TIẾP TỪ BINANCE (Mở CORS 100%)
 async function fetchBinanceBtc(): Promise<MacroSeries | null> {
   try {
     const url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=120";
@@ -28,41 +28,73 @@ async function fetchBinanceBtc(): Promise<MacroSeries | null> {
 
     const points: TimeSeriesPoint[] = data.map((k: any) => ({
       time: Number(k[0]),
-      value: parseFloat(k[4]), // Close price
+      value: parseFloat(k[4]),
     }));
 
     return toMacroSeries("btc", "BTCUSDT", "Bitcoin", points, "live");
   } catch (e) {
-    console.warn("Binance BTC live fetch failed, falling back...", e);
+    console.warn("Binance BTC fetch failed:", e);
     return null;
   }
 }
 
-// 2. KÉO GIÁ CÁC TÀI SẢN VĨ MÔ QUA PROXY VITE (/api/yahoo)
-async function fetchYahooSeries(id: Exclude<MacroSeries["id"], "us2y" | "vix">): Promise<MacroSeries | null> {
+// 2. KÉO GIÁ VÀNG TRỰC TIẾP TỪ BINANCE (PAXGUSDT - Bảo chứng 1:1 bằng 1 Troy Ounce Vàng thật)
+async function fetchBinanceGold(): Promise<MacroSeries | null> {
   try {
-    const meta = YAHOO[id];
-    const url = `/api/yahoo/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=6mo`;
+    const url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=120";
     const res = await fetch(url);
     if (!res.ok) return null;
-    const json = (await res.json()) as YahooChartResponse;
-    const result = json.chart?.result?.[0];
-    const stamps = result?.timestamp ?? [];
-    const closes = result?.indicators?.quote?.[0]?.close ?? [];
-    const points: TimeSeriesPoint[] = [];
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length < 25) return null;
 
-    for (let i = 0; i < stamps.length; i += 1) {
-      const close = closes[i];
-      if (close == null || !Number.isFinite(close)) continue;
-      points.push({ time: stamps[i] * 1000, value: close });
-    }
+    const points: TimeSeriesPoint[] = data.map((k: any) => ({
+      time: Number(k[0]),
+      value: parseFloat(k[4]),
+    }));
 
-    if (points.length < 25) return null;
-    return toMacroSeries(id, meta.ticker, meta.name, points, "live");
+    return toMacroSeries("gold", "PAXG/XAU", "Gold (XAU)", points, "live");
   } catch (e) {
-    console.warn(`Yahoo series fetch failed for ${id}:`, e);
+    console.warn("Binance Gold (PAXG) fetch failed:", e);
     return null;
   }
+}
+
+// 3. KÉO TÀI SẢN VĨ MÔ QUA CORS-PROXY ĐỂ VƯỢT RÀO CHẶN BROWSER
+async function fetchYahooViaProxy(id: Exclude<MacroSeries["id"], "us2y" | "vix">): Promise<MacroSeries | null> {
+  const meta = YAHOO[id];
+  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=6mo`;
+
+  // Thử lần lượt: Proxy nội bộ Vite -> Proxy công khai
+  const proxies = [
+    `/api/yahoo/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=6mo`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+  ];
+
+  for (const url of proxies) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const json = (await res.json()) as YahooChartResponse;
+      const result = json.chart?.result?.[0];
+      const stamps = result?.timestamp ?? [];
+      const closes = result?.indicators?.quote?.[0]?.close ?? [];
+      const points: TimeSeriesPoint[] = [];
+
+      for (let i = 0; i < stamps.length; i += 1) {
+        const close = closes[i];
+        if (close == null || !Number.isFinite(close)) continue;
+        points.push({ time: stamps[i] * 1000, value: close });
+      }
+
+      if (points.length >= 25) {
+        return toMacroSeries(id, meta.ticker, meta.name, points, "live");
+      }
+    } catch (e) {
+      // Tiếp tục fallback sang proxy kế tiếp
+    }
+  }
+
+  return null;
 }
 
 function toMacroSeries(
@@ -88,7 +120,7 @@ function toMacroSeries(
   };
 }
 
-// 3. FALLBACK TOÁN HỌC PHÒNG KHI MẤT MẠNG HOÀN TOÀN
+// 4. MÔ HÌNH TOÁN HỌC DỰ PHÒNG NẾU MẤT MẠNG
 function syntheticSeries(id: Exclude<MacroSeries["id"], "us2y" | "vix">): MacroSeries {
   const meta = YAHOO[id];
   const seedMap = { dxy: 11, us10y: 22, gold: 33, btc: 44 };
@@ -129,12 +161,23 @@ export async function loadMacroUniverse(): Promise<MacroSeries[]> {
 
   const results = await Promise.all(
     ids.map(async (id) => {
+      // BTC: Binance REST API
       if (id === "btc") {
         const btcLive = await fetchBinanceBtc();
         if (btcLive) return btcLive;
       }
-      const yahooLive = await fetchYahooSeries(id);
+
+      // GOLD: Ưu tiên Binance PAXG (Vàng tokenized thực) trước -> sau đó qua Yahoo Proxy
+      if (id === "gold") {
+        const goldBinance = await fetchBinanceGold();
+        if (goldBinance) return goldBinance;
+      }
+
+      // DXY, US10Y & Fallback Gold: Yahoo qua Proxy
+      const yahooLive = await fetchYahooViaProxy(id);
       if (yahooLive) return yahooLive;
+
+      // Fallback cuối cùng
       return syntheticSeries(id);
     })
   );
