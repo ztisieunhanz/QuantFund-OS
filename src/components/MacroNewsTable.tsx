@@ -4,7 +4,7 @@
 // ============================================================================
 
 import React, { useEffect, useState } from "react";
-import { ArrowUpRight, ArrowDownRight, Minus, RefreshCw, Terminal, Sparkles } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Minus, RefreshCw, Terminal, Sparkles, ExternalLink } from "lucide-react";
 import { clsx } from "@/lib/clsx";
 import { fetchRealQuantEvents, type LiveQuantNewsItem } from "@/lib/newsFeed";
 
@@ -64,7 +64,19 @@ export const MacroNewsTable: React.FC = () => {
                 <td className="py-3 px-3">
                   <div className="text-ink font-bold flex items-center gap-1.5">
                     <Sparkles size={12} className="text-cyan shrink-0" />
-                    {item.event}
+                    {item.url ? (
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:text-cyan underline decoration-cyan/30 flex items-center gap-1"
+                      >
+                        <span>{item.event}</span>
+                        <ExternalLink size={10} className="text-muted shrink-0" />
+                      </a>
+                    ) : (
+                      <span>{item.event}</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1.5 mt-1">
                     <span
@@ -117,6 +129,13 @@ export const MacroNewsTable: React.FC = () => {
                 </td>
               </tr>
             ))}
+            {!loading && events.length === 0 && (
+              <tr>
+                <td colSpan={5} className="py-8 text-center text-muted font-mono text-xs">
+                  Đang đồng bộ luồng tin quốc tế... Bấm [REFRESH FEED] để thử lại.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
