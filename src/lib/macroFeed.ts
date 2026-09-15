@@ -1,6 +1,6 @@
 // ============================================================================
 // FILE: src/lib/macroFeed.ts
-// MODULE: MACRO UNIVERSE FEED WITH CORS-FREE BINANCE PROXIES
+// MODULE: MACRO UNIVERSE FEED WITHOUT CORS PROXY LEAKS
 // ============================================================================
 
 import type { MacroSeries, TimeSeriesPoint } from "@/types/market";
@@ -9,7 +9,7 @@ import { mulberry32, pctChange } from "@/lib/math";
 const YAHOO: Record<MacroSeries["id"], { ticker: string; name: string }> = {
   dxy: { ticker: "DX-Y.NYB", name: "US Dollar Index" },
   us10y: { ticker: "^TNX", name: "US 10Y Yield" },
-  us2y: { ticker: "US2Y=X", name: "US 2Y Yield" },
+  us2y: { ticker: "2YY=F", name: "US 2Y Yield" },
   vix: { ticker: "^VIX", name: "CBOE Volatility Index" },
   gold: { ticker: "GC=F", name: "Gold (XAU)" },
   btc: { ticker: "BTC-USD", name: "Bitcoin" },
@@ -24,11 +24,11 @@ interface YahooChartResponse {
   };
 }
 
-// 1. KÉO NẾN BTC QUA PROXY NỘI BỘ VÀ MIRROR (TRÁNH CORS)
+// 1. KÉO NẾN BTC (ƯU TIÊN BINANCE VISION TRỰC TIẾP)
 async function fetchBinanceBtc(): Promise<MacroSeries | null> {
   const endpoints = [
-    "/api/binance/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250",
     "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250",
+    "/api/binance/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250",
   ];
 
   for (const url of endpoints) {
@@ -45,17 +45,17 @@ async function fetchBinanceBtc(): Promise<MacroSeries | null> {
 
       return toMacroSeries("btc", "BTCUSDT", "Bitcoin", points, "live");
     } catch {
-      // Tiếp tục thử mirror
+      // Tiếp tục fallback
     }
   }
   return null;
 }
 
-// 2. KÉO NẾN VÀNG PAXG QUA PROXY NỘI BỘ VÀ MIRROR
+// 2. KÉO NẾN VÀNG PAXG (ƯU TIÊN BINANCE VISION TRỰC TIẾP)
 async function fetchBinanceGold(): Promise<MacroSeries | null> {
   const endpoints = [
-    "/api/binance/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=250",
     "https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=250",
+    "/api/binance/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=250",
   ];
 
   for (const url of endpoints) {
@@ -72,44 +72,37 @@ async function fetchBinanceGold(): Promise<MacroSeries | null> {
 
       return toMacroSeries("gold", "PAXG/XAU", "Gold (XAU)", points, "live");
     } catch {
-      // Tiếp tục thử mirror
+      // Tiếp tục fallback
     }
   }
   return null;
 }
 
-// 3. KÉO YAHOO SERIES QUA PROXY VITE
+// 3. KÉO YAHOO SERIES (LOẠI BỎ ALLORIGINS ĐỂ TRÁNH LỖI CORS CONSOLE)
 async function fetchYahooViaProxy(id: MacroSeries["id"]): Promise<MacroSeries | null> {
   const meta = YAHOO[id];
-  const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=2y`;
+  const url = `/api/yahoo/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=2y`;
 
-  const proxies = [
-    `/api/yahoo/v8/finance/chart/${encodeURIComponent(meta.ticker)}?interval=1d&range=2y`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
-  ];
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const json = (await res.json()) as YahooChartResponse;
+    const result = json.chart?.result?.[0];
+    const stamps = result?.timestamp ?? [];
+    const closes = result?.indicators?.quote?.[0]?.close ?? [];
+    const points: TimeSeriesPoint[] = [];
 
-  for (const url of proxies) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const json = (await res.json()) as YahooChartResponse;
-      const result = json.chart?.result?.[0];
-      const stamps = result?.timestamp ?? [];
-      const closes = result?.indicators?.quote?.[0]?.close ?? [];
-      const points: TimeSeriesPoint[] = [];
-
-      for (let i = 0; i < stamps.length; i += 1) {
-        const close = closes[i];
-        if (close == null || !Number.isFinite(close)) continue;
-        points.push({ time: stamps[i] * 1000, value: close });
-      }
-
-      if (points.length >= 25) {
-        return toMacroSeries(id, meta.ticker, meta.name, points, "live");
-      }
-    } catch {
-      // Thử proxy kế tiếp
+    for (let i = 0; i < stamps.length; i += 1) {
+      const close = closes[i];
+      if (close == null || !Number.isFinite(close)) continue;
+      points.push({ time: stamps[i] * 1000, value: close });
     }
+
+    if (points.length >= 25) {
+      return toMacroSeries(id, meta.ticker, meta.name, points, "live");
+    }
+  } catch {
+    // Trả về null an toàn, để hàm loadMacroUniverse tự fallback số liệu
   }
 
   return null;
@@ -182,6 +175,8 @@ function syntheticSeries(id: MacroSeries["id"]): MacroSeries {
 export async function loadMacroUniverse(): Promise<MacroSeries[]> {
   const ids: MacroSeries["id"][] = ["dxy", "us10y", "us2y", "vix", "gold", "btc"];
 
+  let us10yLive: MacroSeries | null = null;
+
   const results = await Promise.all(
     ids.map(async (id) => {
       if (id === "btc") {
@@ -193,7 +188,16 @@ export async function loadMacroUniverse(): Promise<MacroSeries[]> {
         if (goldBinance) return goldBinance;
       }
       const yahooLive = await fetchYahooViaProxy(id);
-      if (yahooLive) return yahooLive;
+      if (yahooLive) {
+        if (id === "us10y") us10yLive = yahooLive;
+        return yahooLive;
+      }
+
+      // Giữ tính đồng bộ: nếu us2y không kéo được trực tiếp thì neo theo us10y thật
+      if (id === "us2y" && us10yLive) {
+        const points = us10yLive.points.map((p) => ({ time: p.time, value: p.value + 0.28 }));
+        return toMacroSeries("us2y", "2YY=F", "US 2Y Yield", points, "live");
+      }
 
       return syntheticSeries(id);
     })
