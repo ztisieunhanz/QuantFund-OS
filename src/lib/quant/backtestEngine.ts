@@ -1,10 +1,6 @@
 // ============================================================================
 // FILE: src/lib/quant/backtestEngine.ts
-// MODULE: DETERMINISTIC REPLAY & AUDIT TRAIL ENGINE
-// ARCHITECTURE:
-//   Point-in-Time Timeline (Warmup -> Evaluation)
-//     -> 3 Alpha Engines -> Permission Gate -> Risk Engine -> Omega Allocator
-//     -> Execution Simulator (Next Open / Same Close) -> DecisionState Audit
+// MODULE: DETERMINISTIC REPLAY & INTEGRITY-SECURED BACKTEST ENGINE
 // ============================================================================
 
 import type {
@@ -15,6 +11,7 @@ import type {
   PointInTimeBar,
   PointInTimeEvent,
   PointInTimeMacro,
+  PositionRecord,
   SignalOutput,
   StrategyContext,
   StrategyId,
@@ -22,53 +19,19 @@ import type {
   TargetPortfolioWeight,
 } from "@/lib/quant/types";
 
-import {
-  evaluateAdaptiveTrend,
-  updateAdaptiveTrendState,
-  type AdaptiveTrendConfig,
-} from "@/lib/quant/adaptiveTrend";
-
-import {
-  evaluateEventReaction,
-  updateEventReactionState,
-  type EventReactionConfig,
-} from "@/lib/quant/eventReaction";
-
-import {
-  evaluateMeanReversion,
-  updateMeanReversionState,
-  type MeanReversionConfig,
-} from "@/lib/quant/meanReversion";
-
-import {
-  evaluatePermission,
-  type PermissionGateConfig,
-} from "@/lib/quant/permissionGate";
-
-import {
-  evaluatePortfolioRisk,
-  type RiskEngineConfig,
-} from "@/lib/quant/riskEngine";
-
-import {
-  evaluateOmegaAllocation,
-  type OmegaAllocatorConfig,
-} from "@/lib/quant/omegaAllocator";
-
-import {
-  executeRebalance,
-  type PortfolioAccountState,
-} from "@/lib/quant/executionEngine";
-
-// ----------------------------------------------------------------------------
-// 1. BACKTEST INPUTS & METRICS CONTRACTS
-// ----------------------------------------------------------------------------
+import { evaluateAdaptiveTrend, updateAdaptiveTrendState, type AdaptiveTrendConfig } from "@/lib/quant/adaptiveTrend";
+import { evaluateEventReaction, updateEventReactionState, type EventReactionConfig } from "@/lib/quant/eventReaction";
+import { evaluateMeanReversion, updateMeanReversionState, type MeanReversionConfig } from "@/lib/quant/meanReversion";
+import { evaluatePermission, type PermissionGateConfig } from "@/lib/quant/permissionGate";
+import { evaluatePortfolioRisk, createInitialRiskState, type RiskEngineConfig, type RiskEngineState } from "@/lib/quant/riskEngine";
+import { evaluateOmegaAllocation, type OmegaAllocatorConfig } from "@/lib/quant/omegaAllocator";
+import { executeRebalance, type PortfolioAccountState } from "@/lib/quant/executionEngine";
 
 export interface BacktestDataset {
   readonly assetBars: Readonly<Record<AssetId, readonly PointInTimeBar[]>>;
   readonly macroTimeline?: readonly PointInTimeMacro[];
   readonly eventTimeline?: readonly PointInTimeEvent[];
-  readonly benchmarkAssetId?: AssetId; // Mặc định là asset đầu tiên
+  readonly benchmarkAssetId?: AssetId;
 }
 
 export interface BacktestStrategyConfigs {
@@ -105,10 +68,6 @@ export interface BacktestResult {
   readonly totalBarsEvaluated: number;
 }
 
-// ----------------------------------------------------------------------------
-// 2. TIMELINE SYNCHRONIZATION & WARMUP HELPERS
-// ----------------------------------------------------------------------------
-
 function getLatestMacroAsOf(
   macroTimeline: readonly PointInTimeMacro[] | undefined,
   timestamp: number
@@ -116,11 +75,8 @@ function getLatestMacroAsOf(
   if (!macroTimeline || macroTimeline.length === 0) return null;
   let latest: PointInTimeMacro | null = null;
   for (const m of macroTimeline) {
-    if (m.asOfTimestamp <= timestamp) {
-      latest = m;
-    } else {
-      break;
-    }
+    if (m.asOfTimestamp <= timestamp) latest = m;
+    else break;
   }
   return latest;
 }
@@ -132,8 +88,8 @@ function getLatestEventAsOf(
   if (!eventTimeline || eventTimeline.length === 0) return null;
   let latest: PointInTimeEvent | null = null;
   for (const e of eventTimeline) {
-    // Chỉ đọc sự kiện khi đã tới giờ công bố chính thức tại bar T
-    if (e.publicationTimestamp <= timestamp) {
+    // Ngăn chặn rò rỉ: cả thời điểm công bố và chốt consensus đều phải <= timestamp hiện tại
+    if (e.publicationTimestamp <= timestamp && e.consensusSnapshotTimestamp <= timestamp) {
       latest = e;
     } else {
       break;
@@ -142,122 +98,44 @@ function getLatestEventAsOf(
   return latest;
 }
 
-function calculatePerformanceMetrics(
-  history: readonly DecisionState[],
-  initialCapital: number,
-  allExecutions: readonly ExecutionRecord[]
-): BacktestPerformanceMetrics {
-  if (history.length === 0) {
-    return {
-      initialNav: initialCapital,
-      finalNav: initialCapital,
-      totalReturnPct: 0,
-      cagrPct: 0,
-      annualizedSharpeRatio: 0,
-      annualizedSortinoRatio: 0,
-      maxDrawdownPct: 0,
-      calmarRatio: 0,
-      totalTrades: 0,
-      winRatePct: 0,
-      profitFactor: 0,
-      totalFeesUsd: 0,
-      totalSlippageCostUsd: 0,
-      annualTurnoverRatio: 0,
-    };
-  }
-
-  const finalNav = history[history.length - 1].nav;
-  const totalReturnPct = (finalNav - initialCapital) / initialCapital;
-
-  // 1. CAGR & Daily Returns
-  const totalDays = Math.max(1, history.length);
-  const years = totalDays / 252;
-  const cagrPct = years > 0 && finalNav > 0 ? Math.pow(finalNav / initialCapital, 1 / years) - 1 : 0;
-
-  const dailyReturns: number[] = [];
-  for (let i = 1; i < history.length; i++) {
-    const prevNav = history[i - 1].nav;
-    if (prevNav > 0) {
-      dailyReturns.push((history[i].nav - prevNav) / prevNav);
-    }
-  }
-
-  // 2. Sharpe & Sortino Ratios (Giả định Risk-Free Rate = 0% trên daily delta)
-  let meanReturn = 0;
-  let variance = 0;
-  let downsideVariance = 0;
-
-  if (dailyReturns.length > 1) {
-    meanReturn = dailyReturns.reduce((acc, r) => acc + r, 0) / dailyReturns.length;
-    for (const r of dailyReturns) {
-      variance += (r - meanReturn) ** 2;
-      if (r < 0) {
-        downsideVariance += r ** 2;
-      }
-    }
-    variance /= dailyReturns.length - 1;
-    downsideVariance /= Math.max(1, dailyReturns.filter((r) => r < 0).length);
-  }
-
-  const dailyStd = Math.sqrt(variance);
-  const downsideStd = Math.sqrt(downsideVariance);
-  const annualizedSharpeRatio = dailyStd > 0 ? (meanReturn / dailyStd) * Math.sqrt(252) : 0;
-  const annualizedSortinoRatio = downsideStd > 0 ? (meanReturn / downsideStd) * Math.sqrt(252) : 0;
-
-  // 3. Max Drawdown & Calmar
-  let maxDrawdownPct = 0;
-  for (const bar of history) {
-    if (bar.currentDrawdown > maxDrawdownPct) {
-      maxDrawdownPct = bar.currentDrawdown;
-    }
-  }
-  const calmarRatio = maxDrawdownPct > 0 ? cagrPct / maxDrawdownPct : 0;
-
-  // 4. Trade Execution Stats & Costs
-  let totalFeesUsd = 0;
-  let totalSlippageCostUsd = 0;
-  let grossTradedVolumeUsd = 0;
-
-  for (const exec of allExecutions) {
-    totalFeesUsd += exec.fees;
-    totalSlippageCostUsd += (exec.slippage / 10000) * exec.notionalUsd;
-    grossTradedVolumeUsd += exec.notionalUsd;
-  }
-
-  const annualTurnoverRatio = years > 0 && initialCapital > 0
-    ? grossTradedVolumeUsd / initialCapital / years
-    : 0;
-
-  // 5. Win Rate & Profit Factor từ các chu kỳ PnL ngày
-  const winningDays = dailyReturns.filter((r) => r > 0);
-  const losingDays = dailyReturns.filter((r) => r < 0);
-  const winRatePct = dailyReturns.length > 0 ? (winningDays.length / dailyReturns.length) * 100 : 0;
-
-  const grossGains = winningDays.reduce((sum, r) => sum + r, 0);
-  const grossLosses = Math.abs(losingDays.reduce((sum, r) => sum + r, 0));
-  const profitFactor = grossLosses > 0 ? grossGains / grossLosses : grossGains > 0 ? 99.0 : 1.0;
-
-  return {
-    initialNav: Math.round(initialCapital * 100) / 100,
-    finalNav: Math.round(finalNav * 100) / 100,
-    totalReturnPct: Math.round(totalReturnPct * 10000) / 10000,
-    cagrPct: Math.round(cagrPct * 10000) / 10000,
-    annualizedSharpeRatio: Math.round(annualizedSharpeRatio * 100) / 100,
-    annualizedSortinoRatio: Math.round(annualizedSortinoRatio * 100) / 100,
-    maxDrawdownPct: Math.round(maxDrawdownPct * 10000) / 10000,
-    calmarRatio: Math.round(calmarRatio * 100) / 100,
-    totalTrades: allExecutions.length,
-    winRatePct: Math.round(winRatePct * 100) / 100,
-    profitFactor: Math.round(profitFactor * 100) / 100,
-    totalFeesUsd: Math.round(totalFeesUsd * 100) / 100,
-    totalSlippageCostUsd: Math.round(totalSlippageCostUsd * 100) / 100,
-    annualTurnoverRatio: Math.round(annualTurnoverRatio * 100) / 100,
+function calculateCorrelationMatrix(
+  pnlHistory: Record<StrategyId, number[]>
+): Record<StrategyId, Record<StrategyId, number>> {
+  const ids: StrategyId[] = ["ADAPTIVE_TREND", "EVENT_REACTION", "MEAN_REVERSION"];
+  const matrix: Record<StrategyId, Record<StrategyId, number>> = {
+    ADAPTIVE_TREND: { ADAPTIVE_TREND: 1, EVENT_REACTION: 0, MEAN_REVERSION: 0 },
+    EVENT_REACTION: { ADAPTIVE_TREND: 0, EVENT_REACTION: 1, MEAN_REVERSION: 0 },
+    MEAN_REVERSION: { ADAPTIVE_TREND: 0, EVENT_REACTION: 0, MEAN_REVERSION: 1 },
   };
-}
 
-// ----------------------------------------------------------------------------
-// 3. CORE DETERMINISTIC BACKTEST ENGINE
-// ----------------------------------------------------------------------------
+  const sampleLen = pnlHistory.ADAPTIVE_TREND.length;
+  if (sampleLen < 15) return matrix;
+
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      const a = pnlHistory[ids[i]].slice(-30);
+      const b = pnlHistory[ids[j]].slice(-30);
+      const meanA = a.reduce((sum, v) => sum + v, 0) / a.length;
+      const meanB = b.reduce((sum, v) => sum + v, 0) / b.length;
+
+      let num = 0;
+      let denA = 0;
+      let denB = 0;
+      for (let k = 0; k < a.length; k++) {
+        const diffA = a[k] - meanA;
+        const diffB = b[k] - meanB;
+        num += diffA * diffB;
+        denA += diffA ** 2;
+        denB += diffB ** 2;
+      }
+      const corr = denA > 0 && denB > 0 ? num / Math.sqrt(denA * denB) : 0;
+      matrix[ids[i]][ids[j]] = Math.round(corr * 100) / 100;
+      matrix[ids[j]][ids[i]] = matrix[ids[i]][ids[j]];
+    }
+  }
+
+  return matrix;
+}
 
 export function runBacktest(
   config: BacktestConfig,
@@ -266,73 +144,61 @@ export function runBacktest(
 ): BacktestResult {
   const assetIds = Object.keys(dataset.assetBars) as AssetId[];
   if (assetIds.length === 0) {
-    throw new Error("BacktestEngine Error: Dataset does not contain any asset bars.");
+    throw new Error("BacktestEngine Error: Dataset contains no asset bars.");
   }
 
   const benchmarkId = dataset.benchmarkAssetId ?? assetIds[0];
   const primaryBars = dataset.assetBars[benchmarkId];
 
-  if (!primaryBars || primaryBars.length <= config.warmupPeriod) {
+  // KHÓA CỨNG: Bắt buộc warmupPeriod tối thiểu 125 nến để nuôi đủ chỉ báo cấu trúc dài
+  const minRequiredWarmup = 125;
+  const effectiveWarmup = Math.max(config.warmupPeriod, minRequiredWarmup);
+
+  if (!primaryBars || primaryBars.length <= effectiveWarmup) {
     throw new Error(
-      `BacktestEngine Error: Total bars (${primaryBars?.length ?? 0}) <= Warmup period (${config.warmupPeriod}).`
+      `BacktestEngine Error: Total bars (${primaryBars?.length ?? 0}) <= Required Warmup (${effectiveWarmup}).`
     );
   }
 
-  // 1. KHỞI TẠO TÀI KHOẢN VÀ BỘ NHỚ NỘI BỘ CHIẾN LƯỢC
   let account: PortfolioAccountState = {
     cash: config.initialCapital,
-    holdings: {},
+    positions: {},
   };
 
+  let riskState: RiskEngineState = createInitialRiskState();
   let peakNav = config.initialCapital;
-  let cumulativePnl = 0;
 
   const strategyStates: Record<StrategyId, StrategyState> = {
-    ADAPTIVE_TREND: {
-      strategyId: "ADAPTIVE_TREND",
-      lastEvaluationTimestamp: 0,
-      barsSinceLastSignal: 0,
-      internalValues: {},
-    },
-    EVENT_REACTION: {
-      strategyId: "EVENT_REACTION",
-      lastEvaluationTimestamp: 0,
-      barsSinceLastSignal: 0,
-      internalValues: {},
-    },
-    MEAN_REVERSION: {
-      strategyId: "MEAN_REVERSION",
-      lastEvaluationTimestamp: 0,
-      barsSinceLastSignal: 0,
-      internalValues: {},
-    },
+    ADAPTIVE_TREND: { strategyId: "ADAPTIVE_TREND", lastEvaluationTimestamp: 0, barsSinceLastSignal: 0, internalValues: {} },
+    EVENT_REACTION: { strategyId: "EVENT_REACTION", lastEvaluationTimestamp: 0, barsSinceLastSignal: 0, internalValues: {} },
+    MEAN_REVERSION: { strategyId: "MEAN_REVERSION", lastEvaluationTimestamp: 0, barsSinceLastSignal: 0, internalValues: {} },
+  };
+
+  const strategyPnlHistory: Record<StrategyId, number[]> = {
+    ADAPTIVE_TREND: [],
+    EVENT_REACTION: [],
+    MEAN_REVERSION: [],
   };
 
   const decisionHistory: DecisionState[] = [];
   const allExecutions: ExecutionRecord[] = [];
   let pendingRebalance: TargetPortfolioWeight | null = null;
 
-  // 2. VÒNG LẶP DETERMINISTIC REPLAY (BẮT ĐẦU TỪ SAU WARMUP PERIOD)
-  for (let t = config.warmupPeriod; t < primaryBars.length; t++) {
+  for (let t = effectiveWarmup; t < primaryBars.length; t++) {
     const currentBar = primaryBars[t];
     const timestamp = currentBar.timestamp;
 
-    // Lọc theo khoảng ngày backtest
     if (config.startDate > 0 && timestamp < config.startDate) continue;
     if (config.endDate > 0 && timestamp > config.endDate) break;
 
-    // Snapshot giá các tài sản tại Bar T
     const currentAssetBars: Record<AssetId, PointInTimeBar> = {};
     for (const id of assetIds) {
-      const bars = dataset.assetBars[id];
-      if (bars && bars.length > t) {
-        currentAssetBars[id] = bars[t];
-      } else if (bars && bars.length > 0) {
-        currentAssetBars[id] = bars[bars.length - 1];
-      }
+      const bList = dataset.assetBars[id];
+      if (bList && bList.length > t) currentAssetBars[id] = bList[t];
+      else if (bList && bList.length > 0) currentAssetBars[id] = bList[bList.length - 1];
     }
 
-    // A. XỬ LÝ KHỚP LỆNH CHỜ (NẾU DÙNG NEXT_BAR_OPEN)
+    // A. XỬ LÝ KHỚP LỆNH CHỜ TẠI NEXT_BAR_OPEN
     let barExecutions: ExecutionRecord[] = [];
     if (config.executionRule === "NEXT_BAR_OPEN" && pendingRebalance) {
       const execResult = executeRebalance(
@@ -353,12 +219,12 @@ export function runBacktest(
       pendingRebalance = null;
     }
 
-    // B. CHUẨN BỊ POINT-IN-TIME CONTEXT CHO 3 ALPHAS (T-History only, strictly no lookahead)
+    // B. POINT-IN-TIME SLICE (Tuyệt đối không chứa dữ liệu > t)
     const macroState = getLatestMacroAsOf(dataset.macroTimeline, timestamp);
     const eventState = getLatestEventAsOf(dataset.eventTimeline, timestamp);
     const benchmarkSlice = primaryBars.slice(0, t + 1);
 
-    // C. ĐÁNH GIÁ 3 CHIẾN LƯỢC ĐỘC LẬP
+    // C. ĐÁNH GIÁ 3 CHIẾN LƯỢC
     const trendCtx: StrategyContext = {
       strategyId: "ADAPTIVE_TREND",
       assetId: benchmarkId,
@@ -400,39 +266,42 @@ export function runBacktest(
 
     const signals: readonly SignalOutput[] = [trendSignal, eventSignal, mrSignal];
 
-    // D. ĐIỀU TIẾT QUYỀN HẠN TẠI PERMISSION GATE
+    // D. PERMISSION GATE
     const permissions = [
       evaluatePermission("ADAPTIVE_TREND", macroState, strategyConfigs.permission),
       evaluatePermission("EVENT_REACTION", macroState, strategyConfigs.permission),
       evaluatePermission("MEAN_REVERSION", macroState, strategyConfigs.permission),
     ];
 
-    // E. ĐO LƯỜNG RỦI RO DANH MỤC & ĐỊNH CỠ BIẾN ĐỘNG (RISK ENGINE)
+    // E. RISK ENGINE (HYSTERESIS & VOL FLOOR)
     let preAllocNav = account.cash;
-    for (const [id, units] of Object.entries(account.holdings)) {
+    for (const [id, pos] of Object.entries(account.positions)) {
       const p = currentAssetBars[id]?.close ?? 0;
-      preAllocNav += units * p;
+      preAllocNav += pos.quantity * p;
     }
     if (preAllocNav > peakNav) peakNav = preAllocNav;
 
-    const riskOutput = evaluatePortfolioRisk(
+    const { risk: riskOutput, nextState: updatedRiskState } = evaluatePortfolioRisk(
       preAllocNav,
       peakNav,
       benchmarkSlice,
+      riskState,
       strategyConfigs.risk
     );
+    riskState = updatedRiskState;
 
-    // F. OMEGA ALLOCATOR: PHÂN BỔ TỶ TRỌNG MỤC TIÊU CUỐI CÙNG
+    // F. OMEGA ALLOCATOR CÓ MA TRẬN TƯƠNG QUAN ĐỘNG
+    const dynamicCorrelation = calculateCorrelationMatrix(strategyPnlHistory);
     const targetWeights = evaluateOmegaAllocation(
       signals,
       permissions,
       riskOutput,
-      null, // Tương quan PnL ban đầu (chưa đủ mẫu)
+      dynamicCorrelation,
       timestamp,
       strategyConfigs.omega
     );
 
-    // G. KHỚP LỆNH TỨC THỜI (NẾU DÙNG SAME_BAR_CLOSE)
+    // G. KHỚP LỆNH MẶC ĐỊNH THEO NEXT_BAR_OPEN (HOẶC SAME_BAR_CLOSE NẾU CHỈ ĐỊNH)
     if (config.executionRule === "SAME_BAR_CLOSE") {
       const execResult = executeRebalance(
         account,
@@ -450,32 +319,33 @@ export function runBacktest(
       barExecutions = [...execResult.records];
       allExecutions.push(...execResult.records);
     } else {
-      // Đưa target weights vào hàng đợi cho open nến sau
       pendingRebalance = targetWeights;
     }
 
-    // H. TÍNH TOÁN NAV ĐÓNG CỬA VÀ ĐÓNG BĂNG AUDIT TRAIL TẠI BAR T
+    // H. ĐÓNG BĂNG AUDIT TRAIL VÀ TRÁNH TRÔI SỐ THỰC PNL
     let closingNav = account.cash;
-    for (const [id, units] of Object.entries(account.holdings)) {
+    for (const [id, pos] of Object.entries(account.positions)) {
       const p = currentAssetBars[id]?.close ?? 0;
-      closingNav += units * p;
+      closingNav += pos.quantity * p;
     }
     if (closingNav > peakNav) peakNav = closingNav;
 
-    const previousNav = decisionHistory.length > 0
-      ? decisionHistory[decisionHistory.length - 1].nav
-      : config.initialCapital;
-
+    const previousNav = decisionHistory.length > 0 ? decisionHistory[decisionHistory.length - 1].nav : config.initialCapital;
     const dailyPnl = closingNav - previousNav;
-    cumulativePnl += dailyPnl;
+    const cumulativePnl = closingNav - config.initialCapital; // Tránh floating-point accumulation drift
     const currentDrawdown = peakNav > 0 ? (peakNav - closingNav) / peakNav : 0;
 
-    const auditState: DecisionState = {
+    // Ghi nhận PnL ước tính của 3 chiến lược phục vụ ma trận tương quan phiên kế
+    strategyPnlHistory.ADAPTIVE_TREND.push(trendSignal.alphaScore * (dailyPnl / (closingNav || 1)));
+    strategyPnlHistory.EVENT_REACTION.push(eventSignal.alphaScore * (dailyPnl / (closingNav || 1)));
+    strategyPnlHistory.MEAN_REVERSION.push(mrSignal.alphaScore * (dailyPnl / (closingNav || 1)));
+
+    decisionHistory.push({
       barIndex: t,
       timestamp,
       nav: Math.round(closingNav * 100) / 100,
       cash: Math.round(account.cash * 100) / 100,
-      holdings: { ...account.holdings },
+      positions: { ...account.positions },
       signals,
       permissions,
       risk: riskOutput,
@@ -484,13 +354,10 @@ export function runBacktest(
       dailyPnl: Math.round(dailyPnl * 100) / 100,
       cumulativePnl: Math.round(cumulativePnl * 100) / 100,
       currentDrawdown: Math.round(currentDrawdown * 10000) / 10000,
-    };
-
-    decisionHistory.push(auditState);
+    });
   }
 
-  // 3. TÍNH TOÁN TOÀN BỘ CHỈ SỐ METRICS THỐNG KÊ
-  const metrics = calculatePerformanceMetrics(decisionHistory, config.initialCapital, allExecutions);
+  const metrics = calculateMetrics(decisionHistory, config.initialCapital, allExecutions);
 
   return {
     runId: config.runId,
@@ -498,5 +365,99 @@ export function runBacktest(
     timeline: decisionHistory,
     metrics,
     totalBarsEvaluated: decisionHistory.length,
+  };
+}
+
+function calculateMetrics(
+  history: readonly DecisionState[],
+  initialCapital: number,
+  allExecutions: readonly ExecutionRecord[]
+): BacktestPerformanceMetrics {
+  if (history.length === 0) {
+    return {
+      initialNav: initialCapital,
+      finalNav: initialCapital,
+      totalReturnPct: 0,
+      cagrPct: 0,
+      annualizedSharpeRatio: 0,
+      annualizedSortinoRatio: 0,
+      maxDrawdownPct: 0,
+      calmarRatio: 0,
+      totalTrades: 0,
+      winRatePct: 0,
+      profitFactor: 0,
+      totalFeesUsd: 0,
+      totalSlippageCostUsd: 0,
+      annualTurnoverRatio: 0,
+    };
+  }
+
+  const finalNav = history[history.length - 1].nav;
+  const totalReturnPct = (finalNav - initialCapital) / initialCapital;
+  const years = Math.max(1, history.length) / 252;
+  const cagrPct = years > 0 && finalNav > 0 ? Math.pow(finalNav / initialCapital, 1 / years) - 1 : 0;
+
+  const dailyReturns: number[] = [];
+  for (let i = 1; i < history.length; i++) {
+    const prev = history[i - 1].nav;
+    if (prev > 0) dailyReturns.push((history[i].nav - prev) / prev);
+  }
+
+  let mean = 0;
+  let variance = 0;
+  let downsideVariance = 0;
+  if (dailyReturns.length > 1) {
+    mean = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
+    for (const r of dailyReturns) {
+      variance += (r - mean) ** 2;
+      if (r < 0) downsideVariance += r ** 2;
+    }
+    variance /= dailyReturns.length - 1;
+    downsideVariance /= Math.max(1, dailyReturns.filter((r) => r < 0).length);
+  }
+
+  const std = Math.sqrt(variance);
+  const downsideStd = Math.sqrt(downsideVariance);
+  const annualizedSharpeRatio = std > 0 ? (mean / std) * Math.sqrt(252) : 0;
+  const annualizedSortinoRatio = downsideStd > 0 ? (mean / downsideStd) * Math.sqrt(252) : 0;
+
+  let maxDrawdownPct = 0;
+  for (const s of history) {
+    if (s.currentDrawdown > maxDrawdownPct) maxDrawdownPct = s.currentDrawdown;
+  }
+  const calmarRatio = maxDrawdownPct > 0 ? cagrPct / maxDrawdownPct : 0;
+
+  let totalFeesUsd = 0;
+  let totalSlippageCostUsd = 0;
+  let grossTradedVolumeUsd = 0;
+  for (const e of allExecutions) {
+    totalFeesUsd += e.fees;
+    totalSlippageCostUsd += (e.slippage / 10000) * e.notionalUsd;
+    grossTradedVolumeUsd += e.notionalUsd;
+  }
+
+  const annualTurnoverRatio = years > 0 && initialCapital > 0 ? grossTradedVolumeUsd / initialCapital / years : 0;
+  const winDays = dailyReturns.filter((r) => r > 0);
+  const loseDays = dailyReturns.filter((r) => r < 0);
+  const winRatePct = dailyReturns.length > 0 ? (winDays.length / dailyReturns.length) * 100 : 0;
+  const sumGains = winDays.reduce((a, b) => a + b, 0);
+  const sumLosses = Math.abs(loseDays.reduce((a, b) => a + b, 0));
+  const profitFactor = sumLosses > 0 ? sumGains / sumLosses : 1.0;
+
+  return {
+    initialNav: Math.round(initialCapital * 100) / 100,
+    finalNav: Math.round(finalNav * 100) / 100,
+    totalReturnPct: Math.round(totalReturnPct * 10000) / 10000,
+    cagrPct: Math.round(cagrPct * 10000) / 10000,
+    annualizedSharpeRatio: Math.round(annualizedSharpeRatio * 100) / 100,
+    annualizedSortinoRatio: Math.round(annualizedSortinoRatio * 100) / 100,
+    maxDrawdownPct: Math.round(maxDrawdownPct * 10000) / 10000,
+    calmarRatio: Math.round(calmarRatio * 100) / 100,
+    totalTrades: allExecutions.length,
+    winRatePct: Math.round(winRatePct * 100) / 100,
+    profitFactor: Math.round(profitFactor * 100) / 100,
+    totalFeesUsd: Math.round(totalFeesUsd * 100) / 100,
+    totalSlippageCostUsd: Math.round(totalSlippageCostUsd * 100) / 100,
+    annualTurnoverRatio: Math.round(annualTurnoverRatio * 100) / 100,
   };
 }
