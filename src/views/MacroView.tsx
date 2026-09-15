@@ -56,6 +56,83 @@ const FormatMessage = ({ text }: { text: string }) => {
   );
 };
 
+// ============================================================================
+// BƯỚC 4: FEATURE ENGINE HELPER (TÍNH TOÁN CÁC CHỈ SỐ LỊCH SỬ CHO TỪNG ASSET)
+// ============================================================================
+function calculateAssetFeatures(history?: number[]) {
+  const defaultFeatures = {
+    return1D: null as number | null,
+    return5D: null as number | null,
+    return20D: null as number | null,
+    ma20: null as number | null,
+    ma50: null as number | null,
+    ma200: null as number | null,
+    distMa20: null as number | null,
+    distMa50: null as number | null,
+    distMa200: null as number | null,
+    volatility20D: null as number | null,
+  };
+
+  // Trả về null toàn bộ nếu không có data lịch sử
+  if (!history || !Array.isArray(history) || history.length === 0) {
+    return defaultFeatures;
+  }
+
+  const len = history.length;
+  const lastPrice = history[len - 1];
+
+  const getReturn = (days: number) => {
+    if (len <= days) return null;
+    const pastPrice = history[len - 1 - days];
+    return pastPrice ? (lastPrice - pastPrice) / pastPrice : null;
+  };
+
+  const getMA = (days: number) => {
+    if (len < days) return null;
+    const sum = history.slice(len - days).reduce((a, b) => a + b, 0);
+    return sum / days;
+  };
+
+  const getDist = (price: number, ma: number | null) => {
+    if (ma === null || ma === 0) return null;
+    return (price - ma) / ma;
+  };
+
+  const getVol = (days: number) => {
+    if (len < days + 1) return null;
+    const returns = [];
+    for (let i = len - days; i < len; i++) {
+      const prev = history[i - 1];
+      if (prev) {
+        returns.push((history[i] - prev) / prev);
+      } else {
+        returns.push(0);
+      }
+    }
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
+    return Math.sqrt(variance) * Math.sqrt(252); // Biến động giá quy năm (Annualized Volatility)
+  };
+
+  const ma20 = getMA(20);
+  const ma50 = getMA(50);
+  const ma200 = getMA(200);
+
+  return {
+    return1D: getReturn(1),
+    return5D: getReturn(5),
+    return20D: getReturn(20),
+    ma20,
+    ma50,
+    ma200,
+    distMa20: getDist(lastPrice, ma20),
+    distMa50: getDist(lastPrice, ma50),
+    distMa200: getDist(lastPrice, ma200),
+    volatility20D: getVol(20),
+  };
+}
+// ============================================================================
+
 export function MacroView() {
   const { loading, error, series, regime, correlation, load } = useMacroStore();
   const portfolio = usePortfolioStore();
@@ -99,7 +176,7 @@ export function MacroView() {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã khởi tạo MarketSnapshot:\n- Dữ liệu Danh mục: Khả dụng\n- Dữ liệu Vĩ mô & Tickers: Khả dụng\n- Hiệu suất Bots: Khả dụng\n- Dữ liệu Việt Nam: UNAVAILABLE\n\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã khởi tạo MarketSnapshot:\n- Dữ liệu Danh mục: Khả dụng\n- Feature Engine (Returns, MA, Volatility): Đã nạp thành công\n- Hiệu suất Bots: Khả dụng\n- Dữ liệu Việt Nam: UNAVAILABLE\n\nBạn cần phân tích chiến lược nào?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -125,7 +202,7 @@ export function MacroView() {
     try {
       const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
       
-      // BƯỚC 3: XÂY DỰNG MARKET SNAPSHOT DUY NHẤT LÀM DATA CONTRACT
+      // XÂY DỰNG MARKET SNAPSHOT DUY NHẤT LÀM DATA CONTRACT
       const marketSnapshot = {
         timestamp: new Date().toISOString(),
         dataQuality: {
@@ -148,15 +225,25 @@ export function MacroView() {
           yieldLevel: regime.yieldLevel,
           yieldTrend: regime.yieldTrend
         } : "UNAVAILABLE",
-        assets: series.length > 0 ? series.map(s => ({
-          id: s.id,
-          name: s.name,
-          ticker: s.ticker,
-          lastPrice: s.last,
-          changePct1d: s.changePct1d,
-          changePct20d: s.changePct20d,
-          source: s.source
-        })) : "UNAVAILABLE",
+        
+        // TÍCH HỢP FEATURE ENGINE VÀO ASSETS
+        assets: series.length > 0 ? series.map(s => {
+          const features = calculateAssetFeatures((s as any).history);
+          return {
+            id: s.id,
+            name: s.name,
+            ticker: s.ticker,
+            lastPrice: s.last,
+            source: s.source,
+            features: {
+              ...features,
+              // Fallback dùng Pct từ store nếu history thiếu dữ liệu
+              return1D: features.return1D ?? s.changePct1d,
+              return20D: features.return20D ?? s.changePct20d
+            }
+          };
+        }) : "UNAVAILABLE",
+        
         vietnam: "UNAVAILABLE", // Dữ liệu thật chưa có
         bots: {
           trend: { winRate: trend.winRate, pnl: trend.pnl, totalTrades: trend.totalTrades },
@@ -178,10 +265,11 @@ export function MacroView() {
         ${JSON.stringify(marketSnapshot, null, 2)}
         \`\`\`
 
-        LUẬT LỆ:
+        LUẬT LỆ TỐI THƯỢNG:
         - CHỈ SỬ DỤNG dữ liệu có trong MARKET SNAPSHOT JSON ở trên. 
+        - Phân tích Momentum / Mean Reversion DỰA TRÊN các metrics trong "features" (như return5D, return20D, distMa50, volatility20D).
         - Nếu một trường dữ liệu (ví dụ: vietnam) có giá trị là "UNAVAILABLE" hoặc null, TUYỆT ĐỐI KHÔNG TỰ BỊA DỮ LIỆU. Bạn phải trả lời: "Thiếu dữ liệu [tên trường], không thể phân tích".
-        - Đưa ra phân tích dựa trên dữ liệu định lượng (VD: "Với DXY Trend hiện tại là X, Bot Trend đang có Win Rate Y, tôi khuyến nghị...").
+        - Đưa ra phân tích dựa trên dữ liệu định lượng (VD: "Với khoảng cách DXY cách MA50 là X%, Bot Trend đang có Win Rate Y, tôi khuyến nghị...").
 
         TRẢ LỜI THEO FORMAT BẮT BUỘC SAU KHI USER HỎI:
         ### VERDICT
@@ -292,7 +380,7 @@ export function MacroView() {
         </div>
       </div>
 
-      {/* 3. BẢNG TIN TỨC VĨ MÔ */}
+      {/* 3. BẢNG TIN TỨC VĨ MÔ (MOCK DATA) */}
       <MacroNewsTable />
 
       {/* 4. DỮ LIỆU VĨ MÔ GỐC & BIỂU ĐỒ TRÒN FIX LỖI KHOẢNG TRẮNG */}
@@ -417,20 +505,17 @@ export function MacroView() {
           ))}
           {isLoading && (
             <div className="flex items-center gap-2 text-cyan font-sans font-medium text-[13px] p-2">
-              <Loader2 size={16} className="animate-spin" /> Engine đang phân tích Market Snapshot...
+              <Loader2 size={16} className="animate-spin" /> Engine đang xử lý Feature Engine & Signal Confluence...
             </div>
           )}
         </div>
 
         <div className="px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar border-t border-line bg-panel">
-          <button onClick={() => handleSend("Phân tích tín hiệu thị trường hôm nay và đưa ra ACTION.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+          <button onClick={() => handleSend("Phân tích tín hiệu thị trường hôm nay. Chú ý các chỉ số MA50 và Volatility.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
             <MessageSquareText size={14} /> Market Action
           </button>
-          <button onClick={() => handleSend("Đánh giá hiệu suất 3 Bot (Trend, Mean, DCA). Tôi nên tắt Bot nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+          <button onClick={() => handleSend("Dựa vào Return 20D và Distance from MA50, Bot Trend có đang hiệu quả không?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
             <Target size={14} /> Bot Performance Audit
-          </button>
-          <button onClick={() => handleSend("Với rủi ro vĩ mô hiện tại, tôi nên HEDGE danh mục thế nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <TrendingUp size={14} /> Portfolio Hedging
           </button>
         </div>
 
