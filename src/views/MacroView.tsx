@@ -211,9 +211,6 @@ function calculateAssetFeatures(history?: number[]) {
   };
 }
 
-// ============================================================================
-// TIỂU BƯỚC B2: YIELD CURVE SPREAD & VIX ENGINE
-// ============================================================================
 function calculateYieldCurveAndVix(series: MacroSeries[]) {
   const us10y = series.find((s) => s.id === "us10y");
   const us2y = series.find((s) => s.id === "us2y");
@@ -302,7 +299,6 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: Vietn
   const divergences = [];
   const totalDataFields = 6;
 
-  // 1. MACRO SCORE
   if (macroRegime && typeof macroRegime.score === "number") {
     totalWeight += WEIGHTS.macro;
     earnedScore += (macroRegime.score / 100) * WEIGHTS.macro;
@@ -316,10 +312,8 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: Vietn
     factors.push({ name: "Macro", score: null, status: "UNAVAILABLE" });
   }
 
-  // 2. LIQUIDITY SCORE
   factors.push({ name: "Liquidity", score: null, status: "UNAVAILABLE" });
 
-  // 3. MARKET TREND SCORE
   let trendScore = null;
   let isPriceUp = false;
 
@@ -350,7 +344,6 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: Vietn
     factors.push({ name: "Price/Trend", score: null, status: "UNAVAILABLE" });
   }
 
-  // 4. BREADTH SCORE
   let isBreadthWeak = false;
   if (vietnam && vietnam !== "UNAVAILABLE" && vietnam.breadth) {
     let score = 50;
@@ -374,10 +367,8 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: Vietn
     factors.push({ name: "Breadth", score: null, status: "UNAVAILABLE" });
   }
 
-  // 5. FOREIGN FLOW SCORE
   factors.push({ name: "Foreign Flow", score: null, status: "UNAVAILABLE" });
 
-  // 6. CROSS-ASSET SCORE (DXY vs US10Y)
   const dxy = assets !== "UNAVAILABLE" ? assets.find((a: any) => a.id === "dxy") : null;
   const us10y = assets !== "UNAVAILABLE" ? assets.find((a: any) => a.id === "us10y") : null;
   if (dxy && dxy.features && us10y && us10y.features) {
@@ -510,7 +501,6 @@ export function MacroView() {
   const corr = correlation ?? (series.length ? thirtyDayCorrelation(series) : null);
   const usingSynthetic = series.some((s) => s.source === "synthetic");
 
-  // TÍNH TOÁN YIELD CURVE SPREAD & VIX VOLATILITY THẬT
   const macroAdvanced = useMemo(() => {
     return calculateYieldCurveAndVix(series);
   }, [series]);
@@ -554,7 +544,7 @@ export function MacroView() {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\n- Đã nạp Yield Curve Engine (10Y-2Y Spread) & VIX Index\n- Đã liên kết Market Breadth VN-Index\n\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\n- Đã nạp Yield Curve Engine (10Y-2Y Spread) & VIX Index\n- Đã kích hoạt Bộ định tuyến từ khóa (Gõ 'báo cáo' hoặc 'report' để xuất JSON Schema chuẩn)\n\nBạn cần phân tích chiến lược nào?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -580,6 +570,13 @@ export function MacroView() {
     try {
       const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
 
+      // Kiểm tra từ khóa kích hoạt chế độ báo cáo định lượng
+      const lowerText = userText.toLowerCase();
+      const isReportMode = lowerText.includes("báo cáo") || 
+                           lowerText.includes("report") || 
+                           lowerText.includes("soi nhanh") || 
+                           lowerText.includes("full verdict");
+
       const snapshotMacro = regime ? {
         label: regime.label,
         score: regime.score,
@@ -587,7 +584,6 @@ export function MacroView() {
         dxyTrend: regime.dxyTrend,
         yieldLevel: regime.yieldLevel,
         yieldTrend: regime.yieldTrend,
-        // NẠP YIELD CURVE & VIX THẬT VÀO SNAPSHOT
         yieldCurve: macroAdvanced.yieldCurve ? {
           us10y: `${macroAdvanced.yieldCurve.us10y.toFixed(2)}%`,
           us2y: `${macroAdvanced.yieldCurve.us2y.toFixed(2)}%`,
@@ -653,70 +649,83 @@ export function MacroView() {
         }
       };
 
-      const systemPrompt = `
+      // PHÂN TÁCH PROMPT DỰA TRÊN CHẾ ĐỘ (REPORT MODE VS CHAT MODE)
+      let systemPrompt = "";
+      let generationConfig: any = undefined;
+
+      if (isReportMode) {
+        systemPrompt = `
 Bạn là AI QUANT EXPERT - Senior Portfolio Manager & Quant Risk Analyst.
-
-NGUYÊN TẮC HOẠT ĐỘNG:
-- Bạn chỉ nhận đầu vào là MarketSnapshot và câu hỏi của User.
-- KHÔNG tự tính toán indicator nếu Engine đã cung cấp. KHÔNG tự tạo market data.
-- Dữ liệu "UNAVAILABLE" KHÔNG được coi là sự thật (FACT). Báo cáo vào mảng 'missing'.
-- Phân biệt rõ: FACT (dữ liệu), SIGNAL (tín hiệu), DIVERGENCE (phân kỳ), INFERENCE (suy luận), ACTION (hành động).
-
-QUY TẮC PHẢN HỒI:
-- KHÔNG kể lể lại toàn bộ số liệu. Đi thẳng vào vấn đề, ngắn gọn, sắc bén.
-- Lưu ý trạng thái YIELD CURVE (10Y-2Y Spread): Nếu Inverted hoặc Flat/Un-inverting, chú ý rủi ro suy thoái / biến động thanh khoản.
-- Lưu ý VIX Volatility: Nếu VIX >= 20 hoặc Z-score cao, ưu tiên quản trị rủi ro và phòng vệ danh mục.
-- Chú ý DIVERGENCE giữa VN-Index và độ rộng thị trường.
-- Ưu tiên tối đa 3 SIGNAL mạnh nhất để lý giải quyết định.
-- Mục tiêu tối thượng: Tối ưu risk-adjusted decision, tránh drawdown lớn, không phải cố đoán đúng 100%.
-
-DƯỚI ĐÂY LÀ MARKET SNAPSHOT (DỮ LIỆU THỰC TẾ TRÍCH XUẤT TỪ HỆ THỐNG):
+User yêu cầu một BÁO CÁO ĐỊNH LƯỢNG CHUYÊN SÂU.
+NGUYÊN TẮC:
+- Dựa trên MarketSnapshot và câu hỏi. Không bịa số.
+- Đọc kỹ Yield Curve và VIX để nhận diện rủi ro vĩ mô.
+- Xuất kết quả theo đúng chuẩn JSON Schema được yêu cầu. Không kèm text thừa ngoài JSON.
+MARKET SNAPSHOT:
 \`\`\`json
 ${JSON.stringify(marketSnapshot, null, 2)}
 \`\`\`
-
-Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yêu cầu. Không kèm text thừa.
-      `;
-
-      const generationConfig = {
-        temperature: 0.1,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            verdict: { type: "STRING", description: "Must be one of: BUY, HOLD, REDUCE, HEDGE, WAIT" },
-            confidence: { type: "INTEGER", description: "0 to 100" },
-            thesis: { type: "STRING" },
-            signals: { type: "ARRAY", items: { type: "STRING" } },
-            divergences: { type: "ARRAY", items: { type: "STRING" } },
-            risks: { type: "ARRAY", items: { type: "STRING" } },
-            action: { type: "STRING" },
-            triggers: { type: "ARRAY", items: { type: "STRING" } },
-            invalidation: { type: "STRING" },
-            dataQuality: {
-              type: "OBJECT",
-              properties: {
-                coverage: { type: "INTEGER" },
-                missing: { type: "ARRAY", items: { type: "STRING" } }
+        `;
+        generationConfig = {
+          temperature: 0.1,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              verdict: { type: "STRING", description: "Must be one of: BUY, HOLD, REDUCE, HEDGE, WAIT" },
+              confidence: { type: "INTEGER", description: "0 to 100" },
+              thesis: { type: "STRING" },
+              signals: { type: "ARRAY", items: { type: "STRING" } },
+              divergences: { type: "ARRAY", items: { type: "STRING" } },
+              risks: { type: "ARRAY", items: { type: "STRING" } },
+              action: { type: "STRING" },
+              triggers: { type: "ARRAY", items: { type: "STRING" } },
+              invalidation: { type: "STRING" },
+              dataQuality: {
+                type: "OBJECT",
+                properties: {
+                  coverage: { type: "INTEGER" },
+                  missing: { type: "ARRAY", items: { type: "STRING" } }
+                }
               }
-            }
-          },
-          required: ["verdict", "confidence", "thesis", "signals", "divergences", "risks", "action", "triggers", "invalidation", "dataQuality"]
-        }
-      };
+            },
+            required: ["verdict", "confidence", "thesis", "signals", "divergences", "risks", "action", "triggers", "invalidation", "dataQuality"]
+          }
+        };
+      } else {
+        systemPrompt = `
+Bạn là AI QUANT EXPERT - Senior Portfolio Manager & Quant Risk Analyst.
+User đang trò chuyện hoặc hỏi đáp thông thường về chiến lược đầu tư, vĩ mô hoặc quản trị rủi ro.
+NGUYÊN TẮC:
+- Trả lời bằng văn bản tự nhiên, chuyên nghiệp, sắc bén, phân tích logic tài chính định lượng.
+- Tận dụng dữ liệu trong MarketSnapshot bên dưới để làm căn cứ thực tế, không bịa số.
+- Trình bày mạch lạc bằng Markdown (dùng bullet points, bold đúng chỗ nếu cần). Không xuất JSON.
+MARKET SNAPSHOT:
+\`\`\`json
+${JSON.stringify(marketSnapshot, null, 2)}
+\`\`\`
+        `;
+        generationConfig = {
+          temperature: 0.4,
+        };
+      }
 
       const apiContents = [
         ...messages.slice(1).map(m => ({ role: m.sender === "user" ? "user" : "model", parts: [{ text: m.text }] })),
         { role: "user", parts: [{ text: userText }] }
       ];
 
+      const bodyPayload: any = {
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: apiContents,
+      };
+      if (generationConfig) {
+        bodyPayload.generationConfig = generationConfig;
+      }
+
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: apiContents, 
-          generationConfig 
-        })
+        body: JSON.stringify(bodyPayload)
       });
 
       const data = await response.json();
@@ -725,10 +734,12 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
       const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
       let parsedResponse: QuantResponse | undefined = undefined;
-      try {
-        if (rawText) parsedResponse = JSON.parse(rawText);
-      } catch (e) {
-        console.error("Lỗi Parse Structured JSON từ AI:", e);
+      if (isReportMode) {
+        try {
+          if (rawText) parsedResponse = JSON.parse(rawText);
+        } catch (e) {
+          console.error("Lỗi Parse Structured JSON từ AI:", e);
+        }
       }
 
       setMessages((prev) => [...prev, { sender: "ai", text: rawText, parsedData: parsedResponse }]);
@@ -1015,18 +1026,18 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
         </div>
 
         <div className="px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar border-t border-line bg-panel">
-          <button onClick={() => handleSend("Phân tích trạng thái Yield Curve (10Y-2Y Spread) và chỉ số VIX hiện tại ảnh hưởng thế nào đến danh mục?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <MessageSquareText size={14} /> Phân Tích Yield Curve & VIX
+          <button onClick={() => handleSend("Báo cáo: Phân tích trạng thái Yield Curve (10Y-2Y Spread) và chỉ số VIX hiện tại ảnh hưởng thế nào đến danh mục?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <MessageSquareText size={14} /> Báo Cáo Yield Curve & VIX
           </button>
-          <button onClick={() => handleSend("Với độ rộng thị trường VN yếu và đường cong lợi suất hiện tại, tôi nên HEDGE danh mục ra sao?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <AlertTriangle size={14} /> Chiến Lược Hedging
+          <button onClick={() => handleSend("Theo ông, liệu vàng có đang là hầm trú ẩn an toàn nhất lúc này không?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <Target size={14} /> Hỏi Đáp Nhanh Về Vàng
           </button>
         </div>
 
         <form onSubmit={(e) => { e.preventDefault(); handleSend(input); }} className="p-4 border-t border-line flex gap-4 bg-panel">
           <textarea 
             rows={1} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
-            placeholder="Yêu cầu AI phân tích dữ liệu định lượng và trả về Structured JSON... (Shift + Enter để xuống dòng)"
+            placeholder="Gõ 'báo cáo' hoặc 'report' để lấy JSON Schema, hoặc hỏi đáp tự nhiên... (Shift + Enter xuống dòng)"
             className="flex-1 bg-[#0c1017] border border-line text-white px-5 py-3.5 rounded-lg text-[14px] font-sans focus:outline-none focus:border-cyan resize-none min-h-[50px] max-h-32 custom-scrollbar shadow-inner"
           />
           <button type="submit" disabled={isLoading || !input.trim()} className="bg-panel-2 border border-line hover:bg-cyan hover:text-[#0c1017] text-cyan font-black w-14 h-14 rounded-lg flex items-center justify-center transition-all disabled:opacity-50 shrink-0">
