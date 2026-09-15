@@ -73,7 +73,9 @@ function calculateAssetFeatures(history?: number[]) {
     volatility20D: null as number | null,
   };
 
-  if (!history || !Array.isArray(history) || history.length === 0) return defaultFeatures;
+  if (!history || !Array.isArray(history) || history.length === 0) {
+    return defaultFeatures;
+  }
 
   const len = history.length;
   const lastPrice = history[len - 1];
@@ -100,7 +102,11 @@ function calculateAssetFeatures(history?: number[]) {
     const returns = [];
     for (let i = len - days; i < len; i++) {
       const prev = history[i - 1];
-      returns.push(prev ? (history[i] - prev) / prev : 0);
+      if (prev) {
+        returns.push((history[i] - prev) / prev);
+      } else {
+        returns.push(0);
+      }
     }
     const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
     const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
@@ -126,34 +132,26 @@ function calculateAssetFeatures(history?: number[]) {
 }
 
 // ============================================================================
-// BƯỚC 5: XÂY DỰNG DATA CONTRACT CHO VIETNAM MARKET BREADTH ENGINE
+// BƯỚC 6: INTERFACES DÀNH CHO VIETNAM MARKET (LIQUIDITY & FOREIGN FLOW)
 // ============================================================================
-interface MarketBreadth {
-  advancing: number | null;
-  declining: number | null;
-  unchanged: number | null;
-  advanceDeclineRatio: number | null;
-  pctAboveMA20: number | null;
-  pctAboveMA50: number | null;
-  pctAboveMA200: number | null;
-  newHighs: number | null;
-  newLows: number | null;
-  status: "LIVE" | "UNAVAILABLE";
+interface VietnamLiquidity {
+  dailyTurnover: number | null;
+  turnoverVs20D: number | null;
+  turnoverVs60D: number | null;
+  volumeTrend: "RISING" | "FALLING" | "FLAT" | null;
 }
 
-// Khởi tạo trạng thái UNAVAILABLE, không nội suy, không bịa số
-const vietnamBreadthEngine: MarketBreadth = {
-  advancing: null,
-  declining: null,
-  unchanged: null,
-  advanceDeclineRatio: null,
-  pctAboveMA20: null,
-  pctAboveMA50: null,
-  pctAboveMA200: null,
-  newHighs: null,
-  newLows: null,
-  status: "UNAVAILABLE",
-};
+interface VietnamForeignFlow {
+  net1D: number | null;
+  cumulative5D: number | null;
+  cumulative20D: number | null;
+}
+
+interface VietnamMarketSnapshot {
+  liquidity: VietnamLiquidity | "UNAVAILABLE";
+  foreignFlow: VietnamForeignFlow | "UNAVAILABLE";
+}
+// ============================================================================
 
 export function MacroView() {
   const { loading, error, series, regime, correlation, load } = useMacroStore();
@@ -165,14 +163,20 @@ export function MacroView() {
   const [isLoading, setIsLoading] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
-  // MOCK DATA (Giữ lại CHỈ ĐỂ RENDER UI CÁC PHẦN CHƯA CÓ CONTRACT, sẽ refactor ở các bước sau)
+  // MOCK DATA (Giữ lại CHỈ ĐỂ RENDER UI, không đưa vào System Prompt)
   const enhancedData = {
+    macroSurprise: { cpi: { actual: "3.1%", expected: "2.9%", prev: "3.0%", impact: "INFLATION SURPRISE: +0.2%" }, fedNextMeet: "35% hike, 65% hold (FOMC 15-16/9)" },
+    yieldCurve: { us2y: "4.85%", us10y: "4.58%", spread: "-27 bps (Inverted)" },
     vietnamMarket: {
-      foreignFlow: { d1: "-500B", d5: "-1,200B" },
+      vnindex: { price: 1280.5, ret1d: "+0.8%", ret20d: "+5.7%", distMA20: "+2.4%", distMA50: "+4.8%", distMA200: "-1.2%", breadth: "A/D = 145/320", pctAboveMA20: "38%", pctAboveMA50: "31%" },
+      foreignFlow: { d1: "-500B", d5: "-1,200B", d20: "+300B" },
+      liquidity: { turnoverRatio20d: 1.32 },
+      usdvnd: "25,450 (Ổn định)",
       sjcGold: { price: "82.5M", premium: "+4M", premiumPercentile: "96%" }
     },
     signalConfluence: {
-      score: 71, confidence: 68
+      score: 71, confidence: 68,
+      factors: [ { name: "Inflation", val: "+++", status: "High" }, { name: "Liquidity", val: "++", status: "Neutral" }, { name: "USD", val: "+++", status: "High" }, { name: "Breadth", val: "-", status: "Weak" }, { name: "Foreign", val: "--", status: "Outflow" } ]
     }
   };
 
@@ -192,7 +196,7 @@ export function MacroView() {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã khởi tạo MarketSnapshot:\n- Dữ liệu Danh mục: Khả dụng\n- Feature Engine (Returns, MA, Volatility): Đã nạp thành công\n- Vietnam Breadth Engine: UNAVAILABLE\n- Hiệu suất Bots: Khả dụng\n\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\nĐã khởi tạo MarketSnapshot:\n- Dữ liệu Danh mục: Khả dụng\n- Feature Engine (Returns, MA, Volatility): Đã nạp thành công\n- Hiệu suất Bots: Khả dụng\n- Dữ liệu Việt Nam (Liquidity, Foreign Flow): UNAVAILABLE\n\nBạn cần phân tích chiến lược nào?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -218,7 +222,12 @@ export function MacroView() {
     try {
       const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
       
-      // XÂY DỰNG MARKET SNAPSHOT DUY NHẤT LÀM DATA CONTRACT
+      // Khởi tạo struct dữ liệu VN trống, vì API/Store thật chưa có
+      const vietnamSnapshot: VietnamMarketSnapshot = {
+        liquidity: "UNAVAILABLE",
+        foreignFlow: "UNAVAILABLE",
+      };
+
       const marketSnapshot = {
         timestamp: new Date().toISOString(),
         dataQuality: {
@@ -241,7 +250,6 @@ export function MacroView() {
           yieldLevel: regime.yieldLevel,
           yieldTrend: regime.yieldTrend
         } : "UNAVAILABLE",
-        
         assets: series.length > 0 ? series.map(s => {
           const features = calculateAssetFeatures((s as any).history);
           return {
@@ -257,13 +265,7 @@ export function MacroView() {
             }
           };
         }) : "UNAVAILABLE",
-        
-        // TÍCH HỢP VIETNAM BREADTH VÀO CONTRACT (HIỆN TẠI UNAVAILABLE)
-        vietnam: {
-          breadth: vietnamBreadthEngine,
-          status: "UNAVAILABLE"
-        },
-        
+        vietnam: vietnamSnapshot, // Đã đẩy cấu trúc Liquidity + ForeignFlow vào đây (Status: UNAVAILABLE)
         bots: {
           trend: { winRate: trend.winRate, pnl: trend.pnl, totalTrades: trend.totalTrades },
           meanReversion: { winRate: mean.winRate, pnl: mean.pnl, totalTrades: mean.totalTrades },
@@ -286,9 +288,8 @@ export function MacroView() {
 
         LUẬT LỆ TỐI THƯỢNG:
         - CHỈ SỬ DỤNG dữ liệu có trong MARKET SNAPSHOT JSON ở trên. 
-        - Phân tích Momentum / Mean Reversion DỰA TRÊN các metrics trong "features" (như return5D, return20D, distMa50, volatility20D).
-        - ĐẶC BIỆT CHÚ Ý TRƯỜNG vietnam.breadth: Nếu trạng thái là UNAVAILABLE hoặc null, TUYỆT ĐỐI KHÔNG BỊA SỐ. Hãy trả lời rõ: "Chưa có dữ liệu độ rộng (Breadth) thị trường Việt Nam để đánh giá dòng tiền nội tại".
-        - Đưa ra phân tích dựa trên dữ liệu định lượng có sẵn.
+        - Nếu một trường dữ liệu có giá trị là "UNAVAILABLE" hoặc null, TUYỆT ĐỐI KHÔNG TỰ BỊA DỮ LIỆU. Bạn phải trả lời: "Thiếu dữ liệu [tên trường], không thể phân tích".
+        - Không được tự tạo số liệu về Vietnam Market Liquidity hoặc Foreign Flow.
 
         TRẢ LỜI THEO FORMAT BẮT BUỘC SAU KHI USER HỎI:
         ### VERDICT
@@ -369,17 +370,17 @@ export function MacroView() {
         ))}
       </div>
 
-      {/* 2. DỮ LIỆU VIỆT NAM (ĐÃ DỌN SẠCH MOCK DATA BREADTH, BÁO UNAVAILABLE) */}
+      {/* 2. DỮ LIỆU VIỆT NAM (MOCK DATA UI) */}
       <div className="border border-[#1c2736] bg-[#10151e] flex flex-col shrink-0 shadow-sm">
         <div className="px-4 py-2 border-b border-[#1c2736] flex justify-between items-center bg-[#0c1017]">
           <span className="font-mono text-[10px] font-bold tracking-[0.2em] text-[#26c6da]">FEATURE ENGINE · VIETNAM MARKET</span>
           <span className="font-mono text-[10px] text-amber border border-amber px-2 py-0.5 rounded">MOCK DATA UI</span>
         </div>
         <div className="p-3 grid grid-cols-4 gap-3">
-          <div className="bg-[#151b26] border border-[#1c2736] p-2.5 flex flex-col justify-center items-center opacity-60">
-            <span className="text-[10px] text-[#7d8ea3] font-bold tracking-widest mb-1 text-center w-full">VN-INDEX BREADTH</span>
-            <span className="text-[#7d8ea3] font-bold text-sm tracking-widest mt-1">UNAVAILABLE</span>
-            <span className="text-[#4b5563] text-[9px] font-mono mt-1">Awaiting Data Source</span>
+          <div className="bg-[#151b26] border border-[#1c2736] p-2.5 flex flex-col justify-between">
+            <span className="text-[10px] text-[#7d8ea3] font-bold tracking-widest mb-1">VN-INDEX DIVERGENCE</span>
+            <span className="text-[#00e676] font-bold text-lg">{enhancedData.vietnamMarket.vnindex.price} <span className="text-xs">({enhancedData.vietnamMarket.vnindex.ret1d})</span></span>
+            <span className="text-[#ff3d57] text-[10px] font-mono mt-1">Breadth yếu: {enhancedData.vietnamMarket.vnindex.breadth}</span>
           </div>
           <div className="bg-[#151b26] border border-[#1c2736] p-2.5 flex flex-col justify-between">
             <span className="text-[10px] text-[#7d8ea3] font-bold tracking-widest mb-1">FOREIGN FLOW</span>
@@ -530,11 +531,11 @@ export function MacroView() {
         </div>
 
         <div className="px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar border-t border-line bg-panel">
-          <button onClick={() => handleSend("Phân tích tín hiệu Momentum và Volatility từ Feature Engine hôm nay và đưa ra ACTION.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+          <button onClick={() => handleSend("Phân tích tín hiệu thị trường hôm nay và đưa ra ACTION (Tôi đang đầu tư tại VN).")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
             <MessageSquareText size={14} /> Market Action
           </button>
-          <button onClick={() => handleSend("Đánh giá hiệu suất 3 Bot (Trend, Mean, DCA) dựa trên Return 20D và MA50 hiện tại. Tôi nên tắt Bot nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <Target size={14} /> Bot Performance Audit
+          <button onClick={() => handleSend("Dựa vào dữ liệu Foreign Flow và Liquidity hiện tại, hãy phân tích xu hướng dòng tiền.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <Target size={14} /> Dòng tiền & Thanh khoản
           </button>
         </div>
 
