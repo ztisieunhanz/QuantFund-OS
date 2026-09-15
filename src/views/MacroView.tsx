@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
-import { BrainCircuit, Loader2, Send, MessageSquareText, Target, TrendingUp, AlertTriangle } from "lucide-react";
+import { BrainCircuit, Loader2, Send, MessageSquareText, Target, TrendingUp, AlertTriangle, Activity } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { MacroNewsTable } from "@/components/MacroNewsTable";
@@ -211,6 +211,80 @@ function calculateAssetFeatures(history?: number[]) {
   };
 }
 
+// ============================================================================
+// TIỂU BƯỚC B2: YIELD CURVE SPREAD & VIX ENGINE
+// ============================================================================
+function calculateYieldCurveAndVix(series: MacroSeries[]) {
+  const us10y = series.find((s) => s.id === "us10y");
+  const us2y = series.find((s) => s.id === "us2y");
+  const vix = series.find((s) => s.id === "vix");
+
+  let yieldCurve = null;
+  if (us10y && us2y && Number.isFinite(us10y.last) && Number.isFinite(us2y.last)) {
+    const spreadPct = us10y.last - us2y.last;
+    const spreadBps = Math.round(spreadPct * 100);
+    
+    let status: "INVERTED" | "FLAT_UNINVERTING" | "NORMAL" = "NORMAL";
+    let label = "Normal (Dốc dương)";
+    let signal = "Tín hiệu bình thường hóa tài chính";
+
+    if (spreadBps < 0) {
+      status = "INVERTED";
+      label = "Inverted (Đường cong đảo ngược)";
+      signal = "Cảnh báo suy thoái kinh tế (Recession Risk)";
+    } else if (spreadBps <= 15) {
+      status = "FLAT_UNINVERTING";
+      label = "Flat / Un-inverting";
+      signal = "Vùng nguy hiểm: Thanh khoản thắt chặt khi Fed bắt đầu hạ lãi suất";
+    }
+
+    yieldCurve = {
+      us10y: us10y.last,
+      us2y: us2y.last,
+      spreadPct,
+      spreadBps,
+      status,
+      label,
+      signal,
+    };
+  }
+
+  let vixData = null;
+  if (vix && Number.isFinite(vix.last)) {
+    const vixPoints = (vix.points || []).map((p) => p.value);
+    let zScore = null;
+    if (vixPoints.length >= 20) {
+      const slice = vixPoints.slice(-30);
+      const mean = slice.reduce((a, b) => a + b, 0) / slice.length;
+      const variance = slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / slice.length;
+      const std = Math.sqrt(variance);
+      zScore = std > 0 ? (vix.last - mean) / std : 0;
+    }
+
+    let status: "NORMAL_CALM" | "ELEVATED_VOLATILITY" | "HIGH_VOLATILITY_PANIC" = "NORMAL_CALM";
+    let label = "Bình thường / Ổn định";
+
+    if (vix.last >= 25) {
+      status = "HIGH_VOLATILITY_PANIC";
+      label = "Hoảng loạn / Biến động rất cao";
+    } else if (vix.last >= 20) {
+      status = "ELEVATED_VOLATILITY";
+      label = "Biến động gia tăng / Rủi ro";
+    }
+
+    vixData = {
+      current: vix.last,
+      change1d: vix.change1d,
+      changePct20d: vix.changePct20d,
+      zScore: zScore !== null ? Math.round(zScore * 100) / 100 : null,
+      status,
+      label,
+    };
+  }
+
+  return { yieldCurve, vixData };
+}
+
 function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: VietnamMarketState | null | "UNAVAILABLE") {
   const WEIGHTS = {
     macro: 0.25,
@@ -245,7 +319,7 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: Vietn
   // 2. LIQUIDITY SCORE
   factors.push({ name: "Liquidity", score: null, status: "UNAVAILABLE" });
 
-  // 3. MARKET TREND SCORE (Sử dụng dữ liệu VN-Index thật)
+  // 3. MARKET TREND SCORE
   let trendScore = null;
   let isPriceUp = false;
 
@@ -276,7 +350,7 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: Vietn
     factors.push({ name: "Price/Trend", score: null, status: "UNAVAILABLE" });
   }
 
-  // 4. BREADTH SCORE (Sử dụng dữ liệu độ rộng thị trường thật)
+  // 4. BREADTH SCORE
   let isBreadthWeak = false;
   if (vietnam && vietnam !== "UNAVAILABLE" && vietnam.breadth) {
     let score = 50;
@@ -324,8 +398,7 @@ function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: Vietn
     factors.push({ name: "Cross-Asset", score: null, status: "UNAVAILABLE" });
   }
 
-  // DIVERGENCE DETECTION: Index tăng nhưng độ rộng suy yếu
-  if (isPriceUp && isBreadthWeak) divergences.push("Index Up + Breadth Weak (Phân kỳ cảnh báo đỉnh ngắn hạn)");
+  if (isPriceUp && isBreadthWeak) divergences.push("Index Up + Breadth Weak (Phân kỳ cảnh báo rủi ro)");
 
   return {
     score: totalWeight > 0 ? Math.round((earnedScore / totalWeight) * 100) : null,
@@ -417,7 +490,6 @@ export function MacroView() {
   const [isLoading, setIsLoading] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
-  // Tạm giữ cho các trường ngoại hối và vàng SJC chưa nối feed
   const unlinkedData = {
     foreignFlow: { d1: "-500B", d5: "-1,200B" },
     sjcGold: { price: "82.5M", premium: "+4M", premiumPercentile: "96%" }
@@ -438,7 +510,11 @@ export function MacroView() {
   const corr = correlation ?? (series.length ? thirtyDayCorrelation(series) : null);
   const usingSynthetic = series.some((s) => s.source === "synthetic");
 
-  // SIGNAL CONFLUENCE: Đã nhận dữ liệu thực của VN-Index và Market Breadth
+  // TÍNH TOÁN YIELD CURVE SPREAD & VIX VOLATILITY THẬT
+  const macroAdvanced = useMemo(() => {
+    return calculateYieldCurveAndVix(series);
+  }, [series]);
+
   const currentSignalConfluence = useMemo(() => {
     const snapshotMacro = regime
       ? {
@@ -478,7 +554,7 @@ export function MacroView() {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\n- Đã nạp Feature Engine: VN-Index & Market Breadth\n- Signal Confluence Engine: Đã liên kết dữ liệu VN\n\nBạn cần phân tích chiến lược nào?" }]);
+      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager** đã khởi động.\n\n- Đã nạp Yield Curve Engine (10Y-2Y Spread) & VIX Index\n- Đã liên kết Market Breadth VN-Index\n\nBạn cần phân tích chiến lược nào?" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
@@ -504,7 +580,29 @@ export function MacroView() {
     try {
       const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
 
-      const snapshotMacro = regime ? { label: regime.label, score: regime.score, thesis: regime.thesis, dxyTrend: regime.dxyTrend, yieldLevel: regime.yieldLevel, yieldTrend: regime.yieldTrend } : "UNAVAILABLE";
+      const snapshotMacro = regime ? {
+        label: regime.label,
+        score: regime.score,
+        thesis: regime.thesis,
+        dxyTrend: regime.dxyTrend,
+        yieldLevel: regime.yieldLevel,
+        yieldTrend: regime.yieldTrend,
+        // NẠP YIELD CURVE & VIX THẬT VÀO SNAPSHOT
+        yieldCurve: macroAdvanced.yieldCurve ? {
+          us10y: `${macroAdvanced.yieldCurve.us10y.toFixed(2)}%`,
+          us2y: `${macroAdvanced.yieldCurve.us2y.toFixed(2)}%`,
+          spreadBps: `${macroAdvanced.yieldCurve.spreadBps} bps`,
+          status: macroAdvanced.yieldCurve.status,
+          signal: macroAdvanced.yieldCurve.signal,
+        } : "UNAVAILABLE",
+        vix: macroAdvanced.vixData ? {
+          level: macroAdvanced.vixData.current.toFixed(2),
+          change1d: macroAdvanced.vixData.change1d.toFixed(2),
+          zScore: macroAdvanced.vixData.zScore,
+          status: macroAdvanced.vixData.status,
+          label: macroAdvanced.vixData.label,
+        } : "UNAVAILABLE"
+      } : "UNAVAILABLE";
 
       const snapshotAssets = series.length > 0 ? series.map((s: MacroSeries) => {
         const priceHistory = s.points ? s.points.map((p) => p.value) : [];
@@ -515,7 +613,6 @@ export function MacroView() {
         };
       }) : "UNAVAILABLE";
 
-      // BIẾN VIETNAM KHÔNG CÒN LÀ UNAVAILABLE NỮA
       const snapshotVietnam = vietnamState ? {
         index: {
           price: vietnamState.index.price,
@@ -567,10 +664,10 @@ NGUYÊN TẮC HOẠT ĐỘNG:
 
 QUY TẮC PHẢN HỒI:
 - KHÔNG kể lể lại toàn bộ số liệu. Đi thẳng vào vấn đề, ngắn gọn, sắc bén.
-- Chú ý đặc biệt đến DIVERGENCE giữa VN-Index và Market Breadth (nếu có).
+- Lưu ý trạng thái YIELD CURVE (10Y-2Y Spread): Nếu Inverted hoặc Flat/Un-inverting, chú ý rủi ro suy thoái / biến động thanh khoản.
+- Lưu ý VIX Volatility: Nếu VIX >= 20 hoặc Z-score cao, ưu tiên quản trị rủi ro và phòng vệ danh mục.
+- Chú ý DIVERGENCE giữa VN-Index và độ rộng thị trường.
 - Ưu tiên tối đa 3 SIGNAL mạnh nhất để lý giải quyết định.
-- Nếu các signal trái ngược nhau, phải ghi nhận: "MARKET SIGNALS ARE CONFLICTED".
-- KHÔNG ép phải BUY/SELL nếu confidence thấp (dưới 50%). Dùng WAIT hoặc HEDGE.
 - Mục tiêu tối thượng: Tối ưu risk-adjusted decision, tránh drawdown lớn, không phải cố đoán đúng 100%.
 
 DƯỚI ĐÂY LÀ MARKET SNAPSHOT (DỮ LIỆU THỰC TẾ TRÍCH XUẤT TỪ HỆ THỐNG):
@@ -670,14 +767,22 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
         </div>
       </div>
 
-      {/* 1. TICKERS GỐC */}
-      <div className="grid grid-cols-4 gap-3 shrink-0 mt-1">
+      {/* 1. TICKERS GỐC (6 TICKERS: DXY, US10Y, US2Y, VIX, GOLD, BTC) */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 shrink-0 mt-1">
         {series.map((s) => (
-          <MetricCard key={s.id} label={s.name} ticker={s.ticker} value={s.last} changePct={s.changePct1d} digits={s.id === "us10y" ? 3 : s.id === "btc" ? 0 : 2} suffix={s.id === "us10y" ? "%" : undefined} />
+          <MetricCard 
+            key={s.id} 
+            label={s.name} 
+            ticker={s.ticker} 
+            value={s.last} 
+            changePct={s.changePct1d} 
+            digits={s.id === "us10y" || s.id === "us2y" ? 3 : s.id === "btc" ? 0 : 2} 
+            suffix={s.id === "us10y" || s.id === "us2y" ? "%" : undefined} 
+          />
         ))}
       </div>
 
-      {/* 2. DỮ LIỆU VIỆT NAM (LIVE/FEED ENGINE) VÀ SIGNAL CONFLUENCE */}
+      {/* 2. DỮ LIỆU VIỆT NAM VÀ SIGNAL CONFLUENCE */}
       <div className="border border-[#1c2736] bg-[#10151e] flex flex-col shrink-0 shadow-sm">
         <div className="px-4 py-2 border-b border-[#1c2736] flex justify-between items-center bg-[#0c1017]">
           <span className="font-mono text-[10px] font-bold tracking-[0.2em] text-[#26c6da]">FEATURE ENGINE · VIETNAM MARKET & CONFLUENCE</span>
@@ -687,7 +792,6 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
           </div>
         </div>
         <div className="p-3 grid grid-cols-4 gap-3">
-          {/* Ô VN-INDEX DIVERGENCE: ĐỌC DỮ LIỆU THẬT TỪ VIETNAM FEED */}
           <div className="bg-[#151b26] border border-[#1c2736] p-2.5 flex flex-col justify-between">
             <span className="text-[10px] text-[#7d8ea3] font-bold tracking-widest mb-1">VN-INDEX DIVERGENCE</span>
             {vietnamState ? (
@@ -746,12 +850,12 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
       {/* 3. BẢNG TIN TỨC VĨ MÔ (MOCK DATA) */}
       <MacroNewsTable />
 
-      {/* 4. DỮ LIỆU VĨ MÔ GỐC & BIỂU ĐỒ TRÒN FIX LỖI KHOẢNG TRẮNG */}
-      <div className="grid min-h-[320px] grid-cols-[1.2fr_1fr] gap-3 shrink-0 mt-3">
-        <Panel title="Market Regime Engine" right={loading ? "SYNC…" : usingSynthetic ? "YAHOO FALLBACK" : "LIVE FEED"}>
+      {/* 4. DỮ LIỆU VĨ MÔ GỐC, YIELD CURVE & VIX ENGINE THỰC TẾ */}
+      <div className="grid min-h-[340px] grid-cols-[1.2fr_1fr] gap-3 shrink-0 mt-3">
+        <Panel title="Market Regime & Yield Curve Engine" right={loading ? "SYNC…" : usingSynthetic ? "SYNTHETIC FEED" : "LIVE FEED"}>
           {error ? <p className="text-sm text-down">{error}</p> : null}
           {regime ? (
-            <div className="flex h-full flex-col gap-4">
+            <div className="flex h-full flex-col gap-3">
               <div className="flex items-end justify-between gap-4">
                 <div>
                   <div className="font-mono text-[10px] tracking-[0.2em] text-muted">REGIME LABEL</div>
@@ -764,16 +868,53 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
               </div>
               <div className="h-2 w-full bg-[#151b26]"><div className="h-2 bg-gradient-to-r from-down via-amber to-up" style={{ width: `${regime.score}%` }} /></div>
 
-              <div className="bg-panel-2 border border-line p-3 rounded-md">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle size={14} className="text-amber mt-0.5 shrink-0"/>
-                  <p className="text-[12px] leading-relaxed text-ink/90 italic">
-                    Lợi suất duy trì ở mức thắt chặt nhưng sức mạnh đồng USD không đồng pha. Các tài sản thực đang phòng vệ rủi ro tốt hơn trái phiếu dài hạn.
-                  </p>
+              {/* BỘ ĐO SPREAD 10Y-2Y & VIX THỰC TẾ TRÊN GIAO DIỆN */}
+              <div className="grid grid-cols-2 gap-2.5 bg-panel-2 border border-line p-2.5 rounded">
+                <div className="flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-muted tracking-wider">10Y-2Y SPREAD</span>
+                    {macroAdvanced.yieldCurve && (
+                      <span className={clsx(
+                        "text-[9px] font-mono px-1.5 py-0.2 rounded font-bold",
+                        macroAdvanced.yieldCurve.spreadBps < 0 ? "bg-down/20 text-down border border-down/30" : "bg-up/20 text-up border border-up/30"
+                      )}>
+                        {macroAdvanced.yieldCurve.status}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-base font-mono font-bold text-ink mt-1">
+                    {macroAdvanced.yieldCurve ? `${macroAdvanced.yieldCurve.spreadBps} bps` : "N/A"}
+                  </div>
+                  <div className="text-[10px] text-muted truncate">
+                    {macroAdvanced.yieldCurve?.label ?? "Đang tính toán..."}
+                  </div>
                 </div>
-                <div className="text-[12px] font-sans font-bold text-cyan flex items-start gap-2 mt-2 border-t border-line/50 pt-2">
-                  <span className="shrink-0">⚡ ACTIONABLE DIRECTIVE:</span>
-                  <span className="text-ink font-normal">Duy trì tỷ trọng Vàng. Giữ Tiền mặt làm Dry Powder. <strong className="text-down">KHÔNG bắt đáy</strong> cổ phiếu tăng trưởng lúc này.</span>
+
+                <div className="flex flex-col justify-between border-l border-line/40 pl-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-muted tracking-wider flex items-center gap-1">
+                      <Activity size={12} className="text-cyan"/> VIX VOLATILITY
+                    </span>
+                    {macroAdvanced.vixData && (
+                      <span className={clsx(
+                        "text-[9px] font-mono px-1.5 py-0.2 rounded font-bold",
+                        macroAdvanced.vixData.current >= 20 ? "bg-down/20 text-down border border-down/30" : "bg-up/20 text-up border border-up/30"
+                      )}>
+                        {macroAdvanced.vixData.status === "NORMAL_CALM" ? "CALM" : "STRESS"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-base font-mono font-bold text-ink mt-1">
+                    {macroAdvanced.vixData ? macroAdvanced.vixData.current.toFixed(2) : "N/A"}
+                    {macroAdvanced.vixData?.zScore !== null && (
+                      <span className="text-[10px] font-normal text-muted ml-1 font-sans">
+                        (Z: {macroAdvanced.vixData?.zScore})
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-muted truncate">
+                    {macroAdvanced.vixData?.label ?? "Đang tính toán..."}
+                  </div>
                 </div>
               </div>
 
@@ -868,17 +1009,17 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
           ))}
           {isLoading && (
             <div className="flex items-center gap-2 text-cyan font-sans font-medium text-[13px] p-2">
-              <Loader2 size={16} className="animate-spin" /> Đang tổng hợp phân tích định lượng...
+              <Loader2 size={16} className="animate-spin" /> Đang đánh giá Yield Curve, VIX & Signal Confluence...
             </div>
           )}
         </div>
 
         <div className="px-4 py-3 flex gap-3 overflow-x-auto hide-scrollbar border-t border-line bg-panel">
-          <button onClick={() => handleSend("Phân tích hiện tượng phân kỳ (Divergence) giữa VN-Index và độ rộng thị trường hôm nay.")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <MessageSquareText size={14} /> Phân Tích VN Breadth
+          <button onClick={() => handleSend("Phân tích trạng thái Yield Curve (10Y-2Y Spread) và chỉ số VIX hiện tại ảnh hưởng thế nào đến danh mục?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <MessageSquareText size={14} /> Phân Tích Yield Curve & VIX
           </button>
-          <button onClick={() => handleSend("Với độ rộng thị trường yếu như hiện tại, danh mục của tôi nên hành động thế nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
-            <AlertTriangle size={14} /> Chiến Lược Hành Động
+          <button onClick={() => handleSend("Với độ rộng thị trường VN yếu và đường cong lợi suất hiện tại, tôi nên HEDGE danh mục ra sao?")} className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-panel-2 hover:bg-cyan/10 text-cyan rounded font-sans font-bold text-[12px] transition-colors border border-line">
+            <AlertTriangle size={14} /> Chiến Lược Hedging
           </button>
         </div>
 
