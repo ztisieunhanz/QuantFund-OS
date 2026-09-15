@@ -1,39 +1,55 @@
-import type { BotMetrics, EquityPoint, OhlcvBar, Side, TradeFill } from "@/types/market";
+// ============================================================================
+// FILE: src/lib/paperEngine.ts
+// MODULE: QUANT ADAPTER & CONCURRENT STRATEGY RUNNER
+// ARCHITECTURE:
+//   OhlcvBar Feed -> Point-in-Time Dataset -> runBacktest()
+//   -> Multi-Alpha Continuous Sizing + Omega Meta-Fund Tracking -> BotMetrics
+// ============================================================================
+
+import type {
+  BotMetrics,
+  EquityPoint,
+  OhlcvBar,
+  QuantBotId,
+  Side,
+  TradeFill,
+} from "@/types/market";
+
 import { runBacktest, type BacktestDataset } from "@/lib/quant/backtestEngine";
 import type {
   BacktestConfig,
   DecisionState,
-  ExecutionRecord,
   PointInTimeBar,
   PointInTimeEvent,
   PointInTimeMacro,
   StrategyId,
 } from "@/lib/quant/types";
+
 import { useMacroStore } from "@/stores/macroStore";
 
 export const STARTING_EQUITY = 10_000;
-export const FEE_BPS = 0.001; // 10 bps
-export const SLIPPAGE_BPS = 0.0005; // 5 bps
+export const FEE_BPS = 0.001;       // 10 bps (0.10%)
+export const SLIPPAGE_BPS = 0.0005; // 5 bps (0.05%)
 
 interface SubBotTracker {
-  id: "trend" | "meanrev" | "dca" | "omega";
-  strategyId: StrategyId | "OMEGA_PORTFOLIO";
-  name: string;
+  readonly id: QuantBotId;
+  readonly strategyId: StrategyId | "OMEGA_PORTFOLIO";
+  readonly name: string;
   cash: number;
   qty: number;
-  entry: number | null;
-  realized: number;
+  entryPrice: number | null;
+  realizedPnl: number;
   wins: number;
   losses: number;
-  peak: number;
-  maxDd: number;
+  peakNav: number;
+  maxDrawdown: number;
   trades: TradeFill[];
   equityCurve: EquityPoint[];
-  lastSignal: string;
+  lastSignalDescription: string;
 }
 
 function createSubBot(
-  id: SubBotTracker["id"],
+  id: QuantBotId,
   strategyId: StrategyId | "OMEGA_PORTFOLIO",
   name: string
 ): SubBotTracker {
@@ -43,47 +59,49 @@ function createSubBot(
     name,
     cash: STARTING_EQUITY,
     qty: 0,
-    entry: null,
-    realized: 0,
+    entryPrice: null,
+    realizedPnl: 0,
     wins: 0,
     losses: 0,
-    peak: STARTING_EQUITY,
-    maxDd: 0,
+    peakNav: STARTING_EQUITY,
+    maxDrawdown: 0,
     trades: [],
     equityCurve: [],
-    lastSignal: "WAITING_DATA",
+    lastSignalDescription: "INITIALIZING",
   };
 }
 
-function toMetrics(bot: SubBotTracker, lastPrice: number): BotMetrics {
-  const equity = bot.cash + bot.qty * lastPrice;
-  const closed = bot.wins + bot.losses;
+function toBotMetrics(tracker: SubBotTracker, markPrice: number): BotMetrics {
+  const currentEquity = tracker.cash + tracker.qty * markPrice;
+  const closedTradesCount = tracker.wins + tracker.losses;
+  const pnl = currentEquity - STARTING_EQUITY;
+
   return {
-    botId: bot.id as any,
-    name: bot.name,
-    cash: Math.round(bot.cash * 100) / 100,
-    qty: Math.round(bot.qty * 100000) / 100000,
-    lastPrice,
-    equity: Math.round(equity * 100) / 100,
-    pnl: Math.round((equity - STARTING_EQUITY) * 100) / 100,
-    pnlPct: (equity - STARTING_EQUITY) / STARTING_EQUITY,
-    winRate: closed === 0 ? 0 : bot.wins / closed,
-    maxDrawdown: bot.maxDd,
-    totalTrades: bot.trades.length,
-    wins: bot.wins,
-    losses: bot.losses,
-    position: bot.qty > 0 ? "LONG" : "FLAT",
-    lastSignal: bot.lastSignal,
-    trades: bot.trades,
-    equityCurve: bot.equityCurve,
+    botId: tracker.id,
+    name: tracker.name,
+    cash: Math.round(tracker.cash * 100) / 100,
+    qty: Math.round(tracker.qty * 100000) / 100000,
+    lastPrice: markPrice,
+    equity: Math.round(currentEquity * 100) / 100,
+    pnl: Math.round(pnl * 100) / 100,
+    pnlPct: pnl / STARTING_EQUITY,
+    winRate: closedTradesCount === 0 ? 0 : tracker.wins / closedTradesCount,
+    maxDrawdown: tracker.maxDrawdown,
+    totalTrades: tracker.trades.length,
+    wins: tracker.wins,
+    losses: tracker.losses,
+    position: tracker.qty > 0.00001 ? "LONG" : "FLAT",
+    lastSignal: tracker.lastSignalDescription,
+    trades: tracker.trades,
+    equityCurve: tracker.equityCurve,
   };
 }
 
 export class PaperEngine {
-  trend = createSubBot("trend", "ADAPTIVE_TREND", "Bot 1 · Adaptive Trend");
-  event = createSubBot("dca", "EVENT_REACTION", "Bot 2 · Event Catalyst Driver");
-  mean = createSubBot("meanrev", "MEAN_REVERSION", "Bot 3 · Short Mean Reversion");
-  omega = createSubBot("omega", "OMEGA_PORTFOLIO", "Omega · Quant Meta-Fund");
+  trend: SubBotTracker = createSubBot("trend", "ADAPTIVE_TREND", "Bot 1 · Adaptive Trend");
+  event: SubBotTracker = createSubBot("dca", "EVENT_REACTION", "Bot 2 · Event Catalyst Driver");
+  mean: SubBotTracker = createSubBot("meanrev", "MEAN_REVERSION", "Bot 3 · Short Mean Reversion");
+  omega: SubBotTracker = createSubBot("omega", "OMEGA_PORTFOLIO", "Omega · Quant Meta-Fund");
   latestDecision: DecisionState | null = null;
 
   reset(): void {
@@ -105,17 +123,19 @@ export class PaperEngine {
     latestDecision: DecisionState | null;
   } {
     this.reset();
+    const lastClosePrice = bars.at(-1)?.close ?? 0;
+
     if (bars.length < 25) {
-      const p = bars.at(-1)?.close ?? 0;
       return {
-        trend: toMetrics(this.trend, p),
-        mean: toMetrics(this.mean, p),
-        dca: toMetrics(this.event, p),
-        omega: toMetrics(this.omega, p),
+        trend: toBotMetrics(this.trend, lastClosePrice),
+        mean: toBotMetrics(this.mean, lastClosePrice),
+        dca: toBotMetrics(this.event, lastClosePrice),
+        omega: toBotMetrics(this.omega, lastClosePrice),
         latestDecision: null,
       };
     }
 
+    // 1. CHUYỂN ĐỔI OHLCV SANG POINT-IN-TIME TIMELINE
     const pitBars: PointInTimeBar[] = bars.map((b) => ({
       timestamp: b.time < 1e11 ? b.time * 1000 : b.time,
       open: b.open,
@@ -125,14 +145,15 @@ export class PaperEngine {
       volume: b.volume,
     }));
 
+    // 2. NẠP DỮ LIỆU VĨ MÔ & SỰ KIỆN POINT-IN-TIME TỪ STORE
     const macroStore = useMacroStore.getState();
     const macroTimeline: PointInTimeMacro[] = [
       {
         asOfTimestamp: pitBars[0].timestamp,
         regime: (macroStore.regime?.label as any) ?? "Transitional Mixed",
         regimeScore: macroStore.regime?.score ?? 50,
-        yield10Y: macroStore.series.find((s) => s.id === "us10y")?.last ?? 4.58,
-        yield2Y: macroStore.series.find((s) => s.id === "us2y")?.last ?? 4.86,
+        yield10Y: macroStore.series.find((s) => s.id === "us10y")?.last ?? 4.588,
+        yield2Y: macroStore.series.find((s) => s.id === "us2y")?.last ?? 4.865,
         yieldSpreadBps: -28,
         vixLevel: macroStore.series.find((s) => s.id === "vix")?.last ?? 20.85,
         vixZScore: 1.4,
@@ -143,12 +164,13 @@ export class PaperEngine {
       },
     ];
 
+    const eventIdx = Math.max(0, pitBars.length - 15);
     const eventTimeline: PointInTimeEvent[] = [
       {
-        eventId: "fed-rate-cut-50bps",
+        eventId: "macro-catalyst-window",
         eventType: "FED_RATE_DECISION",
-        eventTimestamp: pitBars[Math.max(0, pitBars.length - 15)].timestamp,
-        publicationTimestamp: pitBars[Math.max(0, pitBars.length - 15)].timestamp,
+        eventTimestamp: pitBars[eventIdx].timestamp,
+        publicationTimestamp: pitBars[eventIdx].timestamp,
         actual: 4.75,
         consensus: 5.0,
         previous: 5.25,
@@ -165,13 +187,14 @@ export class PaperEngine {
       benchmarkAssetId: "BTC",
     };
 
-    const warmupPeriod = Math.min(25, Math.floor(bars.length * 0.25));
+    // Warmup period tỷ lệ theo độ dài dữ liệu để không gây lỗi thiếu nến
+    const warmupBarsCount = Math.min(30, Math.max(15, Math.floor(bars.length * 0.2)));
 
     const config: BacktestConfig = {
       runId: `run-${Date.now()}`,
       startDate: 0,
       endDate: 0,
-      warmupPeriod,
+      warmupPeriod: warmupBarsCount,
       initialCapital: STARTING_EQUITY,
       commissionRate: FEE_BPS,
       slippageModel: { type: "FIXED_BPS", baseBps: SLIPPAGE_BPS * 10000 },
@@ -180,6 +203,7 @@ export class PaperEngine {
       dataQuality: "LIVE",
     };
 
+    // 3. THỰC THI REPLAY BẰNG DETERMINISTIC BACKTEST ENGINE
     const backtestResult = runBacktest(config, dataset, {
       trend: {
         lookbackShortBars: Math.min(20, Math.max(5, Math.floor(bars.length * 0.1))),
@@ -215,97 +239,135 @@ export class PaperEngine {
 
     this.latestDecision = backtestResult.timeline.at(-1) ?? null;
 
+    // 4. TRÍCH XUẤT EQUITY VÀ SIMULATE REBALANCE RIÊNG TỪNG BOT
     for (const step of backtestResult.timeline) {
-      const barPrice = bars.find((b) => (b.time < 1e11 ? b.time * 1000 : b.time) === step.timestamp)?.close ?? step.nav;
-      const barSec = Math.floor(step.timestamp / 1000);
+      // Truy xuất O(1) qua barIndex thay vì gọi bars.find()
+      const bar = bars[step.barIndex] ?? bars[bars.length - 1];
+      const barPrice = bar.close;
+      const barTimestampSec = Math.floor(step.timestamp / 1000);
 
-      this.omega.equityCurve.push({ time: barSec, equity: step.nav });
+      // Cập nhật đường cong vốn của Omega Meta-Fund
+      this.omega.equityCurve.push({ time: barTimestampSec, equity: step.nav });
       this.omega.cash = step.cash;
       this.omega.qty = step.holdings["BTC"] ?? 0;
-      this.omega.peak = Math.max(this.omega.peak, step.nav);
-      this.omega.maxDd = Math.max(this.omega.maxDd, step.currentDrawdown);
-      this.omega.lastSignal = step.targetWeights.rationale.slice(0, 45);
+      this.omega.peakNav = Math.max(this.omega.peakNav, step.nav);
+      this.omega.maxDrawdown = Math.max(this.omega.maxDrawdown, step.currentDrawdown);
+      this.omega.lastSignalDescription = step.targetWeights.rationale.slice(0, 48);
 
-      const trendSignal = step.signals.find((s) => s.strategyId === "ADAPTIVE_TREND");
-      const eventSignal = step.signals.find((s) => s.strategyId === "EVENT_REACTION");
-      const mrSignal = step.signals.find((s) => s.strategyId === "MEAN_REVERSION");
+      // Trích xuất tín hiệu riêng biệt của 3 Alpha
+      const trendSig = step.signals.find((s) => s.strategyId === "ADAPTIVE_TREND");
+      const eventSig = step.signals.find((s) => s.strategyId === "EVENT_REACTION");
+      const mrSig = step.signals.find((s) => s.strategyId === "MEAN_REVERSION");
 
-      this.simulateSubStrategy(this.trend, trendSignal?.alphaScore ?? 0, barPrice, barSec, trendSignal?.rationale);
-      this.simulateSubStrategy(this.event, eventSignal?.alphaScore ?? 0, barPrice, barSec, eventSignal?.rationale);
-      this.simulateSubStrategy(this.mean, mrSignal?.alphaScore ?? 0, barPrice, barSec, mrSignal?.rationale);
+      this.rebalanceSubStrategy(this.trend, trendSig?.alphaScore ?? 0, trendSig?.confidence ?? 0, barPrice, barTimestampSec, trendSig?.rationale);
+      this.rebalanceSubStrategy(this.event, eventSig?.alphaScore ?? 0, eventSig?.confidence ?? 0, barPrice, barTimestampSec, eventSig?.rationale);
+      this.rebalanceSubStrategy(this.mean, mrSig?.alphaScore ?? 0, mrSig?.confidence ?? 0, barPrice, barTimestampSec, mrSig?.rationale);
     }
 
-    const lastClose = bars.at(-1)?.close ?? 0;
     return {
-      trend: toMetrics(this.trend, lastClose),
-      mean: toMetrics(this.mean, lastClose),
-      dca: toMetrics(this.event, lastClose),
-      omega: toMetrics(this.omega, lastClose),
+      trend: toBotMetrics(this.trend, lastClosePrice),
+      mean: toBotMetrics(this.mean, lastClosePrice),
+      dca: toBotMetrics(this.event, lastClosePrice),
+      omega: toBotMetrics(this.omega, lastClosePrice),
       latestDecision: this.latestDecision,
     };
   }
 
-  private simulateSubStrategy(
+  /**
+   * Định cỡ vị thế liên tục theo nguyên lý Vol-Targeted Weighting (không all-in nhị phân)
+   */
+  private rebalanceSubStrategy(
     bot: SubBotTracker,
     alphaScore: number,
+    confidence: number,
     price: number,
-    timeSec: number,
+    timestampSec: number,
     rationale?: string
   ): void {
-    const slippedBuy = price * (1 + SLIPPAGE_BPS);
-    const slippedSell = price * (1 - SLIPPAGE_BPS);
+    if (price <= 0) return;
 
-    if (alphaScore >= 0.25 && bot.qty === 0 && bot.cash > 50) {
-      const notional = bot.cash;
-      const fee = notional * FEE_BPS;
-      const qty = (notional - fee) / slippedBuy;
-      bot.qty = qty;
-      bot.cash = 0;
-      bot.entry = slippedBuy;
-      bot.trades.push({
-        id: `${bot.id}-${timeSec}-B`,
-        botId: bot.id as any,
-        time: timeSec,
-        side: "BUY",
-        price: slippedBuy,
-        qty,
-        fee,
-        slippage: slippedBuy - price,
-        notional,
-      });
-      bot.lastSignal = `LONG (Alpha: ${alphaScore.toFixed(2)})`;
-    } else if (alphaScore <= -0.25 && bot.qty > 0) {
-      const gross = bot.qty * slippedSell;
-      const fee = gross * FEE_BPS;
-      const net = gross - fee;
-      const pnl = net - bot.qty * (bot.entry ?? slippedSell);
+    // Vị thế mục tiêu tỷ lệ thuận với AlphaScore * Confidence (Long-only [0.0 .. 0.85])
+    const targetWeight = alphaScore > 0.05
+      ? Math.min(0.85, alphaScore * Math.max(0.3, confidence))
+      : 0.0;
+
+    const currentNav = bot.cash + bot.qty * price;
+    const targetNotional = targetWeight * currentNav;
+    const currentNotional = bot.qty * price;
+    const deltaNotional = targetNotional - currentNotional;
+
+    const minRebalanceThresholdUsd = 50;
+
+    if (deltaNotional > minRebalanceThresholdUsd && bot.cash > 20) {
+      // Lệnh MUA gia tăng vị thế
+      const allocUsd = Math.min(bot.cash, deltaNotional);
+      const slippedPrice = price * (1 + SLIPPAGE_BPS);
+      const fee = allocUsd * FEE_BPS;
+      const netSpend = allocUsd - fee;
+      const addedQty = netSpend / slippedPrice;
+
+      if (addedQty > 0) {
+        const totalCostPrev = bot.qty * (bot.entryPrice ?? slippedPrice);
+        bot.qty += addedQty;
+        bot.entryPrice = (totalCostPrev + addedQty * slippedPrice) / bot.qty;
+        bot.cash -= allocUsd;
+
+        bot.trades.push({
+          id: `${bot.id}-${timestampSec}-B`,
+          botId: bot.id,
+          time: timestampSec,
+          side: "BUY",
+          price: slippedPrice,
+          qty: addedQty,
+          fee,
+          slippage: slippedPrice - price,
+          notional: allocUsd,
+        });
+        bot.lastSignalDescription = `SCALE-IN (α: ${alphaScore.toFixed(2)}, Target: ${(targetWeight * 100).toFixed(0)}%)`;
+      }
+    } else if (deltaNotional < -minRebalanceThresholdUsd && bot.qty > 0) {
+      // Lệnh BÁN hạ vị thế
+      const reduceUsd = Math.abs(deltaNotional);
+      const unitsToSell = Math.min(bot.qty, reduceUsd / price);
+      const slippedPrice = price * (1 - SLIPPAGE_BPS);
+      const grossProceeds = unitsToSell * slippedPrice;
+      const fee = grossProceeds * FEE_BPS;
+      const netProceeds = grossProceeds - fee;
+
+      const pnl = netProceeds - unitsToSell * (bot.entryPrice ?? slippedPrice);
       if (pnl >= 0) bot.wins++;
       else bot.losses++;
-      bot.realized += pnl;
-      bot.cash += net;
-      bot.qty = 0;
-      bot.entry = null;
+      bot.realizedPnl += pnl;
+
+      bot.cash += netProceeds;
+      bot.qty = Math.max(0, bot.qty - unitsToSell);
+      if (bot.qty < 1e-6) {
+        bot.qty = 0;
+        bot.entryPrice = null;
+      }
+
       bot.trades.push({
-        id: `${bot.id}-${timeSec}-S`,
-        botId: bot.id as any,
-        time: timeSec,
+        id: `${bot.id}-${timestampSec}-S`,
+        botId: bot.id,
+        time: timestampSec,
         side: "SELL",
-        price: slippedSell,
-        qty: bot.qty,
+        price: slippedPrice,
+        qty: unitsToSell,
         fee,
-        slippage: price - slippedSell,
-        notional: gross,
+        slippage: price - slippedPrice,
+        notional: grossProceeds,
       });
-      bot.lastSignal = `EXIT (Alpha: ${alphaScore.toFixed(2)})`;
-    } else if (rationale) {
-      bot.lastSignal = rationale.slice(0, 40);
+      bot.lastSignalDescription = `SCALE-OUT (α: ${alphaScore.toFixed(2)}, Target: ${(targetWeight * 100).toFixed(0)}%)`;
+    } else if (rationale && bot.lastSignalDescription === "INITIALIZING") {
+      bot.lastSignalDescription = rationale.slice(0, 42);
     }
 
-    const eq = bot.cash + bot.qty * price;
-    bot.peak = Math.max(bot.peak, eq);
-    const dd = bot.peak > 0 ? (bot.peak - eq) / bot.peak : 0;
-    bot.maxDd = Math.max(bot.maxDd, dd);
-    bot.equityCurve.push({ time: timeSec, equity: Math.round(eq * 100) / 100 });
+    // Đóng băng điểm Equity của từng bot tại nến T
+    const closingEquity = bot.cash + bot.qty * price;
+    bot.peakNav = Math.max(bot.peakNav, closingEquity);
+    const dd = bot.peakNav > 0 ? (bot.peakNav - closingEquity) / bot.peakNav : 0;
+    bot.maxDrawdown = Math.max(bot.maxDrawdown, dd);
+    bot.equityCurve.push({ time: timestampSec, equity: Math.round(closingEquity * 100) / 100 });
   }
 
   ingestBar(
