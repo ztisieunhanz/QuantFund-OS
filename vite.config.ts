@@ -16,7 +16,7 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       configureServer(server) {
-        // PROXY DÀNH CHO YAHOO FINANCE: Giữ nguyên không thay đổi
+        // PROXY DÀNH CHO YAHOO FINANCE: Giữ nguyên
         server.middlewares.use('/api/yahoo', async (req, res) => {
           try {
             const targetUrl = `https://query1.finance.yahoo.com${req.url || ''}`;
@@ -39,7 +39,7 @@ export default defineConfig(({ mode }) => {
           }
         });
 
-        // HANDLER DÀNH CHO GEMINI AI (Đã tối ưu hóa xử lý Auth Header & Endpoint)
+        // HANDLER DÀNH CHO GEMINI AI: Chuyển tiếp nguyên vẹn payload và gắn Auth Header
         server.middlewares.use('/api/ai-advisor', async (req, res) => {
           if (req.method !== 'POST') {
             res.statusCode = 405;
@@ -52,7 +52,7 @@ export default defineConfig(({ mode }) => {
           req.on('data', chunk => { body += chunk; });
           req.on('end', async () => {
             try {
-              const { prompt } = JSON.parse(body);
+              const parsedPayload = JSON.parse(body);
               const apiKey = (env.VITE_GEMINI_API_KEY || '').trim();
 
               if (!apiKey) {
@@ -68,7 +68,7 @@ export default defineConfig(({ mode }) => {
 
               let targetAiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 
-              // Phân biệt chuẩn xác loại Key để tránh lỗi 400/403 Bad Request từ Google API
+              // Xử lý xác thực theo dạng token AQ.
               if (apiKey.startsWith('AQ.')) {
                 authHeaders['Authorization'] = `Bearer ${apiKey}`;
               } else if (apiKey.startsWith('AIzaSy')) {
@@ -77,13 +77,18 @@ export default defineConfig(({ mode }) => {
                 authHeaders['x-goog-api-key'] = apiKey;
               }
 
+              // Nếu client gửi cả bodyPayload thì giữ nguyên, ngược lại format theo { prompt }
+              const forwardBody = parsedPayload.contents
+                ? parsedPayload
+                : {
+                    contents: [{ parts: [{ text: parsedPayload.prompt || '' }] }],
+                    generationConfig: { temperature: 0.2 }
+                  };
+
               const response = await fetch(targetAiUrl, {
                 method: 'POST',
                 headers: authHeaders,
-                body: JSON.stringify({
-                  contents: [{ parts: [{ text: prompt }] }],
-                  generationConfig: { temperature: 0.2 }
-                })
+                body: JSON.stringify(forwardBody)
               });
 
               const responseText = await response.text();
