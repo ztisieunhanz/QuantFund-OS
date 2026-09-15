@@ -1,26 +1,10 @@
-// ============================================================================
-// FILE: src/lib/binance.ts
-// MODULE: REAL-TIME BTC KLINES FETCHER WITH MULTI-PROXY FALLBACK
-// ============================================================================
-
 import type { OhlcvBar } from "@/types/market";
 import { mulberry32 } from "@/lib/math";
 
 export type BinanceInterval = "15m" | "1h" | "4h" | "1d";
 
 type KlineTuple = [
-  number, // Open time
-  string, // Open
-  string, // High
-  string, // Low
-  string, // Close
-  string, // Volume
-  number, // Close time
-  string, // Quote asset volume
-  number, // Number of trades
-  string,
-  string,
-  string
+  number, string, string, string, string, string, number, string, number, string, string, string
 ];
 
 function parseKlines(raw: KlineTuple[]): OhlcvBar[] {
@@ -38,7 +22,7 @@ export async function fetchBtcKlines(
   interval: BinanceInterval = "1h",
   limit = 500,
 ): Promise<{ bars: OhlcvBar[]; source: "live" | "synthetic" }> {
-  // Ưu tiên gọi trực tiếp Binance Vision (CORS Open) để không bao giờ bị dính 502
+  // Ưu tiên gọi Binance Vision (CORS Open) để không tốn quota proxy của Bolt
   const endpoints = [
     `https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`,
     `/api/binance/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`,
@@ -50,31 +34,23 @@ export async function fetchBtcKlines(
       if (!res.ok) continue;
       const json = (await res.json()) as KlineTuple[];
       if (!Array.isArray(json) || json.length < 60) continue;
-      
-      const bars = parseKlines(json);
-      return { bars, source: "live" };
-    } catch {
-      // Thử endpoint tiếp theo
-    }
+      return { bars: parseKlines(json), source: "live" };
+    } catch {}
   }
 
-  return { bars: syntheticBtc(interval, limit, 77000), source: "synthetic" };
+  return { bars: syntheticBtc(interval, limit, 76800), source: "synthetic" };
 }
 
 function intervalMs(interval: BinanceInterval): number {
   switch (interval) {
-    case "15m":
-      return 15 * 60 * 1000;
-    case "1h":
-      return 60 * 60 * 1000;
-    case "4h":
-      return 4 * 60 * 60 * 1000;
-    case "1d":
-      return 24 * 60 * 60 * 1000;
+    case "15m": return 15 * 60 * 1000;
+    case "1h": return 60 * 60 * 1000;
+    case "4h": return 4 * 60 * 60 * 1000;
+    case "1d": return 24 * 60 * 60 * 1000;
   }
 }
 
-function syntheticBtc(interval: BinanceInterval, limit: number, basePrice = 77000): OhlcvBar[] {
+function syntheticBtc(interval: BinanceInterval, limit: number, basePrice = 76800): OhlcvBar[] {
   const rand = mulberry32(777 + interval.length * 13);
   const step = intervalMs(interval);
   let close = basePrice;
