@@ -1,11 +1,11 @@
 // ============================================================================
 // FILE: src/views/MacroView.tsx
-// MODULE: ROBUST QUANT MACRO VIEW & BULLETPROOF CHAT ENGINE
+// MODULE: CLEAN QUANT MACRO VIEW WITH INSTANT CHAT RESET BUTTON
 // ============================================================================
 
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
-import { Loader2, Send, MessageSquareText, TrendingUp, Activity, ShieldAlert } from "lucide-react";
+import { Loader2, Send, MessageSquareText, TrendingUp, Activity, ShieldAlert, RotateCcw } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { MacroNewsTable } from "@/components/MacroNewsTable";
@@ -20,6 +20,8 @@ import { loadVietnamMarket, type VietnamMarketState } from "@/lib/vietnamFeed";
 import type { AllocationWeights, AssetKey, MacroSeries } from "@/types/market";
 
 const CHAT_EXPIRY_MS = 60 * 60 * 1000;
+
+const DEFAULT_GREETING_TEXT = "Hệ thống **AI Quant Risk Manager (2026)** đã kết nối dữ liệu định lượng.\n\n- Nạp nến Binance Spot trực tiếp\n- Đồng bộ MA200 và hiệu suất các Trading Bot\n\nBạn cần phân tích chiến lược hay kiểm tra hệ thống nào?";
 
 const PIE_COLORS: Record<keyof AllocationWeights, string> = {
   realEstate: "#26c6da", gold: "#ffc107", usdCash: "#00e676", equities: "#82b1ff", crypto: "#b388ff",
@@ -596,25 +598,43 @@ export function MacroView() {
     return calculateSignalConfluence(snapshotMacro, snapshotAssets, vietnamState);
   }, [regime, series, vietnamState]);
 
+  // CƠ CHẾ NẠP LỊCH SỬ CHAT TỰ ĐỘNG
   useEffect(() => {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: "Hệ thống **AI Quant Risk Manager (2026)** đã kết nối dữ liệu định lượng.\n\n- Nạp nến Binance Spot trực tiếp\n- Đồng bộ MA200 và hiệu suất các Trading Bot\n\nBạn cần phân tích chiến lược hay kiểm tra hệ thống nào?" }]);
+      setMessages([{ sender: "ai", text: DEFAULT_GREETING_TEXT }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
       const savedHistory = localStorage.getItem("quant_chat_history");
-      if (savedHistory) setMessages(JSON.parse(savedHistory));
+      if (savedHistory) {
+        try {
+          const parsed = JSON.parse(savedHistory);
+          // Lọc bỏ bất kỳ tin nhắn lỗi nào còn sót trong bộ nhớ cũ
+          const clean = parsed.filter((m: any) => !m.text?.includes("⚠️") && !m.text?.includes("Lỗi kết nối API"));
+          setMessages(clean.length > 0 ? clean : [{ sender: "ai", text: DEFAULT_GREETING_TEXT }]);
+        } catch {
+          setMessages([{ sender: "ai", text: DEFAULT_GREETING_TEXT }]);
+        }
+      }
     }
   }, []);
 
+  // LƯU LỊCH SỬ CHAT
   useEffect(() => {
     if (messages.length > 1) {
       localStorage.setItem("quant_chat_history", JSON.stringify(messages));
       if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // HÀM RESET CHAT TỨC THÌ (THEO YÊU CẦU)
+  const handleResetChat = () => {
+    localStorage.removeItem("quant_chat_history");
+    localStorage.setItem("quant_chat_last_reset", Date.now().toString());
+    setMessages([{ sender: "ai", text: DEFAULT_GREETING_TEXT }]);
+  };
 
   const handleSend = async (text: string) => {
     if (!text.trim() || isLoading) return;
@@ -624,16 +644,14 @@ export function MacroView() {
     setIsLoading(true);
 
     try {
-      const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
       const lowerText = userText.toLowerCase();
 
-      // SỬA: Chỉ bật Report Mode khi gọi lệnh cụ thể hoặc click nút preset
+      // Chỉ bật chế độ JSON khi có tiền tố lệnh rõ ràng hoặc bấm nút chức năng
       const isReportMode =
         lowerText.startsWith("báo cáo:") ||
         lowerText.startsWith("report:") ||
         lowerText.startsWith("/report") ||
         lowerText === "báo cáo" ||
-        lowerText.includes("soi nhanh") ||
         lowerText.includes("full verdict") ||
         lowerText.includes("stress-test") ||
         lowerText.includes("devil's advocate");
@@ -699,13 +717,13 @@ export function MacroView() {
       const TEMPORAL_INSTRUCTION = `
 BỐI CẢNH THỜI GIAN & TÍNH XÁC THỰC CỦA DỮ LIỆU:
 - Thời điểm hiện tại là năm 2026.
-- Mức giá Bitcoin (~$76,800) và Vàng quốc tế (~$4,289/oz) là GIÁ THỊ TRƯỜNG THỰC TẾ TRỰC TIẾP (LIVE MARKET PRICE) từ Binance.
+- Mức giá Bitcoin (~$76,800) và Vàng quốc tế (~$4,289/oz) là GIÁ THỊ TRƯỜNG THỰC TẾ TRỰC TIẾP từ Binance.
 - Các bot trong Paper Lab:
-  1. Alpha 1 (Adaptive Trend): Giao dịch theo xu hướng + Chandelier ATR Trailing Stop.
+  1. Alpha 1 (Adaptive Trend): Momentum đa khung + Chandelier ATR Trailing Stop.
   2. Alpha 2 (Event Catalyst): Phản ứng theo tin tức kinh tế.
-  3. Alpha 3 (Mean Reversion): Bắt đảo chiều theo độ lệch chuẩn Z-Score.
-  4. Omega Portfolio Allocator: Quỹ mẹ điều phối tỷ trọng dựa trên Volatility Targeting (12%) và Hysteresis Circuit Breaker.
-  5. Control DCA: Mua thụ động 5% tiền mặt mỗi 7 nến để làm chuẩn đối chứng (Benchmark).
+  3. Alpha 3 (Mean Reversion): Đảo chiều theo độ lệch chuẩn Z-Score.
+  4. Omega Portfolio Allocator: Điều phối tỷ trọng theo Volatility Targeting (12%) và Hysteresis Circuit Breaker.
+  5. Control DCA: Mua thụ động 5% tiền mặt mỗi 7 nến để làm đối chứng (Benchmark).
       `;
 
       let systemPrompt = "";
@@ -769,7 +787,7 @@ ${JSON.stringify(marketSnapshot, null, 2)}
         };
       }
 
-      // SỬA: Lọc sạch lịch sử chat để tránh nhiễm lỗi và đảm bảo xen kẽ vai trò
+      // Lọc sạch lịch sử chat: Loại bỏ tin báo lỗi và gộp tin nhắn cùng role
       const cleanHistory: Array<{ role: "user" | "model"; parts: [{ text: string }] }> = [];
       for (const m of messages.slice(1)) {
         if (m.text.includes("⚠️") || m.text.includes("Lỗi kết nối API") || !m.text.trim()) continue;
@@ -794,36 +812,16 @@ ${JSON.stringify(marketSnapshot, null, 2)}
         bodyPayload.generationConfig = generationConfig;
       }
 
-      let response = await fetch("/api/ai-advisor", {
+      const response = await fetch("/api/ai-advisor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(bodyPayload)
       });
 
-      // SỬA: Nếu proxy nội bộ trả về bất kỳ lỗi nào, tự động fallback gọi trực tiếp Google
-      if (!response.ok && apiKey) {
-        const directHeaders: Record<string, string> = { "Content-Type": "application/json" };
-        let directUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
-
-        if (apiKey.startsWith("AQ.")) directHeaders["Authorization"] = `Bearer ${apiKey}`;
-        else if (apiKey.startsWith("AIzaSy")) directUrl = `${directUrl}?key=${apiKey}`;
-        else directHeaders["x-goog-api-key"] = apiKey;
-
-        const fallbackRes = await fetch(directUrl, {
-          method: "POST",
-          headers: directHeaders,
-          body: JSON.stringify(bodyPayload)
-        });
-
-        if (fallbackRes.ok) {
-          response = fallbackRes;
-        }
-      }
-
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const detail = data?.error?.message || data?.error || `Lỗi API (${response.status})`;
-        throw new Error(detail);
+        const errorDetail = data?.error?.message || data?.error || `Lỗi HTTP ${response.status}`;
+        throw new Error(errorDetail);
       }
 
       const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
@@ -1085,8 +1083,25 @@ ${JSON.stringify(marketSnapshot, null, 2)}
         </Panel>
       </div>
 
-      {/* 6. KHUNG CHATBOT AI STRUCTURED ENGINE */}
-      <Panel title="AI QUANT EXPERT · STRUCTURED DECISION ENGINE" right="JSON PIPELINE SYNCED" className="shrink-0 mt-3 mb-6 flex flex-col h-[650px]">
+      {/* 6. KHUNG CHATBOT AI (CÓ NÚT RESET CHAT TỨC THÌ) */}
+      <Panel
+        title="AI QUANT EXPERT · STRUCTURED DECISION ENGINE"
+        right={
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-muted font-mono hidden sm:inline">JSON PIPELINE SYNCED</span>
+            <button
+              type="button"
+              onClick={handleResetChat}
+              title="Xóa sạch lịch sử chat và làm mới phiên đàm thoại"
+              className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-mono font-bold text-muted hover:text-cyan border border-line hover:border-cyan/40 bg-panel-2 rounded transition-all active:scale-95"
+            >
+              <RotateCcw size={11} className="text-cyan" />
+              <span>RESET CHAT</span>
+            </button>
+          </div>
+        }
+        className="shrink-0 mt-3 mb-6 flex flex-col h-[650px]"
+      >
         <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar bg-[#07090d]">
           {messages.map((msg, idx) => (
             <div key={idx} className={clsx("flex flex-col", msg.sender === "user" ? "ml-auto items-end max-w-[85%]" : "mr-auto items-start w-full")}>
