@@ -16,13 +16,36 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       configureServer(server) {
-        // PROXY DÀNH CHO YAHOO FINANCE: Giữ nguyên
+        // PROXY DÀNH CHO BINANCE: Chống CORS và cấp nến thật cho hệ thống
+        server.middlewares.use('/api/binance', async (req, res) => {
+          try {
+            const targetUrl = `https://api.binance.com${req.url || ''}`;
+            const response = await fetch(targetUrl, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'Accept': 'application/json',
+              },
+            });
+
+            const data = await response.text();
+            res.statusCode = response.status;
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.end(data);
+          } catch (err: any) {
+            res.statusCode = 502;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'Failed to proxy Binance', details: err.message }));
+          }
+        });
+
+        // PROXY DÀNH CHO YAHOO FINANCE
         server.middlewares.use('/api/yahoo', async (req, res) => {
           try {
             const targetUrl = `https://query1.finance.yahoo.com${req.url || ''}`;
             const response = await fetch(targetUrl, {
               headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
                 'Accept': 'application/json',
               },
             });
@@ -39,7 +62,7 @@ export default defineConfig(({ mode }) => {
           }
         });
 
-        // HANDLER DÀNH CHO GEMINI AI (ĐÃ CẬP NHẬT MODEL gemini-flash-latest)
+        // HANDLER DÀNH CHO GEMINI AI (gemini-flash-latest)
         server.middlewares.use('/api/ai-advisor', async (req, res) => {
           if (req.method !== 'POST') {
             res.statusCode = 405;
@@ -58,7 +81,7 @@ export default defineConfig(({ mode }) => {
               if (!apiKey) {
                 res.statusCode = 400;
                 res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify({ error: { message: 'VITE_GEMINI_API_KEY is missing in environment variables.' } }));
+                res.end(JSON.stringify({ error: { message: 'VITE_GEMINI_API_KEY is missing' } }));
                 return;
               }
 
