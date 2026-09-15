@@ -1,15 +1,13 @@
 // ============================================================================
 // FILE: src/lib/paperEngine.ts
-// MODULE: QUANT ADAPTER & CONCURRENT STRATEGY RUNNER
-// ARCHITECTURE:
-//   OhlcvBar Feed -> Point-in-Time Dataset -> runBacktest()
-//   -> Multi-Alpha Continuous Sizing + Omega Meta-Fund Tracking -> BotMetrics
+// MODULE: QUANT ADAPTER & BENCHMARK CONTROLLER
 // ============================================================================
 
 import type {
   BotMetrics,
   EquityPoint,
   OhlcvBar,
+  PositionSide,
   QuantBotId,
   TradeFill,
 } from "@/types/market";
@@ -18,6 +16,7 @@ import { runBacktest, type BacktestDataset } from "@/lib/quant/backtestEngine";
 import type {
   BacktestConfig,
   DecisionState,
+  OrderSide,
   PointInTimeBar,
   PointInTimeEvent,
   PointInTimeMacro,
@@ -27,12 +26,12 @@ import type {
 import { useMacroStore } from "@/stores/macroStore";
 
 export const STARTING_EQUITY = 10_000;
-export const FEE_BPS = 0.001;       // 10 bps (0.10%)
-export const SLIPPAGE_BPS = 0.0005; // 5 bps (0.05%)
+export const FEE_BPS = 0.001;       // 10 bps
+export const SLIPPAGE_BPS = 0.0005; // 5 bps
 
 interface SubBotTracker {
   readonly id: QuantBotId;
-  readonly strategyId: StrategyId | "OMEGA_PORTFOLIO";
+  readonly strategyId: StrategyId | "OMEGA_PORTFOLIO" | "BENCHMARK_DCA";
   readonly name: string;
   cash: number;
   qty: number;
@@ -49,7 +48,7 @@ interface SubBotTracker {
 
 function createSubBot(
   id: QuantBotId,
-  strategyId: StrategyId | "OMEGA_PORTFOLIO",
+  strategyId: StrategyId | "OMEGA_PORTFOLIO" | "BENCHMARK_DCA",
   name: string
 ): SubBotTracker {
   return {
@@ -74,6 +73,7 @@ function toBotMetrics(tracker: SubBotTracker, markPrice: number): BotMetrics {
   const currentEquity = tracker.cash + tracker.qty * markPrice;
   const closedTradesCount = tracker.wins + tracker.losses;
   const pnl = currentEquity - STARTING_EQUITY;
+  const position: PositionSide = tracker.qty > 0.00001 ? "LONG" : "FLAT";
 
   return {
     botId: tracker.id,
@@ -89,7 +89,7 @@ function toBotMetrics(tracker: SubBotTracker, markPrice: number): BotMetrics {
     totalTrades: tracker.trades.length,
     wins: tracker.wins,
     losses: tracker.losses,
-    position: tracker.qty > 0.00001 ? "LONG" : "FLAT",
+    position,
     lastSignal: tracker.lastSignalDescription,
     trades: tracker.trades,
     equityCurve: tracker.equityCurve,
@@ -97,45 +97,49 @@ function toBotMetrics(tracker: SubBotTracker, markPrice: number): BotMetrics {
 }
 
 export class PaperEngine {
-  trend: SubBotTracker = createSubBot("trend", "ADAPTIVE_TREND", "Bot 1 · Adaptive Trend");
-  event: SubBotTracker = createSubBot("dca", "EVENT_REACTION", "Bot 2 · Event Catalyst Driver");
-  mean: SubBotTracker = createSubBot("meanrev", "MEAN_REVERSION", "Bot 3 · Short Mean Reversion");
+  trend: SubBotTracker = createSubBot("trend", "ADAPTIVE_TREND", "Alpha 1 · Adaptive Trend");
+  event: SubBotTracker = createSubBot("event", "EVENT_REACTION", "Alpha 2 · Event Catalyst");
+  mean: SubBotTracker = createSubBot("meanrev", "MEAN_REVERSION", "Alpha 3 · Mean Reversion");
   omega: SubBotTracker = createSubBot("omega", "OMEGA_PORTFOLIO", "Omega · Quant Meta-Fund");
+  benchmarkDca: SubBotTracker = createSubBot("benchmark_dca", "BENCHMARK_DCA", "Control · Passive DCA 10%");
+  
   latestDecision: DecisionState | null = null;
 
   reset(): void {
-    this.trend = createSubBot("trend", "ADAPTIVE_TREND", "Bot 1 · Adaptive Trend");
-    this.event = createSubBot("dca", "EVENT_REACTION", "Bot 2 · Event Catalyst Driver");
-    this.mean = createSubBot("meanrev", "MEAN_REVERSION", "Bot 3 · Short Mean Reversion");
+    this.trend = createSubBot("trend", "ADAPTIVE_TREND", "Alpha 1 · Adaptive Trend");
+    this.event = createSubBot("event", "EVENT_REACTION", "Alpha 2 · Event Catalyst");
+    this.mean = createSubBot("meanrev", "MEAN_REVERSION", "Alpha 3 · Mean Reversion");
     this.omega = createSubBot("omega", "OMEGA_PORTFOLIO", "Omega · Quant Meta-Fund");
+    this.benchmarkDca = createSubBot("benchmark_dca", "BENCHMARK_DCA", "Control · Passive DCA 10%");
     this.latestDecision = null;
   }
 
   replay(
-    bars: OhlcvBar[],
-    _isRiskOff: boolean = false
+    bars: OhlcvBar[]
   ): {
     trend: BotMetrics;
+    event: BotMetrics;
     mean: BotMetrics;
-    dca: BotMetrics;
     omega: BotMetrics;
+    benchmarkDca: BotMetrics;
     latestDecision: DecisionState | null;
   } {
     this.reset();
     const lastClosePrice = bars && bars.length > 0 ? (bars.at(-1)?.close ?? 0) : 0;
 
-    if (!bars || bars.length < 25) {
+    // Bắt buộc dữ liệu tối thiểu phải nuôi đủ 125 nến Warmup
+    if (!bars || bars.length < 130) {
       return {
         trend: toBotMetrics(this.trend, lastClosePrice),
+        event: toBotMetrics(this.event, lastClosePrice),
         mean: toBotMetrics(this.mean, lastClosePrice),
-        dca: toBotMetrics(this.event, lastClosePrice),
         omega: toBotMetrics(this.omega, lastClosePrice),
+        benchmarkDca: toBotMetrics(this.benchmarkDca, lastClosePrice),
         latestDecision: null,
       };
     }
 
     try {
-      // 1. CHUYỂN ĐỔI OHLCV SANG POINT-IN-TIME TIMELINE
       const pitBars: PointInTimeBar[] = bars.map((b) => ({
         timestamp: b.time < 1e11 ? b.time * 1000 : b.time,
         open: b.open,
@@ -145,7 +149,6 @@ export class PaperEngine {
         volume: b.volume,
       }));
 
-      // 2. PHÒNG THỦ: Nạp an toàn dữ liệu vĩ mô và sự kiện
       const macroStore = useMacroStore.getState();
       const seriesList = macroStore?.series ?? [];
 
@@ -166,15 +169,17 @@ export class PaperEngine {
         },
       ];
 
-      const eventIdx = Math.max(0, pitBars.length - 15);
+      // Đảm bảo event có consensus snapshot trước thời điểm diễn ra
+      const eventIdx = Math.max(0, pitBars.length - 20);
       const eventTimestamp = pitBars[eventIdx]?.timestamp ?? Date.now();
 
       const eventTimeline: PointInTimeEvent[] = [
         {
-          eventId: "macro-catalyst-window",
+          eventId: "fed-rate-decision",
           eventType: "FED_RATE_DECISION",
           eventTimestamp,
           publicationTimestamp: eventTimestamp,
+          consensusSnapshotTimestamp: eventTimestamp - 3600000, // Chốt 1h trước khi ra tin
           actual: 4.75,
           consensus: 5.0,
           previous: 5.25,
@@ -191,78 +196,48 @@ export class PaperEngine {
         benchmarkAssetId: "BTC",
       };
 
-      const warmupBarsCount = Math.min(30, Math.max(15, Math.floor(bars.length * 0.2)));
-
       const config: BacktestConfig = {
         runId: `run-${Date.now()}`,
         startDate: 0,
         endDate: 0,
-        warmupPeriod: warmupBarsCount,
+        warmupPeriod: 125, // Bắt buộc >= 125
         initialCapital: STARTING_EQUITY,
         commissionRate: FEE_BPS,
         slippageModel: { type: "FIXED_BPS", baseBps: SLIPPAGE_BPS * 10000 },
-        executionRule: "SAME_BAR_CLOSE",
+        executionRule: "NEXT_BAR_OPEN",
         deterministicSeed: 20260915,
         dataQuality: "LIVE",
       };
 
-      // 3. THỰC THI REPLAY BẰNG DETERMINISTIC BACKTEST ENGINE
-      const backtestResult = runBacktest(config, dataset, {
-        trend: {
-          lookbackShortBars: Math.min(20, Math.max(5, Math.floor(bars.length * 0.1))),
-          lookbackMediumBars: Math.min(60, Math.max(10, Math.floor(bars.length * 0.2))),
-          lookbackLongBars: Math.min(120, Math.max(20, Math.floor(bars.length * 0.35))),
-          atrPeriodBars: 14,
-          chandelierAtrMultiplier: 3.0,
-          trendPersistenceThreshold: 0.55,
-          baseHoldingPeriodBars: 20,
-          assumedInformationRatio: 0.4,
-        },
-        event: {
-          minSurpriseRelativeThreshold: 0.04,
-          halfLifeDecayBars: 2,
-          maxHoldingPeriodBars: 5,
-          priceConfirmationToleranceBps: 0.0015,
-          volSpikeFilterZScore: 2.5,
-          assumedInformationRatio: 0.45,
-          defaultVolAnnualized: 0.25,
-        },
-        meanReversion: {
-          zScoreLookbackBars: Math.min(20, Math.max(10, Math.floor(bars.length * 0.15))),
-          deviationThresholdZ: 1.8,
-          maxZScoreCap: 3.5,
-          maxAllowedTrendSlopeBps: 0.003,
-          volumeExhaustionRatio: 1.2,
-          baseHoldingPeriodBars: 3,
-          maxHoldingPeriodBars: 6,
-          assumedInformationRatio: 0.5,
-          defaultVolAnnualized: 0.22,
-        },
-      });
-
+      const backtestResult = runBacktest(config, dataset);
       this.latestDecision = backtestResult.timeline.at(-1) ?? null;
 
-      // 4. TRÍCH XUẤT VÀ TÁI CÂN BẰNG
+      // Đồng bộ dữ liệu từng bar sau warmup
       for (const step of backtestResult.timeline) {
         const bar = bars[step.barIndex] ?? bars[bars.length - 1];
         const barPrice = bar?.close ?? lastClosePrice;
         const barTimestampSec = Math.floor(step.timestamp / 1000);
 
+        // A. Cập nhật Omega Meta-Fund
         this.omega.equityCurve.push({ time: barTimestampSec, equity: step.nav });
         this.omega.cash = step.cash;
-        this.omega.qty = step.holdings["BTC"] ?? 0;
+        this.omega.qty = step.positions["BTC"]?.quantity ?? 0;
         this.omega.peakNav = Math.max(this.omega.peakNav, step.nav);
         this.omega.maxDrawdown = Math.max(this.omega.maxDrawdown, step.currentDrawdown);
         this.omega.lastSignalDescription = step.targetWeights.rationale.slice(0, 48);
 
+        // B. Cập nhật 3 Alphas độc lập
         const signalsList = step.signals ?? [];
         const trendSig = signalsList.find((s) => s.strategyId === "ADAPTIVE_TREND");
         const eventSig = signalsList.find((s) => s.strategyId === "EVENT_REACTION");
         const mrSig = signalsList.find((s) => s.strategyId === "MEAN_REVERSION");
 
-        this.rebalanceSubStrategy(this.trend, trendSig?.alphaScore ?? 0, trendSig?.confidence ?? 0, barPrice, barTimestampSec, trendSig?.rationale);
-        this.rebalanceSubStrategy(this.event, eventSig?.alphaScore ?? 0, eventSig?.confidence ?? 0, barPrice, barTimestampSec, eventSig?.rationale);
-        this.rebalanceSubStrategy(this.mean, mrSig?.alphaScore ?? 0, mrSig?.confidence ?? 0, barPrice, barTimestampSec, mrSig?.rationale);
+        this.simulateAlphaStrategy(this.trend, trendSig?.alphaScore ?? 0, trendSig?.confidence ?? 0, barPrice, barTimestampSec, trendSig?.rationale);
+        this.simulateAlphaStrategy(this.event, eventSig?.alphaScore ?? 0, eventSig?.confidence ?? 0, barPrice, barTimestampSec, eventSig?.rationale);
+        this.simulateAlphaStrategy(this.mean, mrSig?.alphaScore ?? 0, mrSig?.confidence ?? 0, barPrice, barTimestampSec, mrSig?.rationale);
+
+        // C. Cập nhật Benchmark Đối chứng DCA (Mua tích sản 5% cash mỗi 7 ngày)
+        this.simulateBenchmarkDca(barPrice, barTimestampSec, step.barIndex);
       }
     } catch (err) {
       console.error("[QuantEngine] Backtest replay error:", err);
@@ -270,14 +245,15 @@ export class PaperEngine {
 
     return {
       trend: toBotMetrics(this.trend, lastClosePrice),
+      event: toBotMetrics(this.event, lastClosePrice),
       mean: toBotMetrics(this.mean, lastClosePrice),
-      dca: toBotMetrics(this.event, lastClosePrice),
       omega: toBotMetrics(this.omega, lastClosePrice),
+      benchmarkDca: toBotMetrics(this.benchmarkDca, lastClosePrice),
       latestDecision: this.latestDecision,
     };
   }
 
-  private rebalanceSubStrategy(
+  private simulateAlphaStrategy(
     bot: SubBotTracker,
     alphaScore: number,
     confidence: number,
@@ -322,7 +298,7 @@ export class PaperEngine {
           slippage: slippedPrice - price,
           notional: allocUsd,
         });
-        bot.lastSignalDescription = `SCALE-IN (α: ${alphaScore.toFixed(2)}, Target: ${(targetWeight * 100).toFixed(0)}%)`;
+        bot.lastSignalDescription = `ALLOC (α: ${alphaScore.toFixed(2)}, Target: ${(targetWeight * 100).toFixed(0)}%)`;
       }
     } else if (deltaNotional < -minRebalanceThresholdUsd && bot.qty > 0) {
       const reduceUsd = Math.abs(deltaNotional);
@@ -355,7 +331,7 @@ export class PaperEngine {
         slippage: price - slippedPrice,
         notional: grossProceeds,
       });
-      bot.lastSignalDescription = `SCALE-OUT (α: ${alphaScore.toFixed(2)}, Target: ${(targetWeight * 100).toFixed(0)}%)`;
+      bot.lastSignalDescription = `DE-ALLOC (α: ${alphaScore.toFixed(2)}, Target: ${(targetWeight * 100).toFixed(0)}%)`;
     } else if (rationale && bot.lastSignalDescription === "INITIALIZING") {
       bot.lastSignalDescription = rationale.slice(0, 42);
     }
@@ -367,17 +343,37 @@ export class PaperEngine {
     bot.equityCurve.push({ time: timestampSec, equity: Math.round(closingEquity * 100) / 100 });
   }
 
-  ingestBar(
-    bar: OhlcvBar,
-    history: OhlcvBar[],
-    isRiskOff: boolean = false
-  ): {
-    trend: BotMetrics;
-    mean: BotMetrics;
-    dca: BotMetrics;
-    omega: BotMetrics;
-    latestDecision: DecisionState | null;
-  } {
-    return this.replay(history, isRiskOff);
+  private simulateBenchmarkDca(price: number, timestampSec: number, barIndex: number): void {
+    // Mua định kỳ mỗi 7 nến, giải ngân 5% vốn ban đầu ($500) cho đến khi hết tiền mặt
+    const dcaInterval = 7;
+    const allocAmount = STARTING_EQUITY * 0.05;
+
+    if (barIndex % dcaInterval === 0 && this.benchmarkDca.cash >= allocAmount && price > 0) {
+      const slippedPrice = price * (1 + SLIPPAGE_BPS);
+      const fee = allocAmount * FEE_BPS;
+      const netSpend = allocAmount - fee;
+      const units = netSpend / slippedPrice;
+
+      this.benchmarkDca.qty += units;
+      this.benchmarkDca.cash -= allocAmount;
+      this.benchmarkDca.trades.push({
+        id: `dca-${timestampSec}`,
+        botId: "benchmark_dca",
+        time: timestampSec,
+        side: "BUY",
+        price: slippedPrice,
+        qty: units,
+        fee,
+        slippage: slippedPrice - price,
+        notional: allocAmount,
+      });
+      this.benchmarkDca.lastSignalDescription = `PERIODIC_ACCUMULATE $${allocAmount}`;
+    }
+
+    const eq = this.benchmarkDca.cash + this.benchmarkDca.qty * price;
+    this.benchmarkDca.peakNav = Math.max(this.benchmarkDca.peakNav, eq);
+    const dd = this.benchmarkDca.peakNav > 0 ? (this.benchmarkDca.peakNav - eq) / this.benchmarkDca.peakNav : 0;
+    this.benchmarkDca.maxDrawdown = Math.max(this.benchmarkDca.maxDrawdown, dd);
+    this.benchmarkDca.equityCurve.push({ time: timestampSec, equity: Math.round(eq * 100) / 100 });
   }
 }
