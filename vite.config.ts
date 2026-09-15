@@ -32,7 +32,7 @@ export default defineConfig(({ mode }) => {
             } catch (err: any) {
               res.statusCode = 502;
               res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: 'Binance Proxy Failed', details: err.message }));
+              res.end(JSON.stringify({ error: { message: 'Binance Proxy Failed' } }));
             }
           });
 
@@ -50,7 +50,7 @@ export default defineConfig(({ mode }) => {
             } catch (err: any) {
               res.statusCode = 502;
               res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: 'Yahoo Proxy Failed', details: err.message }));
+              res.end(JSON.stringify({ error: { message: 'Yahoo Proxy Failed' } }));
             }
           });
 
@@ -58,7 +58,8 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use('/api/ai-advisor', async (req, res) => {
             if (req.method !== 'POST') {
               res.statusCode = 405;
-              res.end(JSON.stringify({ error: 'Method not allowed' }));
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: { message: 'Method not allowed' } }));
               return;
             }
 
@@ -68,14 +69,18 @@ export default defineConfig(({ mode }) => {
               try {
                 const parsedPayload = JSON.parse(body);
                 const apiKey = (env.VITE_GEMINI_API_KEY || '').trim();
-                if (!apiKey) throw new Error('Missing VITE_GEMINI_API_KEY');
+                if (!apiKey) throw new Error('Missing VITE_GEMINI_API_KEY in environment');
 
                 const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
                 let targetAiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent';
 
-                if (apiKey.startsWith('AQ.')) authHeaders['Authorization'] = `Bearer ${apiKey}`;
-                else if (apiKey.startsWith('AIzaSy')) targetAiUrl = `${targetAiUrl}?key=${apiKey}`;
-                else authHeaders['x-goog-api-key'] = apiKey;
+                if (apiKey.startsWith('AQ.')) {
+                  authHeaders['Authorization'] = `Bearer ${apiKey}`;
+                } else if (apiKey.startsWith('AIzaSy')) {
+                  targetAiUrl = `${targetAiUrl}?key=${apiKey}`;
+                } else {
+                  authHeaders['x-goog-api-key'] = apiKey;
+                }
 
                 const forwardBody = parsedPayload.contents ? parsedPayload : {
                   contents: [{ parts: [{ text: parsedPayload.prompt || '' }] }],
@@ -88,18 +93,19 @@ export default defineConfig(({ mode }) => {
                   body: JSON.stringify(forwardBody)
                 });
 
+                const responseText = await response.text();
                 res.statusCode = response.status;
                 res.setHeader('Content-Type', 'application/json');
-                res.end(await response.text());
+                res.end(responseText);
               } catch (err: any) {
                 res.statusCode = 500;
                 res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify({ error: err.message }));
+                res.end(JSON.stringify({ error: { message: err.message || 'Internal Proxy Error' } }));
               }
             });
           });
 
-          // 4. NEW PIPELINE: EDGE-LLM EVENT GATEWAY (PARSED TO QUANT JSON)
+          // 4. NEW PIPELINE: EDGE-LLM EVENT GATEWAY
           server.middlewares.use('/api/quant-events', async (_req, res) => {
             try {
               const apiKey = (env.VITE_GEMINI_API_KEY || '').trim();
@@ -122,7 +128,7 @@ export default defineConfig(({ mode }) => {
                     });
                   }
                 } catch {
-                  // Tiếp tục feed kế tiếp nếu có mạng chậm
+                  // Tiếp tục feed kế tiếp
                 }
               }
 
@@ -171,7 +177,7 @@ export default defineConfig(({ mode }) => {
               res.statusCode = 200;
               res.end(jsonStr || "[]");
             } catch (err: any) {
-              res.statusCode = 200; // Trả về fallback mảng an toàn để UI không sập JSON
+              res.statusCode = 200;
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify([
                 {
