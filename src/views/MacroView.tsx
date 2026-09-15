@@ -10,7 +10,7 @@ import { formatNumber, formatPct, formatUsd } from "@/lib/math";
 import { useMacroStore } from "@/stores/macroStore";
 import { usePortfolioStore } from "@/stores/portfolioStore";
 import { useTradingStore } from "@/stores/tradingStore";
-import type { AllocationWeights, AssetKey } from "@/types/market";
+import type { AllocationWeights, AssetKey, MacroSeries } from "@/types/market";
 
 const CHAT_EXPIRY_MS = 60 * 60 * 1000;
 
@@ -150,140 +150,313 @@ const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: s
 };
 
 // ============================================================================
-// DATA ENGINE HELPERS
+// DATA ENGINE HELPERS: CHUẨN HÓA TIỂU BƯỚC 4
 // ============================================================================
 function calculateAssetFeatures(history?: number[]) {
-  const defaultFeatures = { return1D: null as number | null, return5D: null as number | null, return20D: null as number | null, ma20: null as number | null, ma50: null as number | null, ma200: null as number | null, distMa20: null as number | null, distMa50: null as number | null, distMa200: null as number | null, volatility20D: null as number | null };
+  const defaultFeatures = {
+    return1D: null as number | null,
+    return5D: null as number | null,
+    return20D: null as number | null,
+    ma20: null as number | null,
+    ma50: null as number | null,
+    ma200: null as number | null,
+    distMa20: null as number | null,
+    distMa50: null as number | null,
+    distMa200: null as number | null,
+    volatility20D: null as number | null,
+  };
+
   if (!history || !Array.isArray(history) || history.length === 0) return defaultFeatures;
-  const len = history.length, lastPrice = history[len - 1];
-  const getReturn = (days: number) => (len <= days || !history[len - 1 - days] ? null : (lastPrice - history[len - 1 - days]!) / history[len - 1 - days]!);
-  const getMA = (days: number) => (len < days ? null : history.slice(len - days).reduce((a, b) => a + b, 0) / days);
-  const getDist = (price: number, ma: number | null) => (ma ? (price - ma) / ma : null);
+  const len = history.length;
+  const lastPrice = history[len - 1];
+
+  if (!Number.isFinite(lastPrice) || lastPrice === 0) return defaultFeatures;
+
+  const getReturn = (days: number) => {
+    if (len <= days) return null;
+    const past = history[len - 1 - days];
+    return Number.isFinite(past) && past !== 0 ? (lastPrice - past) / past : null;
+  };
+
+  const getMA = (days: number) => {
+    if (len < days) return null;
+    const slice = history.slice(len - days);
+    const sum = slice.reduce((a, b) => a + b, 0);
+    return sum / days;
+  };
+
+  const getDist = (price: number, ma: number | null) => (ma !== null && ma !== 0 ? (price - ma) / ma : null);
+
   const getVol = (days: number) => {
     if (len < days + 1) return null;
-    const returns = [];
+    const returns: number[] = [];
     for (let i = len - days; i < len; i++) {
       const prev = history[i - 1];
-      returns.push(prev ? (history[i] - prev) / prev : 0);
+      if (Number.isFinite(prev) && prev !== 0) {
+        returns.push((history[i] - prev) / prev);
+      }
     }
+    if (returns.length < days) return null;
     const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
     const varTotal = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
     return Math.sqrt(varTotal) * Math.sqrt(252);
   };
-  const ma20 = getMA(20), ma50 = getMA(50), ma200 = getMA(200);
-  return { return1D: getReturn(1), return5D: getReturn(5), return20D: getReturn(20), ma20, ma50, ma200, distMa20: getDist(lastPrice, ma20), distMa50: getDist(lastPrice, ma50), distMa200: getDist(lastPrice, ma200), volatility20D: getVol(20) };
+
+  const ma20 = getMA(20);
+  const ma50 = getMA(50);
+  const ma200 = getMA(200);
+
+  return {
+    return1D: getReturn(1),
+    return5D: getReturn(5),
+    return20D: getReturn(20),
+    ma20,
+    ma50,
+    ma200,
+    distMa20: getDist(lastPrice, ma20),
+    distMa50: getDist(lastPrice, ma50),
+    distMa200: getDist(lastPrice, ma200),
+    volatility20D: getVol(20),
+  };
 }
 
+// ============================================================================
+// SIGNAL CONFLUENCE ENGINE
+// ============================================================================
 function calculateSignalConfluence(macroRegime: any, assets: any, vietnam: any) {
-  const WEIGHTS = { macro: 0.25, liquidity: 0.15, trend: 0.20, breadth: 0.15, flow: 0.15, crossAsset: 0.10 };
-  let totalWeight = 0, earnedScore = 0, dataCoverage = 0;
-  const factors = [], divergences = [];
+  const WEIGHTS = {
+    macro: 0.25,
+    liquidity: 0.15,
+    trend: 0.20,
+    breadth: 0.15,
+    flow: 0.15,
+    crossAsset: 0.10,
+  };
+
+  let totalWeight = 0;
+  let earnedScore = 0;
+  let dataCoverage = 0;
+  const factors = [];
+  const divergences = [];
   const totalDataFields = 6;
 
-  if (macroRegime && typeof macroRegime.score === 'number') {
-    totalWeight += WEIGHTS.macro; earnedScore += (macroRegime.score / 100) * WEIGHTS.macro;
-    factors.push({ name: "Macro", score: macroRegime.score, status: macroRegime.score >= 55 ? "BULLISH" : macroRegime.score <= 45 ? "BEARISH" : "NEUTRAL" });
+  if (macroRegime && typeof macroRegime.score === "number") {
+    totalWeight += WEIGHTS.macro;
+    earnedScore += (macroRegime.score / 100) * WEIGHTS.macro;
+    factors.push({
+      name: "Macro",
+      score: macroRegime.score,
+      status:
+        macroRegime.score >= 55
+          ? "BULLISH"
+          : macroRegime.score <= 45
+            ? "BEARISH"
+            : "NEUTRAL",
+    });
     dataCoverage++;
-  } else factors.push({ name: "Macro", score: null, status: "UNAVAILABLE" });
+  } else {
+    factors.push({ name: "Macro", score: null, status: "UNAVAILABLE" });
+  }
 
   if (vietnam && vietnam.liquidity && vietnam.liquidity !== "UNAVAILABLE") {
     let score = 50;
-    if (vietnam.liquidity.volumeTrend === "RISING") score += 20; else if (vietnam.liquidity.volumeTrend === "FALLING") score -= 20;
-    if (vietnam.liquidity.turnoverVs20D > 1) score += 15; else if (vietnam.liquidity.turnoverVs20D < 1) score -= 15;
-    totalWeight += WEIGHTS.liquidity; earnedScore += (score / 100) * WEIGHTS.liquidity;
-    factors.push({ name: "Liquidity", score, status: score > 50 ? "BULLISH" : "BEARISH" });
+    if (vietnam.liquidity.volumeTrend === "RISING") score += 20;
+    else if (vietnam.liquidity.volumeTrend === "FALLING") score -= 20;
+    if (vietnam.liquidity.turnoverVs20D > 1) score += 15;
+    else if (vietnam.liquidity.turnoverVs20D < 1) score -= 15;
+    totalWeight += WEIGHTS.liquidity;
+    earnedScore += (score / 100) * WEIGHTS.liquidity;
+    factors.push({
+      name: "Liquidity",
+      score,
+      status: score > 50 ? "BULLISH" : "BEARISH",
+    });
     dataCoverage++;
-  } else factors.push({ name: "Liquidity", score: null, status: "UNAVAILABLE" });
+  } else {
+    factors.push({ name: "Liquidity", score: null, status: "UNAVAILABLE" });
+  }
 
-  let trendScore = null, isPriceUp = false;
+  let trendScore = null;
+  let isPriceUp = false;
+
   if (vietnam && vietnam.index && vietnam.index !== "UNAVAILABLE") {
     trendScore = 50;
-    if (vietnam.index.ret20d > 0) { trendScore += 25; isPriceUp = true; } else trendScore -= 25;
-    if (vietnam.index.distMa50 > 0) trendScore += 25; else trendScore -= 25;
-  } else {
-    const btc = assets !== "UNAVAILABLE" ? assets.find((a: any) => a.id === "btc") : null;
-    if (btc && btc.features && btc.features.return20D !== null) {
-      trendScore = 50;
-      if (btc.features.return20D > 0) { trendScore += 25; isPriceUp = true; } else trendScore -= 25;
-      if (btc.features.distMa50 !== null && btc.features.distMa50 > 0) trendScore += 25; else trendScore -= 25;
+    if (vietnam.index.ret20d > 0) {
+      trendScore += 25;
+      isPriceUp = true;
+    } else {
+      trendScore -= 25;
     }
+    if (vietnam.index.distMa50 > 0) trendScore += 25;
+    else trendScore -= 25;
   }
 
   if (trendScore !== null) {
-    totalWeight += WEIGHTS.trend; earnedScore += (trendScore / 100) * WEIGHTS.trend;
-    factors.push({ name: "Price/Trend", score: Math.max(0, Math.min(100, trendScore)), status: trendScore >= 55 ? "BULLISH" : trendScore <= 45 ? "BEARISH" : "NEUTRAL" });
+    totalWeight += WEIGHTS.trend;
+    earnedScore += (trendScore / 100) * WEIGHTS.trend;
+    factors.push({
+      name: "Price/Trend",
+      score: Math.max(0, Math.min(100, trendScore)),
+      status:
+        trendScore >= 55
+          ? "BULLISH"
+          : trendScore <= 45
+            ? "BEARISH"
+            : "NEUTRAL",
+    });
     dataCoverage++;
-  } else factors.push({ name: "Price/Trend", score: null, status: "UNAVAILABLE" });
+  } else {
+    factors.push({ name: "Price/Trend", score: null, status: "UNAVAILABLE" });
+  }
 
   let isBreadthWeak = false;
   if (vietnam && vietnam.breadth && vietnam.breadth !== "UNAVAILABLE") {
     let score = 50;
-    if (vietnam.breadth.pctAboveMA20 > 50) score += 25; else { score -= 25; isBreadthWeak = true; }
-    if (vietnam.breadth.adRatio > 1) score += 25; else score -= 25;
-    totalWeight += WEIGHTS.breadth; earnedScore += (score / 100) * WEIGHTS.breadth;
-    factors.push({ name: "Breadth", score: Math.max(0, Math.min(100, score)), status: score >= 55 ? "BULLISH" : score <= 45 ? "BEARISH" : "NEUTRAL" });
+    if (vietnam.breadth.pctAboveMA20 > 50) score += 25;
+    else {
+      score -= 25;
+      isBreadthWeak = true;
+    }
+    if (vietnam.breadth.adRatio > 1) score += 25;
+    else score -= 25;
+    totalWeight += WEIGHTS.breadth;
+    earnedScore += (score / 100) * WEIGHTS.breadth;
+    factors.push({
+      name: "Breadth",
+      score: Math.max(0, Math.min(100, score)),
+      status: score >= 55 ? "BULLISH" : score <= 45 ? "BEARISH" : "NEUTRAL",
+    });
     dataCoverage++;
-  } else factors.push({ name: "Breadth", score: null, status: "UNAVAILABLE" });
+  } else {
+    factors.push({ name: "Breadth", score: null, status: "UNAVAILABLE" });
+  }
 
   let isForeignOutflow = false;
   if (vietnam && vietnam.foreignFlow && vietnam.foreignFlow !== "UNAVAILABLE") {
     let score = 50;
-    if (vietnam.foreignFlow.cumulative5D > 0) score += 25; else { score -= 25; isForeignOutflow = true; }
-    if (vietnam.foreignFlow.net1D > 0) score += 25; else score -= 25;
-    totalWeight += WEIGHTS.flow; earnedScore += (score / 100) * WEIGHTS.flow;
-    factors.push({ name: "Foreign Flow", score: Math.max(0, Math.min(100, score)), status: score >= 55 ? "BULLISH" : score <= 45 ? "BEARISH" : "NEUTRAL" });
+    if (vietnam.foreignFlow.cumulative5D > 0) score += 25;
+    else {
+      score -= 25;
+      isForeignOutflow = true;
+    }
+    if (vietnam.foreignFlow.net1D > 0) score += 25;
+    else score -= 25;
+    totalWeight += WEIGHTS.flow;
+    earnedScore += (score / 100) * WEIGHTS.flow;
+    factors.push({
+      name: "Foreign Flow",
+      score: Math.max(0, Math.min(100, score)),
+      status: score >= 55 ? "BULLISH" : score <= 45 ? "BEARISH" : "NEUTRAL",
+    });
     dataCoverage++;
-  } else factors.push({ name: "Foreign Flow", score: null, status: "UNAVAILABLE" });
+  } else {
+    factors.push({ name: "Foreign Flow", score: null, status: "UNAVAILABLE" });
+  }
 
   const dxy = assets !== "UNAVAILABLE" ? assets.find((a: any) => a.id === "dxy") : null;
   const us10y = assets !== "UNAVAILABLE" ? assets.find((a: any) => a.id === "us10y") : null;
   if (dxy && dxy.features && us10y && us10y.features) {
     let score = 50;
-    if (dxy.features.return20D !== null && dxy.features.return20D < 0) score += 25; else score -= 25;
-    if (us10y.features.return20D !== null && us10y.features.return20D < 0) score += 25; else score -= 25;
-    totalWeight += WEIGHTS.crossAsset; earnedScore += (score / 100) * WEIGHTS.crossAsset;
-    factors.push({ name: "Cross-Asset", score: Math.max(0, Math.min(100, score)), status: score >= 55 ? "BULLISH" : score <= 45 ? "BEARISH" : "NEUTRAL" });
+    if (dxy.features.return20D !== null && dxy.features.return20D < 0) score += 25;
+    else score -= 25;
+    if (us10y.features.return20D !== null && us10y.features.return20D < 0) score += 25;
+    else score -= 25;
+    totalWeight += WEIGHTS.crossAsset;
+    earnedScore += (score / 100) * WEIGHTS.crossAsset;
+    factors.push({
+      name: "Cross-Asset",
+      score: Math.max(0, Math.min(100, score)),
+      status: score >= 55 ? "BULLISH" : score <= 45 ? "BEARISH" : "NEUTRAL",
+    });
     dataCoverage++;
-  } else factors.push({ name: "Cross-Asset", score: null, status: "UNAVAILABLE" });
+  } else {
+    factors.push({ name: "Cross-Asset", score: null, status: "UNAVAILABLE" });
+  }
 
   if (isPriceUp && isBreadthWeak) divergences.push("Index Up + Breadth Weak");
-  if (isPriceUp && vietnam?.liquidity?.volumeTrend === "FALLING") divergences.push("Price Up + Volume Weak");
+  if (isPriceUp && vietnam?.liquidity?.volumeTrend === "FALLING")
+    divergences.push("Price Up + Volume Weak");
   if (isPriceUp && isForeignOutflow) divergences.push("Index Up + Foreign Outflow");
 
   return {
     score: totalWeight > 0 ? Math.round((earnedScore / totalWeight) * 100) : null,
     confidence: Math.round((dataCoverage / totalDataFields) * 100),
-    factors, divergences, dataCoverage: `${dataCoverage}/${totalDataFields}`
+    factors,
+    divergences,
+    dataCoverage: `${dataCoverage}/${totalDataFields}`,
   };
 }
 
+// ============================================================================
+// PORTFOLIO RISK ENGINE
+// ============================================================================
 function calculatePortfolioRisk(portfolio: any, regime: any, corr: any) {
   const nav = portfolio.getTotalNav();
   const cashPct = nav > 0 ? (portfolio.cashUsd / nav) * 100 : 0;
-  let largestPosition = { name: "Cash", pct: cashPct };
-  const exposures = { equity: 0, gold: 0, realEstate: 0, crypto: 0, cash: cashPct };
 
-  const allocation = portfolio.assets.map((a: any) => {
-    if (a.allocationPercent > largestPosition.pct) largestPosition = { name: a.name, pct: a.allocationPercent };
+  const isCashAsset = (name: string) => {
+    const n = name.toLowerCase();
+    return n.includes("cash") || n.includes("tiền mặt") || n.includes("tiền gửi");
+  };
+
+  const hasCashInAssets = Array.isArray(portfolio.assets) && portfolio.assets.some((a: any) => isCashAsset(a.name));
+
+  const exposures = {
+    equity: 0,
+    gold: 0,
+    realEstate: 0,
+    crypto: 0,
+    cash: hasCashInAssets ? 0 : cashPct,
+  };
+
+  let largestPosition = hasCashInAssets
+    ? { name: portfolio.assets[0]?.name || "N/A", pct: portfolio.assets[0]?.allocationPercent || 0 }
+    : { name: "USD Cash", pct: cashPct };
+
+  const allocation = (portfolio.assets || []).map((a: any) => {
+    if (a.allocationPercent > largestPosition.pct) {
+      largestPosition = { name: a.name, pct: a.allocationPercent };
+    }
+
     const nameLower = a.name.toLowerCase();
-    if (nameLower.includes("equit") || nameLower.includes("cổ phiếu") || nameLower.includes("stock")) exposures.equity += a.allocationPercent;
-    else if (nameLower.includes("gold") || nameLower.includes("vàng")) exposures.gold += a.allocationPercent;
-    else if (nameLower.includes("estate") || nameLower.includes("bđs") || nameLower.includes("bất động sản")) exposures.realEstate += a.allocationPercent;
-    else if (nameLower.includes("crypto") || nameLower.includes("btc") || nameLower.includes("bitcoin")) exposures.crypto += a.allocationPercent;
+    if (isCashAsset(a.name)) {
+      exposures.cash += a.allocationPercent;
+    } else if (nameLower.includes("equit") || nameLower.includes("cổ phiếu") || nameLower.includes("stock")) {
+      exposures.equity += a.allocationPercent;
+    } else if (nameLower.includes("gold") || nameLower.includes("vàng")) {
+      exposures.gold += a.allocationPercent;
+    } else if (nameLower.includes("estate") || nameLower.includes("bđs") || nameLower.includes("bất động sản")) {
+      exposures.realEstate += a.allocationPercent;
+    } else if (nameLower.includes("crypto") || nameLower.includes("btc") || nameLower.includes("bitcoin")) {
+      exposures.crypto += a.allocationPercent;
+    }
+
     return { asset: a.name, weight: a.allocationPercent };
   });
-  allocation.push({ asset: "USD Cash", weight: cashPct });
+
+  if (!hasCashInAssets && cashPct > 0) {
+    allocation.push({ asset: "USD Cash", weight: cashPct });
+  }
 
   const riskFlags: string[] = [];
-  if (largestPosition.pct > 40) riskFlags.push(`Concentration Risk: ${largestPosition.name} chiếm tỷ trọng quá lớn (${largestPosition.pct.toFixed(1)}%)`);
+  if (largestPosition.pct > 40) {
+    riskFlags.push(`Concentration Risk: ${largestPosition.name} chiếm tỷ trọng quá lớn (${largestPosition.pct.toFixed(1)}%)`);
+  }
   if (regime) {
-    if (regime.score <= 45 && exposures.equity > 40) riskFlags.push(`Regime Mismatch: Tỷ trọng Cổ phiếu cao (${exposures.equity.toFixed(1)}%) trong môi trường Risk-Off (Score: ${regime.score})`);
-    if (regime.score >= 55 && exposures.cash > 40) riskFlags.push(`Regime Mismatch: Tiền mặt quá cao (${exposures.cash.toFixed(1)}%) trong môi trường Risk-On (Score: ${regime.score}) -> Cash Drag Risk`);
+    if (regime.score <= 45 && exposures.equity > 40) {
+      riskFlags.push(`Regime Mismatch: Tỷ trọng Cổ phiếu cao (${exposures.equity.toFixed(1)}%) trong môi trường Risk-Off (Score: ${regime.score})`);
+    }
+    if (regime.score >= 55 && exposures.cash > 40) {
+      riskFlags.push(`Regime Mismatch: Tiền mặt quá cao (${exposures.cash.toFixed(1)}%) trong môi trường Risk-On (Score: ${regime.score}) -> Cash Drag Risk`);
+    }
   }
   if (corr && corr["btc"] && corr["gold"]) {
     const btcGoldCorr = corr["btc"]["gold"];
-    if (btcGoldCorr > 0.6 && (exposures.crypto + exposures.gold > 50)) riskFlags.push(`Correlated Exposure: Vàng và Crypto đang đồng pha mạnh (Corr: ${btcGoldCorr.toFixed(2)}) và chiếm >50% danh mục`);
+    if (btcGoldCorr > 0.6 && exposures.crypto + exposures.gold > 50) {
+      riskFlags.push(`Correlated Exposure: Vàng và Crypto đang đồng pha mạnh (Corr: ${btcGoldCorr.toFixed(2)}) và chiếm >50% danh mục`);
+    }
   }
+
   return { allocation, concentration: largestPosition, exposure: exposures, riskFlags };
 }
 
@@ -294,25 +467,17 @@ export function MacroView() {
   const { loading, error, series, regime, correlation, load } = useMacroStore();
   const portfolio = usePortfolioStore();
   const { trend, mean, dca } = useTradingStore();
-  
+
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Array<{ sender: "user" | "ai"; text: string; parsedData?: QuantResponse }>>([]);
   const [isLoading, setIsLoading] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
   const enhancedData = {
-    macroSurprise: { cpi: { actual: "3.1%", expected: "2.9%", prev: "3.0%", impact: "INFLATION SURPRISE: +0.2%" }, fedNextMeet: "35% hike, 65% hold (FOMC 15-16/9)" },
-    yieldCurve: { us2y: "4.85%", us10y: "4.58%", spread: "-27 bps (Inverted)" },
     vietnamMarket: {
-      vnindex: { price: 1280.5, ret1d: "+0.8%", ret20d: "+5.7%", distMA20: "+2.4%", distMA50: "+4.8%", distMA200: "-1.2%", breadth: "A/D = 145/320", pctAboveMA20: "38%", pctAboveMA50: "31%" },
-      foreignFlow: { d1: "-500B", d5: "-1,200B", d20: "+300B" },
-      liquidity: { turnoverRatio20d: 1.32 },
-      usdvnd: "25,450 (Ổn định)",
+      vnindex: { price: 1280.5, ret1d: "+0.8%", breadth: "A/D = 145/320" },
+      foreignFlow: { d1: "-500B", d5: "-1,200B" },
       sjcGold: { price: "82.5M", premium: "+4M", premiumPercentile: "96%" }
-    },
-    signalConfluence: {
-      score: 71, confidence: 68,
-      factors: [ { name: "Inflation", val: "+++", status: "High" }, { name: "Liquidity", val: "++", status: "Neutral" }, { name: "USD", val: "+++", status: "High" }, { name: "Breadth", val: "-", status: "Weak" }, { name: "Foreign", val: "--", status: "Outflow" } ]
     }
   };
 
@@ -327,6 +492,44 @@ export function MacroView() {
 
   const corr = correlation ?? (series.length ? thirtyDayCorrelation(series) : null);
   const usingSynthetic = series.some((s) => s.source === "synthetic");
+
+  // Nối trực tiếp chuỗi giá s.points vào calculateAssetFeatures
+  const currentSignalConfluence = useMemo(() => {
+    const snapshotMacro = regime
+      ? {
+          label: regime.label,
+          score: regime.score,
+          thesis: regime.thesis,
+          dxyTrend: regime.dxyTrend,
+          yieldLevel: regime.yieldLevel,
+          yieldTrend: regime.yieldTrend,
+        }
+      : "UNAVAILABLE";
+
+    const snapshotAssets =
+      series.length > 0
+        ? series.map((s: MacroSeries) => {
+            const priceHistory = s.points ? s.points.map((p) => p.value) : [];
+            const features = calculateAssetFeatures(priceHistory);
+            return {
+              id: s.id,
+              name: s.name,
+              ticker: s.ticker,
+              lastPrice: s.last,
+              source: s.source,
+              features: {
+                ...features,
+                return1D: features.return1D ?? s.changePct1d,
+                return20D: features.return20D ?? s.changePct20d,
+              },
+            };
+          })
+        : "UNAVAILABLE";
+
+    const snapshotVietnam = "UNAVAILABLE";
+
+    return calculateSignalConfluence(snapshotMacro, snapshotAssets, snapshotVietnam);
+  }, [regime, series]);
 
   useEffect(() => {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
@@ -357,11 +560,12 @@ export function MacroView() {
 
     try {
       const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
-      
+
       const snapshotMacro = regime ? { label: regime.label, score: regime.score, thesis: regime.thesis, dxyTrend: regime.dxyTrend, yieldLevel: regime.yieldLevel, yieldTrend: regime.yieldTrend } : "UNAVAILABLE";
-      
-      const snapshotAssets = series.length > 0 ? series.map(s => {
-        const features = calculateAssetFeatures((s as any).history);
+
+      const snapshotAssets = series.length > 0 ? series.map((s: MacroSeries) => {
+        const priceHistory = s.points ? s.points.map((p) => p.value) : [];
+        const features = calculateAssetFeatures(priceHistory);
         return {
           id: s.id, name: s.name, ticker: s.ticker, lastPrice: s.last, source: s.source,
           features: { ...features, return1D: features.return1D ?? s.changePct1d, return20D: features.return20D ?? s.changePct20d }
@@ -380,7 +584,7 @@ export function MacroView() {
         macro: snapshotMacro,
         assets: snapshotAssets,
         vietnam: snapshotVietnam,
-        signalConfluence: calculateSignalConfluence(snapshotMacro, snapshotAssets, snapshotVietnam),
+        signalConfluence: currentSignalConfluence,
         portfolioRisk: calculatePortfolioRisk(portfolio, regime, corr),
         bots: {
           trend: { winRate: trend.winRate, pnl: trend.pnl, totalTrades: trend.totalTrades },
@@ -389,9 +593,6 @@ export function MacroView() {
         }
       };
 
-      // ============================================================================
-      // BƯỚC 14: SYSTEM PROMPT MỚI - NGẮN GỌN, TẬP TRUNG VÀO QUY TRÌNH TƯ DUY (REASONING)
-      // ============================================================================
       const systemPrompt = `
 Bạn là AI QUANT EXPERT - Senior Portfolio Manager & Quant Risk Analyst.
 
@@ -472,9 +673,9 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
 
       const data = await response.json();
       if (!response.ok) throw new Error("Lỗi API");
-      
+
       const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      
+
       let parsedResponse: QuantResponse | undefined = undefined;
       try {
         if (rawText) parsedResponse = JSON.parse(rawText);
@@ -496,7 +697,7 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-3 custom-scrollbar relative bg-[#07090d]">
-      
+
       {/* 0. DẢI TIN TỨC CHẠY NGANG (MOCK DATA - UI ONLY) */}
       <style dangerouslySetInnerHTML={{__html: `
         @keyframes ticker { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
@@ -525,11 +726,14 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
         ))}
       </div>
 
-      {/* 2. DỮ LIỆU VIỆT NAM (MOCK DATA UI) */}
+      {/* 2. DỮ LIỆU VIỆT NAM (MOCK DATA UI) VÀ SIGNAL CONFLUENCE (LIVE ENGINE) */}
       <div className="border border-[#1c2736] bg-[#10151e] flex flex-col shrink-0 shadow-sm">
         <div className="px-4 py-2 border-b border-[#1c2736] flex justify-between items-center bg-[#0c1017]">
-          <span className="font-mono text-[10px] font-bold tracking-[0.2em] text-[#26c6da]">FEATURE ENGINE · VIETNAM MARKET</span>
-          <span className="font-mono text-[10px] text-amber border border-amber px-2 py-0.5 rounded">MOCK DATA UI</span>
+          <span className="font-mono text-[10px] font-bold tracking-[0.2em] text-[#26c6da]">FEATURE ENGINE · VIETNAM MARKET & CONFLUENCE</span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[9px] text-amber border border-amber/40 bg-amber/10 px-2 py-0.5 rounded">VN: MOCK</span>
+            <span className="font-mono text-[9px] text-cyan border border-cyan/40 bg-cyan/10 px-2 py-0.5 rounded">CONFLUENCE: ENGINE</span>
+          </div>
         </div>
         <div className="p-3 grid grid-cols-4 gap-3">
           <div className="bg-[#151b26] border border-[#1c2736] p-2.5 flex flex-col justify-between">
@@ -547,10 +751,27 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
             <span className="text-[#ffc107] font-bold text-lg">{enhancedData.vietnamMarket.sjcGold.price}</span>
             <span className="text-[#ffc107] text-[10px] font-mono mt-1">Lệch TG: {enhancedData.vietnamMarket.sjcGold.premium} (Percentile {enhancedData.vietnamMarket.sjcGold.premiumPercentile})</span>
           </div>
+
           <div className="bg-[#151b26] border border-[#1c2736] p-2.5 flex flex-col justify-between">
-            <span className="text-[10px] text-[#7d8ea3] font-bold tracking-widest mb-1">SIGNAL CONFLUENCE</span>
-            <span className="text-[#00e676] font-bold text-lg">{enhancedData.signalConfluence.score}/100</span>
-            <span className="text-white text-[10px] font-mono mt-1">Confidence: {enhancedData.signalConfluence.confidence}%</span>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] text-[#7d8ea3] font-bold tracking-widest">SIGNAL CONFLUENCE</span>
+              <span className="text-[9px] font-mono text-cyan bg-cyan/10 px-1 rounded border border-cyan/20">ENGINE</span>
+            </div>
+            <span className={clsx(
+              "font-bold text-lg",
+              currentSignalConfluence.score === null
+                ? "text-muted"
+                : currentSignalConfluence.score >= 55
+                  ? "text-[#00e676]"
+                  : currentSignalConfluence.score <= 45
+                    ? "text-[#ff3d57]"
+                    : "text-amber"
+            )}>
+              {currentSignalConfluence.score !== null ? `${currentSignalConfluence.score}/100` : "UNAVAILABLE"}
+            </span>
+            <span className="text-white text-[10px] font-mono mt-1">
+              Confidence: {currentSignalConfluence.confidence}% ({currentSignalConfluence.dataCoverage})
+            </span>
           </div>
         </div>
       </div>
@@ -570,12 +791,12 @@ Hãy xuất kết quả phân tích theo đúng chuẩn JSON Schema được yê
                   <div className="mt-1 font-mono text-2xl font-semibold text-amber">{regime.label}</div>
                 </div>
                 <div className="text-right">
-                  <div className="font-mono text-[10px] tracking-[0.2em] text-muted">RISK SCORE 0–100</div>
+                  <div className="font-mono text-[10px] tracking-[0.2em] text-muted">FAVORABILITY 0–100</div>
                   <div className={clsx("font-mono text-4xl font-semibold", regime.score >= 55 ? "text-up" : regime.score <= 45 ? "text-down" : "text-amber")}>{formatNumber(regime.score, 1)}</div>
                 </div>
               </div>
               <div className="h-2 w-full bg-[#151b26]"><div className="h-2 bg-gradient-to-r from-down via-amber to-up" style={{ width: `${regime.score}%` }} /></div>
-              
+
               <div className="bg-panel-2 border border-line p-3 rounded-md">
                 <div className="flex items-start gap-2">
                   <AlertTriangle size={14} className="text-amber mt-0.5 shrink-0"/>
