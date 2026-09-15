@@ -39,7 +39,7 @@ export default defineConfig(({ mode }) => {
           }
         });
 
-        // HANDLER DÀNH CHO GEMINI AI: Chuyển tiếp nguyên vẹn payload và gắn Auth Header
+        // HANDLER DÀNH CHO GEMINI AI (ĐÃ CẬP NHẬT MODEL gemini-flash-latest)
         server.middlewares.use('/api/ai-advisor', async (req, res) => {
           if (req.method !== 'POST') {
             res.statusCode = 405;
@@ -66,9 +66,8 @@ export default defineConfig(({ mode }) => {
                 'Content-Type': 'application/json',
               };
 
-              let targetAiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+              let targetAiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent';
 
-              // Xử lý xác thực theo dạng token AQ.
               if (apiKey.startsWith('AQ.')) {
                 authHeaders['Authorization'] = `Bearer ${apiKey}`;
               } else if (apiKey.startsWith('AIzaSy')) {
@@ -77,7 +76,6 @@ export default defineConfig(({ mode }) => {
                 authHeaders['x-goog-api-key'] = apiKey;
               }
 
-              // Nếu client gửi cả bodyPayload thì giữ nguyên, ngược lại format theo { prompt }
               const forwardBody = parsedPayload.contents
                 ? parsedPayload
                 : {
