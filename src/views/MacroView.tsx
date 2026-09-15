@@ -242,7 +242,7 @@ export function MacroView() {
                   "Lợi suất duy trì ở mức thắt chặt nhưng sức mạnh đồng USD không đồng pha. Các tài sản thực (Vàng, BĐS chọn lọc) đang phòng vệ rủi ro lạm phát/tài khóa tốt hơn so với trái phiếu dài hạn."
                 </p>
                 <div className="text-[12px] font-sans font-bold text-cyan flex items-start gap-2">
-                  <span className="mt-0.5">=> HÀNH ĐỘNG:</span>
+                  <span className="mt-0.5"> Suy ra HÀNH ĐỘNG:</span>
                   <span className="text-ink font-normal">Duy trì tỷ trọng Vàng để hedge rủi ro. Giữ Tiền mặt làm "Dry Powder" chờ cơ hội. Không vội bắt đáy cổ phiếu rủi ro cao.</span>
                 </div>
               </div>
