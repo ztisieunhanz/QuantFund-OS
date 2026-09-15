@@ -11,6 +11,7 @@ interface NewsItem {
   description: string;
 }
 
+// MOCK DATA: Toàn bộ mảng mockNews này đang là hard-code
 const mockNews: NewsItem[] = [
   { id: '1', time: '2026-09-15 01:00 UTC', event: 'Tin đồn: FED cân nhắc cắt giảm 50bps', impact: 'HIGH', direction: 'BULLISH', description: 'Kỳ vọng FED mạnh tay nới lỏng gia tăng, hỗ trợ đà tăng cho Vàng (XAU) và Tiền số (BTC).' },
   { id: '2', time: '2026-09-14 12:30 UTC', event: 'Căng thẳng Địa chính trị Trung Đông', impact: 'HIGH', direction: 'BEARISH', description: 'Rủi ro gián đoạn chuỗi cung ứng dầu mỏ, đẩy nguy cơ lạm phát quay lại (Stagflation).' },
@@ -22,7 +23,7 @@ export const MacroNewsTable: React.FC = () => {
     <div className="border border-line bg-panel p-4 mt-3 shrink-0 block w-full relative z-10">
       <div className="flex items-center justify-between mb-3">
         <div className="font-mono text-[11px] tracking-[0.2em] text-cyan font-bold">MACRO EVENT CALENDAR · SỰ KIỆN VĨ MÔ</div>
-        <div className="font-mono text-[10px] text-muted border border-line px-2 py-0.5 bg-panel-2">LIVE FEED</div>
+        <div className="font-mono text-[10px] text-amber border border-amber px-2 py-0.5 bg-panel-2">MOCK FEED</div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse font-mono text-[12px]">
