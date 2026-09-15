@@ -4,6 +4,8 @@ import { mulberry32, pctChange } from "@/lib/math";
 const YAHOO: Record<MacroSeries["id"], { ticker: string; name: string }> = {
   dxy: { ticker: "DX-Y.NYB", name: "US Dollar Index" },
   us10y: { ticker: "^TNX", name: "US 10Y Yield" },
+  us2y: { ticker: "2YY=F", name: "US 2Y Yield" },
+  vix: { ticker: "^VIX", name: "CBOE Volatility (VIX)" },
   gold: { ticker: "GC=F", name: "Gold (XAU)" },
   btc: { ticker: "BTC-USD", name: "Bitcoin" },
 };
@@ -61,23 +63,40 @@ function toMacroSeries(
 
 function syntheticSeries(id: MacroSeries["id"]): MacroSeries {
   const meta = YAHOO[id];
-  const seedMap = { dxy: 11, us10y: 22, gold: 33, btc: 44 };
+  const seedMap: Record<MacroSeries["id"], number> = {
+    dxy: 11,
+    us10y: 22,
+    us2y: 26,
+    vix: 38,
+    gold: 33,
+    btc: 44,
+  };
   const rand = mulberry32(seedMap[id] + 20260914);
+  
+  // Dữ liệu neo thực tế: US10Y quanh 4.18%, US2Y quanh 4.35% (đường cong lợi suất đảo ngược nhẹ -17 bps)
   const start: Record<MacroSeries["id"], number> = {
     dxy: 104.2,
     us10y: 4.18,
+    us2y: 4.35,
+    vix: 16.8,
     gold: 2485,
     btc: 63800,
   };
+  
   const vol: Record<MacroSeries["id"], number> = {
     dxy: 0.0024,
     us10y: 0.012,
+    us2y: 0.014,
+    vix: 0.038,
     gold: 0.007,
     btc: 0.028,
   };
+  
   const drift: Record<MacroSeries["id"], number> = {
     dxy: 0.00018,
     us10y: 0.0004,
+    us2y: 0.0002,
+    vix: -0.0002,
     gold: -0.00005,
     btc: -0.0004,
   };
@@ -88,14 +107,15 @@ function syntheticSeries(id: MacroSeries["id"]): MacroSeries {
   const day = 86_400_000;
   for (let i = 120; i >= 0; i -= 1) {
     const shock = (rand() - 0.48) * vol[id];
-    px = Math.max(px * (1 + drift[id] + shock), id === "us10y" ? 0.5 : 1);
+    const floorVal = id === "us10y" || id === "us2y" ? 0.5 : id === "vix" ? 9 : 1;
+    px = Math.max(px * (1 + drift[id] + shock), floorVal);
     points.push({ time: now - i * day, value: px });
   }
   return toMacroSeries(id, meta.ticker, meta.name, points, "synthetic");
 }
 
 export async function loadMacroUniverse(): Promise<MacroSeries[]> {
-  const ids: MacroSeries["id"][] = ["dxy", "us10y", "gold", "btc"];
+  const ids: MacroSeries["id"][] = ["dxy", "us10y", "us2y", "vix", "gold", "btc"];
   const live = await Promise.all(ids.map((id) => fetchYahooSeries(id).catch(() => null)));
   return ids.map((id, i) => live[i] ?? syntheticSeries(id));
 }
