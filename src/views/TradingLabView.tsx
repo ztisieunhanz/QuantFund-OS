@@ -1,6 +1,6 @@
 // ============================================================================
 // FILE: src/views/TradingLabView.tsx
-// MODULE: QUANT LAB VIEW (FIXED LAYOUT & RECHARTS ISOLATION)
+// MODULE: QUANT LAB VIEW WITH HYSTERESIS CIRCUIT BREAKER & BENCHMARK AUDIT
 // ============================================================================
 
 import { useEffect, useMemo, useState, useCallback } from "react";
@@ -20,6 +20,7 @@ import {
   Cpu,
   Layers,
   RotateCcw,
+  CheckCircle2,
 } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
 import { clsx } from "@/lib/clsx";
@@ -36,9 +37,10 @@ export function TradingLabView() {
   const lastPrice = useMarketStore((s) => s.lastPrice);
 
   const trend = useTradingStore((s) => s.trend);
+  const event = useTradingStore((s) => s.event);
   const mean = useTradingStore((s) => s.mean);
-  const dca = useTradingStore((s) => s.dca);
   const omega = useTradingStore((s) => s.omega);
+  const benchmarkDca = useTradingStore((s) => s.benchmarkDca);
   const latestDecision = useTradingStore((s) => s.latestDecision);
   const runOnBars = useTradingStore((s) => s.runOnBars);
   const resetTrading = useTradingStore((s) => s.reset);
@@ -54,11 +56,11 @@ export function TradingLabView() {
   }, [bars.length, loadMarket]);
 
   useEffect(() => {
-    if (bars.length >= 25) runOnBars(bars);
+    if (bars.length >= 130) runOnBars(bars);
   }, [bars, runOnBars]);
 
   const handleReplay = useCallback(() => {
-    if (replaying || bars.length < 25) return;
+    if (replaying || bars.length < 130) return;
     setReplaying(true);
     resetTrading();
     setTimeout(() => {
@@ -70,7 +72,7 @@ export function TradingLabView() {
   const combinedEquitySeries = useMemo(() => {
     const timeMap = new Map<
       number,
-      { time: number; trend: number; mean: number; event: number; omega: number }
+      { time: number; trend: number; mean: number; event: number; omega: number; benchmark: number }
     >();
 
     for (const p of trend.equityCurve) {
@@ -80,35 +82,20 @@ export function TradingLabView() {
         mean: STARTING_EQUITY,
         event: STARTING_EQUITY,
         omega: STARTING_EQUITY,
+        benchmark: STARTING_EQUITY,
       });
     }
 
     for (const p of mean.equityCurve) {
       const row = timeMap.get(p.time);
       if (row) row.mean = p.equity;
-      else {
-        timeMap.set(p.time, {
-          time: p.time,
-          trend: STARTING_EQUITY,
-          mean: p.equity,
-          event: STARTING_EQUITY,
-          omega: STARTING_EQUITY,
-        });
-      }
+      else timeMap.set(p.time, { time: p.time, trend: STARTING_EQUITY, mean: p.equity, event: STARTING_EQUITY, omega: STARTING_EQUITY, benchmark: STARTING_EQUITY });
     }
 
-    for (const p of dca.equityCurve) {
+    for (const p of event.equityCurve) {
       const row = timeMap.get(p.time);
       if (row) row.event = p.equity;
-      else {
-        timeMap.set(p.time, {
-          time: p.time,
-          trend: STARTING_EQUITY,
-          mean: STARTING_EQUITY,
-          event: p.equity,
-          omega: STARTING_EQUITY,
-        });
-      }
+      else timeMap.set(p.time, { time: p.time, trend: STARTING_EQUITY, mean: STARTING_EQUITY, event: p.equity, omega: STARTING_EQUITY, benchmark: STARTING_EQUITY });
     }
 
     for (const p of omega.equityCurve) {
@@ -116,47 +103,56 @@ export function TradingLabView() {
       if (row) row.omega = p.equity;
     }
 
+    for (const p of benchmarkDca.equityCurve) {
+      const row = timeMap.get(p.time);
+      if (row) row.benchmark = p.equity;
+    }
+
     const sorted = [...timeMap.values()].sort((a, b) => a.time - b.time);
     const stepSize = Math.max(1, Math.floor(sorted.length / 150));
     return sorted.filter((_, idx, arr) => idx % stepSize === 0 || idx === arr.length - 1);
-  }, [trend.equityCurve, mean.equityCurve, dca.equityCurve, omega.equityCurve]);
+  }, [trend.equityCurve, mean.equityCurve, event.equityCurve, omega.equityCurve, benchmarkDca.equityCurve]);
+
+  // Giải mã trạng thái Circuit Breaker chi tiết
+  const cbStatus = latestDecision?.risk.circuitBreakerStatus ?? "NORMAL";
+  const cbReason = latestDecision?.risk.circuitBreakerReason ?? "System exposure normal";
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-3 bg-[#07090d]">
-      {/* 1. TOP STATUS BAR */}
+      {/* 1. THANH TRẠNG THÁI HỆ THỐNG */}
       <div className="flex flex-wrap items-center justify-between border border-line bg-panel px-3 py-2 font-mono text-[11px] rounded-sm gap-2">
         <div className="flex flex-wrap items-center gap-4 sm:gap-6">
           <span className="text-muted">
             ARCHITECTURE <span className="text-cyan font-bold">5-LAYER MODULAR QUANT</span>
           </span>
           <span className="text-muted">
+            WARMUP <span className="text-white font-bold">125 BARS</span>
+          </span>
+          <span className="text-muted">
             COMMISSION <span className="text-amber">{(FEE_BPS * 100).toFixed(2)}%</span>
           </span>
           <span className="text-muted">
-            SLIPPAGE <span className="text-amber">{(SLIPPAGE_BPS * 100).toFixed(2)}%</span>
-          </span>
-          <span className="text-muted">
-            BENCHMARK (BTC) <span className="text-up font-bold">{formatNumber(lastPrice, 2)}</span>
+            MARK (BTC) <span className="text-up font-bold">{formatNumber(lastPrice, 2)}</span>
           </span>
         </div>
 
         <div className="flex items-center gap-3">
           <span className="text-muted">
-            LAST SYNC {lastRunAt ? new Date(lastRunAt).toISOString().slice(11, 19) : "—"}
+            SYNC {lastRunAt ? new Date(lastRunAt).toISOString().slice(11, 19) : "—"}
           </span>
           <button
             type="button"
-            disabled={replaying}
+            disabled={replaying || bars.length < 130}
             onClick={handleReplay}
             className="flex items-center gap-1.5 border border-line px-3 py-1 text-cyan hover:bg-panel-2 transition-all active:scale-95 disabled:opacity-50 font-bold"
           >
             <RotateCcw size={12} className={clsx(replaying && "animate-spin")} />
-            {replaying ? "REPLAYING..." : "REPLAY 100D"}
+            {replaying ? "REPLAYING..." : "REPLAY DETERMINISTIC"}
           </button>
         </div>
       </div>
 
-      {/* 2. OMEGA META-FUND & RISK MONITOR (CĂN FULL CHIỀU NGANG) */}
+      {/* 2. OMEGA META-FUND & HYSTERESIS RISK MONITOR */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 border border-[#1c2736] bg-[#10151e] p-3 rounded-sm shadow-sm w-full">
         <div className="flex flex-col justify-between border-b sm:border-b-0 sm:border-r border-line/40 pb-2 sm:pb-0 sm:pr-3">
           <div className="flex items-center gap-1.5 text-muted text-[10px] font-bold tracking-wider">
@@ -179,30 +175,34 @@ export function TradingLabView() {
               ? `${(latestDecision.risk.targetVolatility * 100).toFixed(1)}% / ${(latestDecision.risk.realizedVol * 100).toFixed(1)}%`
               : "12.0% / 20.0%"}
           </div>
-          <div className="text-[10px] text-muted font-mono">Target Vol / Realized Vol</div>
+          <div className="text-[10px] text-muted font-mono">
+            Target Vol / Realized (VolFloor: 5.0%)
+          </div>
         </div>
 
         <div className="flex flex-col justify-between border-b sm:border-b-0 sm:border-r border-line/40 pb-2 sm:pb-0 sm:pr-3">
           <div className="flex items-center gap-1.5 text-muted text-[10px] font-bold tracking-wider">
-            <ShieldCheck size={14} className="text-[#00e676]" /> RISK & CIRCUIT BREAKER
+            <ShieldCheck size={14} className="text-[#00e676]" /> HYSTERESIS RISK STATUS
           </div>
           <div className="text-base font-mono font-bold mt-1">
             <span
               className={clsx(
                 "px-1.5 py-0.5 rounded text-[10px] font-bold uppercase",
-                latestDecision?.risk.circuitBreakerStatus === "TRIPPED"
+                cbStatus === "TRIPPED"
                   ? "bg-down/20 text-down border border-down/30"
+                  : cbStatus === "WARNING"
+                  ? "bg-amber/20 text-amber border border-amber/30"
                   : "bg-up/20 text-up border border-up/30"
               )}
             >
-              {latestDecision?.risk.circuitBreakerStatus ?? "NORMAL"}
+              {cbStatus}
             </span>
             <span className="text-muted text-[11px] ml-2 font-normal">
               Max DD: {formatPct(-omega.maxDrawdown, 1)}
             </span>
           </div>
-          <div className="text-[10px] text-muted truncate font-mono">
-            Exposure Cap: {latestDecision ? `${(latestDecision.risk.targetExposure * 100).toFixed(0)}%` : "100%"}
+          <div className="text-[10px] text-muted truncate font-mono" title={cbReason}>
+            {cbReason}
           </div>
         </div>
 
@@ -219,29 +219,39 @@ export function TradingLabView() {
         </div>
       </div>
 
-      {/* 3. MACRO PERMISSION BANNER */}
       {isRiskOff && (
         <div className="flex items-center gap-2 rounded border border-amber/50 bg-amber/10 p-2.5 text-[11px] font-medium text-amber shadow-sm">
           <AlertTriangle size={16} />
           <span>
-            <strong>MACRO PERMISSION MODULATION:</strong> Chế độ vĩ mô Risk-Off (Score: {regime?.score.toFixed(1)}/100).
-            Permission Gate đã chủ động giảm hệ số cấp phép mở vị thế mới để bảo toàn ngân sách rủi ro.
+            <strong>MACRO PERMISSION NOTICE:</strong> Chế độ vĩ mô Risk-Off (Score: {regime?.score.toFixed(1)}/100).
+            Permission Gate đang điều tiết quyền mở vị thế theo ma trận tương thích chiến lược.
           </span>
         </div>
       )}
 
-      {/* 4. THẺ 3 ALPHA ENGINES */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 w-full">
-        <BotCard bot={trend} rule="Alpha 1: Multi-Horizon Momentum · Trend Persistence & Chandelier Stop" />
-        <BotCard bot={dca} rule="Alpha 2: Economic Surprise · Market Confirmation & Half-Life Decay" />
-        <BotCard bot={mean} rule="Alpha 3: Short Mean Reversion · Deviation Z-Score & Volume Exhaustion" />
+      {/* 3. 3 BOT ALPHA ĐỘC LẬP & 1 BENCHMARK ĐỐI CHỨNG */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 w-full">
+        <BotCard bot={trend} rule="Alpha 1: Multi-Horizon Momentum · Persistence & Chandelier Stop" />
+        <BotCard bot={event} rule="Alpha 2: Economic Catalyst · Surprise Reaction & Exponential Decay" />
+        <BotCard bot={mean} rule="Alpha 3: Short Mean Reversion · Deviation Z-Score & Trend Filter" />
+        <BotCard bot={benchmarkDca} rule="Control: Passive DCA 5% Cash every 7 bars (Non-Alpha Benchmark)" isBenchmark />
       </div>
 
-      {/* 5. KHỐI BIỂU ĐỒ ĐƯỢC CÔ LẬP KHÔNG GIAN RIÊNG */}
+      {/* 4. ĐƯỜNG CONG VỐN ĐỐI CHUẨN (EQUITY CURVES) */}
       <div className="border border-line bg-panel p-3 rounded-sm w-full">
-        <div className="text-[11px] font-mono font-bold text-muted uppercase tracking-wider mb-2">
-          Multi-Strategy Concurrent Fleet & Omega Meta-Fund (100D Replay)
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-[11px] font-mono font-bold text-muted uppercase tracking-wider">
+            Multi-Strategy Concurrent Fleet vs. Control Benchmark (Post-Warmup 125 Bars)
+          </div>
+          <div className="flex items-center gap-4 text-[10px] font-mono">
+            <span className="flex items-center gap-1 text-[#00e676] font-bold"><span className="w-2.5 h-0.5 bg-[#00e676]"></span> Omega Fund</span>
+            <span className="flex items-center gap-1 text-[#26c6da]"><span className="w-2.5 h-0.5 bg-[#26c6da]"></span> Alpha 1 (Trend)</span>
+            <span className="flex items-center gap-1 text-[#ffc107]"><span className="w-2.5 h-0.5 bg-[#ffc107]"></span> Alpha 2 (Event)</span>
+            <span className="flex items-center gap-1 text-[#b388ff]"><span className="w-2.5 h-0.5 bg-[#b388ff]"></span> Alpha 3 (MeanRev)</span>
+            <span className="flex items-center gap-1 text-[#78909c]"><span className="w-2.5 h-0.5 bg-[#78909c] stroke-dasharray"></span> Control DCA</span>
+          </div>
         </div>
+
         <div className="h-[240px] w-full">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={combinedEquitySeries} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
@@ -263,26 +273,27 @@ export function TradingLabView() {
                 labelFormatter={(t) => new Date(Number(t) * 1000).toISOString().slice(0, 19).replace("T", " ")}
                 formatter={(v, name) => [formatUsd(Number(v)), String(name)]}
               />
-              <Line type="monotone" dataKey="trend" name="Bot 1 (Trend)" stroke="#26c6da" dot={false} strokeWidth={1.5} />
-              <Line type="monotone" dataKey="event" name="Bot 2 (Event)" stroke="#ffc107" dot={false} strokeWidth={1.5} />
-              <Line type="monotone" dataKey="mean" name="Bot 3 (MeanRev)" stroke="#b388ff" dot={false} strokeWidth={1.5} />
-              <Line type="monotone" dataKey="omega" name="Omega Meta-Fund" stroke="#00e676" dot={false} strokeWidth={2.5} />
+              <Line type="monotone" dataKey="trend" name="Alpha 1 (Trend)" stroke="#26c6da" dot={false} strokeWidth={1.5} />
+              <Line type="monotone" dataKey="event" name="Alpha 2 (Event)" stroke="#ffc107" dot={false} strokeWidth={1.5} />
+              <Line type="monotone" dataKey="mean" name="Alpha 3 (MeanRev)" stroke="#b388ff" dot={false} strokeWidth={1.5} />
+              <Line type="monotone" dataKey="benchmark" name="Control DCA" stroke="#78909c" dot={false} strokeWidth={1.5} strokeDasharray="3 3" />
+              <Line type="monotone" dataKey="omega" name="Omega Fund" stroke="#00e676" dot={false} strokeWidth={2.5} />
             </LineChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* 6. AUDIT BLOTTERS (CÓ THANH CUỘN NỘI BỘ RIÊNG BIỆT) */}
+      {/* 5. AUDIT BLOTTERS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 w-full pb-4">
         <Blotter bot={trend} />
-        <Blotter bot={dca} />
+        <Blotter bot={event} />
         <Blotter bot={mean} />
       </div>
     </div>
   );
 }
 
-function BotCard({ bot, rule }: { bot: BotMetrics; rule: string }) {
+function BotCard({ bot, rule, isBenchmark }: { bot: BotMetrics; rule: string; isBenchmark?: boolean }) {
   const up = bot.pnl >= 0;
   return (
     <Panel
@@ -294,6 +305,8 @@ function BotCard({ bot, rule }: { bot: BotMetrics; rule: string }) {
               "rounded px-1.5 py-0.2 text-[9px] font-bold border uppercase",
               bot.position === "LONG"
                 ? "bg-up/20 text-up border-up/30"
+                : isBenchmark
+                ? "bg-panel-2 text-ink border-line"
                 : "bg-panel-2 text-muted border-line"
             )}
           >
@@ -304,7 +317,7 @@ function BotCard({ bot, rule }: { bot: BotMetrics; rule: string }) {
       right={<span className="text-[10px] text-muted font-mono">{bot.trades.length} fills</span>}
     >
       <div className="space-y-3">
-        <div className="text-[11px] text-muted font-mono leading-relaxed">{rule}</div>
+        <div className="text-[11px] text-muted font-mono leading-relaxed min-h-[32px]">{rule}</div>
         <div className="flex items-end justify-between">
           <div>
             <div className="font-mono text-[10px] text-muted">EQUITY</div>
@@ -376,7 +389,7 @@ function Blotter({ bot }: { bot: BotMetrics }) {
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={5} className="py-3 text-muted text-center">
-                  Awaiting quant execution...
+                  Awaiting execution...
                 </td>
               </tr>
             ) : null}
