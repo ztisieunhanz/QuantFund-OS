@@ -504,7 +504,9 @@ function calculatePortfolioRisk(portfolio: any, regime: any, corr: any) {
 export function MacroView() {
   const { loading, error, series, regime, correlation, load } = useMacroStore();
   const portfolio = usePortfolioStore();
-  const { trend, mean, dca, runOnBars } = useTradingStore();
+  
+  // FIX: Destructure chuẩn 3 Alphas và Benchmark DCA, an toàn tuyệt đối
+  const { trend, event, mean, benchmarkDca, runOnBars } = useTradingStore();
   const { bars, load: loadBars } = useMarketStore();
 
   const [vietnamState, setVietnamState] = useState<VietnamMarketState | null>(null);
@@ -513,15 +515,14 @@ export function MacroView() {
   const [isLoading, setIsLoading] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
-  // KHỞI ĐỘNG VÀ NẠP NẾN CHO CẢ 3 TRADING BOTS
   useEffect(() => { 
     if (series.length === 0) void load();
     void loadVietnamMarket().then((vn) => setVietnamState(vn));
     if (bars.length === 0) void loadBars();
-    else if (bars.length >= 55 && trend.totalTrades === 0) {
+    else if (bars.length >= 130 && (trend?.totalTrades ?? 0) === 0) {
       runOnBars(bars);
     }
-  }, [load, series.length, bars, loadBars, runOnBars, trend.totalTrades]);
+  }, [load, series.length, bars, loadBars, runOnBars, trend?.totalTrades]);
 
   const pieData = useMemo(() => {
     if (!regime) return [];
@@ -619,8 +620,8 @@ export function MacroView() {
       const isReportMode = lowerText.includes("báo cáo") || 
                            lowerText.includes("report") || 
                            lowerText.includes("soi nhanh") || 
-                           lowerText.includes("full verdict") ||
-                           lowerText.includes("stress-test") ||
+                           lowerText.includes("full verdict") || 
+                           lowerText.includes("stress-test") || 
                            lowerText.includes("devil's advocate");
 
       const snapshotMacro = regime ? {
@@ -689,6 +690,7 @@ export function MacroView() {
       const liveFeeds = series.filter(s => s.source === "live").length;
       const dataQualityStatus = loading ? "SYNCING" : liveFeeds > 0 ? "LIVE_HYBRID" : "SYNTHETIC";
 
+      // FIX: Bảo toàn null-safety tuyệt đối cho các bot
       const marketSnapshot = {
         timestamp: new Date().toISOString(),
         dataQuality: { 
@@ -706,9 +708,10 @@ export function MacroView() {
         signalConfluence: currentSignalConfluence,
         portfolioRisk: calculatePortfolioRisk(portfolio, regime, corr),
         bots: {
-          trend: { winRate: trend.winRate, pnl: trend.pnl, totalTrades: trend.totalTrades },
-          meanReversion: { winRate: mean.winRate, pnl: mean.pnl, totalTrades: mean.totalTrades },
-          dca: { pnl: dca.pnl, totalTrades: dca.totalTrades }
+          trend: { winRate: trend?.winRate ?? 0, pnl: trend?.pnl ?? 0, totalTrades: trend?.totalTrades ?? 0 },
+          event: { winRate: event?.winRate ?? 0, pnl: event?.pnl ?? 0, totalTrades: event?.totalTrades ?? 0 },
+          meanReversion: { winRate: mean?.winRate ?? 0, pnl: mean?.pnl ?? 0, totalTrades: mean?.totalTrades ?? 0 },
+          benchmarkDca: { pnl: benchmarkDca?.pnl ?? 0, totalTrades: benchmarkDca?.totalTrades ?? 0 }
         }
       };
 
@@ -794,14 +797,24 @@ ${JSON.stringify(marketSnapshot, null, 2)}
         bodyPayload.generationConfig = generationConfig;
       }
 
-      const response = await fetch("/api/ai-advisor", {
+      // Gửi qua proxy /api/ai-advisor để xử lý Bearer auth an toàn
+      let response = await fetch("/api/ai-advisor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(bodyPayload),
+        body: JSON.stringify(bodyPayload)
       });
 
+      // Fallback gọi trực tiếp nếu server chưa nạp proxy
+      if (!response.ok && response.status === 404) {
+        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(bodyPayload)
+        });
+      }
+
       const data = await response.json();
-      if (!response.ok) throw new Error("Lỗi API");
+      if (!response.ok) throw new Error(data?.error?.message || `Lỗi API (${response.status})`);
 
       const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
@@ -815,8 +828,9 @@ ${JSON.stringify(marketSnapshot, null, 2)}
       }
 
       setMessages((prev) => [...prev, { sender: "ai", text: rawText, parsedData: parsedResponse }]);
-    } catch (err) {
-      setMessages((prev) => [...prev, { sender: "ai", text: "⚠️ **Lỗi kết nối API.** Kiểm tra lại khóa VITE_GEMINI_API_KEY." }]);
+    } catch (err: any) {
+      console.error("[MacroView AI Error Trace]:", err);
+      setMessages((prev) => [...prev, { sender: "ai", text: `⚠️ **Lỗi kết nối API:** ${err?.message || "Kiểm tra lại cấu hình."}` }]);
     } finally {
       setIsLoading(false);
     }
@@ -828,7 +842,6 @@ ${JSON.stringify(marketSnapshot, null, 2)}
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-auto p-3 custom-scrollbar relative bg-[#07090d]">
-
       {/* 0. DẢI TIN TỨC CHẠY NGANG ĐỒNG BỘ DỮ LIỆU LIVE */}
       <style dangerouslySetInnerHTML={{__html: `
         @keyframes ticker { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
@@ -1136,7 +1149,6 @@ ${JSON.stringify(marketSnapshot, null, 2)}
           </button>
         </form>
       </Panel>
-
     </div>
   );
 }
