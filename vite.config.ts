@@ -121,7 +121,7 @@ export default defineConfig(({ mode }) => {
                 try {
                   const fetchRes = await fetch(url);
                   if (fetchRes.ok) {
-                    const data = await fetchRes.json();
+                    const data = await fetchRes.json() as { items?: { title?: string; description?: string }[] };
                     const items = data.items?.slice(0, 4) || [];
                     items.forEach((item: any) => {
                       rawHeadlines += `- ${item.title}: ${item.description?.replace(/<[^>]*>?/gm, '').slice(0, 160)}\n`;
@@ -170,7 +170,7 @@ export default defineConfig(({ mode }) => {
                 })
               });
 
-              const llmData = await response.json();
+              const llmData = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
               const jsonStr = llmData.candidates?.[0]?.content?.parts?.[0]?.text;
 
               res.setHeader('Content-Type', 'application/json');

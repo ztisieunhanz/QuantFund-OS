@@ -90,7 +90,7 @@ function calculateSMA(bars: readonly PointInTimeBar[], period: number): number |
 
 export function evaluateAdaptiveTrend(
   context: StrategyContext,
-  state: StrategyState,
+  _state: StrategyState,
   config: AdaptiveTrendConfig = DEFAULT_ADAPTIVE_TREND_CONFIG
 ): SignalOutput {
   const { priceHistory, currentPrice, currentBarTimestamp, strategyId, assetId } = context;
@@ -109,7 +109,7 @@ export function evaluateAdaptiveTrend(
       assetId,
       timestamp: currentBarTimestamp,
       alphaScore: 0,
-      expectedReturn: 0,
+      heuristicExpectedReturn: 0,
       confidence: 0,
       forecastVol: 0,
       holdingPeriod: config.baseHoldingPeriodBars,
@@ -202,7 +202,7 @@ export function evaluateAdaptiveTrend(
     assetId,
     timestamp: currentBarTimestamp,
     alphaScore: Math.round(rawScore * 1000) / 1000,
-    expectedReturn: Math.round(expectedReturn * 10000) / 10000,
+    heuristicExpectedReturn: Math.round(expectedReturn * 10000) / 10000,
     confidence: Math.round(confidence * 100) / 100,
     forecastVol: Math.round(forecastVol * 1000) / 1000,
     holdingPeriod,
@@ -239,7 +239,7 @@ export function updateAdaptiveTrendState(
     barsSinceLastSignal: isSignalActive ? 0 : previousState.barsSinceLastSignal + 1,
     internalValues: {
       lastAlphaScore: signal.alphaScore,
-      lastExpectedReturn: signal.expectedReturn,
+      lastExpectedReturn: signal.heuristicExpectedReturn,
       confidence: signal.confidence,
       evaluationPrice: context.currentPrice,
     },

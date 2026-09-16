@@ -4,6 +4,7 @@
 // ============================================================================
 
 import type { OrderSide, PositionSide } from "@/lib/quant/types";
+export type { PositionSide } from "@/lib/quant/types";
 
 export type ViewId = "macro" | "charts" | "lab";
 

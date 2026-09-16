@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { BrainCircuit, X, Send, Loader2, MessageSquareText, TrendingUp, Target } from "lucide-react";
+import { BrainCircuit, X, Send, Loader2, MessageSquareText, Target } from "lucide-react";
 import { clsx } from "@/lib/clsx";
 import { useMacroStore } from "@/stores/macroStore";
 import { usePortfolioStore } from "@/stores/portfolioStore";

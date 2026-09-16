@@ -6,8 +6,7 @@
 
 import type { PointInTimeBar, StrategyContext, StrategyState, SignalOutput } from "./types";
 import { evaluateAdaptiveTrend, type AdaptiveTrendConfig, DEFAULT_ADAPTIVE_TREND_CONFIG } from "./adaptiveTrend";
-import { evaluateMeanReversion, type MeanReversionConfig, DEFAULT_MEAN_REVERSION_CONFIG } from "./meanReversion";
-import { evaluateEventReaction, type EventReactionConfig, DEFAULT_EVENT_REACTION_CONFIG } from "./eventReaction";
+
 
 // ----------------------------------------------------------------------------
 // 1. CONTRACTS & INTERFACES
@@ -89,12 +88,6 @@ export function testAlphaMonotonicity(
   const scores: number[] = [];
   const forwardReturns: number[] = [];
 
-  const emptyState: StrategyState = {
-    strategyId: "ADAPTIVE_TREND",
-    lastEvaluationTimestamp: 0,
-    barsSinceLastSignal: 0,
-    internalValues: {},
-  };
 
   // 1. Quét từng nến và đo lường return tương lai thực tế
   for (let t = warmupBars; t < bars.length - forwardHorizonBars; t++) {

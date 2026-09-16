@@ -11,7 +11,6 @@ import type {
   PointInTimeBar,
   PointInTimeEvent,
   PointInTimeMacro,
-  PositionRecord,
   SignalOutput,
   StrategyContext,
   StrategyId,

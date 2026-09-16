@@ -17,7 +17,7 @@ import { usePortfolioStore } from "@/stores/portfolioStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useMarketStore } from "@/stores/marketStore";
 import { loadVietnamMarket, type VietnamMarketState } from "@/lib/vietnamFeed";
-import type { AllocationWeights, AssetKey, MacroSeries } from "@/types/market";
+import type { AllocationWeights, AssetKey } from "@/types/market";
 
 const CHAT_EXPIRY_MS = 60 * 60 * 1000;
 const DEFAULT_GREETING = "Hệ thống **AI Quant Risk Manager (2026)** đã kết nối dữ liệu định lượng.\n\n- Nạp nến Binance Spot trực tiếp\n- Đồng bộ MA200 và hiệu suất các Trading Bot\n\nBạn cần phân tích chiến lược hay kiểm tra hệ thống nào?";
@@ -168,12 +168,12 @@ const FormatStructuredMessage = ({ data, text }: { data?: QuantResponse; text: s
 };
 
 export function MacroView() {
-  const { loading, error, series, regime, correlation, load } = useMacroStore();
-  const portfolio = usePortfolioStore();
+  const { loading, error: _error, series, regime, correlation, load } = useMacroStore();
+  usePortfolioStore();
   const { trend, event, mean, benchmarkDca, runOnBars } = useTradingStore();
   const { bars, load: loadBars } = useMarketStore();
 
-  const [vietnamState, setVietnamState] = useState<VietnamMarketState | null>(null);
+  const [_vietnamState, setVietnamState] = useState<VietnamMarketState | null>(null);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Array<{ sender: "user" | "ai"; text: string; parsedData?: QuantResponse }>>([]);
   const [isLoading, setIsLoading] = useState(false);

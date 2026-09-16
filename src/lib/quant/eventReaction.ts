@@ -9,7 +9,6 @@ import type {
   StrategyState,
   SignalOutput,
   PointInTimeBar,
-  PointInTimeEvent,
   AssetId,
 } from "@/lib/quant/types";
 
@@ -103,7 +102,7 @@ function getExpectedDirectionHypothesis(
 
 export function evaluateEventReaction(
   context: StrategyContext,
-  state: StrategyState,
+  _state: StrategyState,
   config: EventReactionConfig = DEFAULT_EVENT_REACTION_CONFIG
 ): SignalOutput {
   const { latestEvent, decisionTimestamp, currentBarTimestamp, currentPrice, priceHistory, strategyId, assetId, macro } = context;
@@ -116,7 +115,7 @@ export function evaluateEventReaction(
       assetId,
       timestamp: currentBarTimestamp,
       alphaScore: 0,
-      expectedReturn: 0,
+      heuristicExpectedReturn: 0,
       confidence: 0,
       forecastVol: 0,
       holdingPeriod: 0,
@@ -137,7 +136,7 @@ export function evaluateEventReaction(
       assetId,
       timestamp: currentBarTimestamp,
       alphaScore: 0,
-      expectedReturn: 0,
+      heuristicExpectedReturn: 0,
       confidence: 0,
       forecastVol: 0,
       holdingPeriod: 0,
@@ -158,7 +157,7 @@ export function evaluateEventReaction(
       assetId,
       timestamp: currentBarTimestamp,
       alphaScore: 0,
-      expectedReturn: 0,
+      heuristicExpectedReturn: 0,
       confidence: 0,
       forecastVol: 0,
       holdingPeriod: 0,
@@ -179,7 +178,7 @@ export function evaluateEventReaction(
       assetId,
       timestamp: currentBarTimestamp,
       alphaScore: 0,
-      expectedReturn: 0,
+      heuristicExpectedReturn: 0,
       confidence: 0,
       forecastVol: 0,
       holdingPeriod: 0,
@@ -198,7 +197,7 @@ export function evaluateEventReaction(
       assetId,
       timestamp: currentBarTimestamp,
       alphaScore: 0,
-      expectedReturn: 0,
+      heuristicExpectedReturn: 0,
       confidence: 0,
       forecastVol: 0,
       holdingPeriod: 0,
@@ -271,14 +270,14 @@ export function evaluateEventReaction(
     assetId,
     timestamp: currentBarTimestamp,
     alphaScore: Math.round(rawAlphaScore * 1000) / 1000,
-    expectedReturn: Math.round(expectedReturn * 10000) / 10000,
+    heuristicExpectedReturn: Math.round(expectedReturn * 10000) / 10000,
     confidence: Math.round(confidence * 100) / 100,
     forecastVol: Math.round(forecastVol * 1000) / 1000,
     holdingPeriod: remainingHoldingPeriod,
     decayRate: Math.round(decayRatePerBar * 1000) / 1000,
     validUntil: validUntilTimestamp,
     rationale: `EventReaction[${latestEvent.eventType}]: Surprise=${latestEvent.surprise > 0 ? "+" : ""}${latestEvent.surprise}, Confirms=${marketConfirms}, Decay=${decayMultiplier.toFixed(2)}`,
-    rawFeatures: {
+    metadata: {
       eventId: latestEvent.eventId,
       eventType: latestEvent.eventType,
       surprise: latestEvent.surprise,
@@ -310,7 +309,7 @@ export function updateEventReactionState(
     barsSinceLastSignal: isSignalActive ? 0 : previousState.barsSinceLastSignal + 1,
     internalValues: {
       lastAlphaScore: signal.alphaScore,
-      lastExpectedReturn: signal.expectedReturn,
+      lastExpectedReturn: signal.heuristicExpectedReturn,
       confidence: signal.confidence,
       activeEventId: context.latestEvent?.eventId ?? null,
       holdingPeriodRemaining: signal.holdingPeriod,

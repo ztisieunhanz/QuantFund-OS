@@ -43,12 +43,6 @@ export const DEFAULT_MEAN_REVERSION_CONFIG: MeanReversionConfig = {
 // 2. MATH HELPERS (POINT-IN-TIME, STRICTLY ISOLATED)
 // ----------------------------------------------------------------------------
 
-function calculateSMA(bars: readonly PointInTimeBar[], period: number): number | null {
-  if (bars.length < period) return null;
-  const slice = bars.slice(-period);
-  const sum = slice.reduce((acc, bar) => acc + bar.close, 0);
-  return sum / period;
-}
 
 function calculateMeanAndStdDev(bars: readonly PointInTimeBar[], period: number): { mean: number; stdDev: number } | null {
   if (bars.length < period) return null;
@@ -89,7 +83,7 @@ function calculateRealizedVolAnnualized(bars: readonly PointInTimeBar[], period:
 
 export function evaluateMeanReversion(
   context: StrategyContext,
-  state: StrategyState,
+  _state: StrategyState,
   config: MeanReversionConfig = DEFAULT_MEAN_REVERSION_CONFIG
 ): SignalOutput {
   const { priceHistory, currentPrice, currentBarTimestamp, strategyId, assetId } = context;
@@ -102,7 +96,7 @@ export function evaluateMeanReversion(
       assetId,
       timestamp: currentBarTimestamp,
       alphaScore: 0,
-      expectedReturn: 0,
+      heuristicExpectedReturn: 0,
       confidence: 0,
       forecastVol: 0,
       holdingPeriod: config.baseHoldingPeriodBars,
@@ -125,7 +119,7 @@ export function evaluateMeanReversion(
       assetId,
       timestamp: currentBarTimestamp,
       alphaScore: 0,
-      expectedReturn: 0,
+      heuristicExpectedReturn: 0,
       confidence: 0,
       forecastVol: 0,
       holdingPeriod: config.baseHoldingPeriodBars,
@@ -166,7 +160,7 @@ export function evaluateMeanReversion(
       assetId,
       timestamp: currentBarTimestamp,
       alphaScore: 0,
-      expectedReturn: 0,
+      heuristicExpectedReturn: 0,
       confidence: 0,
       forecastVol: calculateRealizedVolAnnualized(priceHistory, config.zScoreLookbackBars) ?? config.defaultVolAnnualized,
       holdingPeriod: config.baseHoldingPeriodBars,
@@ -215,14 +209,14 @@ export function evaluateMeanReversion(
     assetId,
     timestamp: currentBarTimestamp,
     alphaScore: Math.round(rawAlphaScore * 1000) / 1000,
-    expectedReturn: Math.round(expectedReturn * 10000) / 10000,
+    heuristicExpectedReturn: Math.round(expectedReturn * 10000) / 10000,
     confidence: Math.round(confidence * 100) / 100,
     forecastVol: Math.round(forecastVol * 1000) / 1000,
     holdingPeriod,
     decayRate: Math.round(decayRatePerBar * 1000) / 1000,
     validUntil: validUntilTimestamp,
     rationale: `MeanReversion[${direction > 0 ? "OVERSOLD_LONG" : "OVERBOUGHT_SHORT"}]: Z=${rawZScore.toFixed(2)}, VolRatio=${volumeRatio.toFixed(2)}, Slope=${(trendSlopePct * 10000).toFixed(1)}bps`,
-    rawFeatures: {
+    metadata: {
       rawZScore,
       smaPrice,
       stdDev,
@@ -252,10 +246,10 @@ export function updateMeanReversionState(
     barsSinceLastSignal: isSignalActive ? 0 : previousState.barsSinceLastSignal + 1,
     internalValues: {
       lastAlphaScore: signal.alphaScore,
-      lastExpectedReturn: signal.expectedReturn,
+      lastExpectedReturn: signal.heuristicExpectedReturn,
       confidence: signal.confidence,
       holdingPeriodRemaining: signal.holdingPeriod,
-      evaluationZScore: signal.rawFeatures?.rawZScore ?? null,
+      evaluationZScore: signal.metadata?.rawZScore ?? null,
     },
   };
 }
