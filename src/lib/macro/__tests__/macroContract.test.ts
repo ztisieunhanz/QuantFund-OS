@@ -291,7 +291,7 @@ describe("Macro V2 Data Contract & Provenance Foundation", () => {
     const snapshot: CurrentMarketSnapshot = {
       timestamp: REF_TIME,
       data: snapshotData,
-      macro: { status: "NOT_IMPLEMENTED", note: "Reserved for Gate M2" },
+      macro: null,
       quant: { status: "NOT_IMPLEMENTED", note: "Reserved for Gate M3" },
       synthesis: { status: "NOT_IMPLEMENTED", note: "Reserved for Gate M4" },
     };
@@ -318,6 +318,6 @@ describe("Macro V2 Data Contract & Provenance Foundation", () => {
 
     expect(snapshot.data.gold.status === "AVAILABLE" && snapshot.data.gold.basis).toBe("PAXG_TOKEN");
 
-    expect(snapshot.macro?.status).toBe("NOT_IMPLEMENTED");
+    expect(snapshot.macro).toBeNull();
   });
 });

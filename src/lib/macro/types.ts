@@ -176,15 +176,66 @@ export interface MarketSnapshotData {
   readonly customMetrics?: Readonly<Record<string, MacroDatum<unknown>>> | null;
 }
 
-/**
- * Explicit placeholders for future Macro V2 layers (DEC-010 / DEC-012).
- * These types allow CurrentMarketSnapshot to be typed without fabricating model outputs.
- */
-export interface MarketSnapshotMacroPlaceholder {
-  readonly status: "NOT_IMPLEMENTED";
-  readonly note: string;
+// ----------------------------------------------------------------------------
+// LAYER 2 - MACRO INTERPRETATION & ASSESSMENT TYPES (GATE M2)
+// ----------------------------------------------------------------------------
+
+export type MacroAssessmentStatus = "AVAILABLE" | "INSUFFICIENT_DATA";
+
+export type MacroRegimeV2 =
+  | "RISK_ON"
+  | "RISK_OFF"
+  | "LIQUIDITY_STRESS"
+  | "INFLATIONARY"
+  | "DISINFLATIONARY"
+  | "MIXED";
+
+export type MacroEvidenceDirection = "RISK_ON" | "RISK_OFF" | "NEUTRAL";
+
+export interface MacroEvidence {
+  readonly id: string;
+  readonly direction: MacroEvidenceDirection;
+  readonly strength: number; // [0.0 .. 1.0]
+  readonly observedValue?: number | null;
+  readonly description: string;
+  readonly sourceIds: readonly string[];
 }
 
+export interface MacroCoverage {
+  readonly usable: number;
+  readonly required: number;
+  readonly totalCore: number;
+  readonly ratio: number; // [0.0 .. 1.0]
+}
+
+export interface MacroAssessmentModelMetadata {
+  readonly name: string;
+  readonly version: string;
+  readonly classification: "HEURISTIC";
+}
+
+export interface MacroAssessment {
+  readonly status: MacroAssessmentStatus;
+  readonly regime: MacroRegimeV2 | null;
+  readonly evidence: readonly MacroEvidence[];
+  readonly conflicts: readonly MacroEvidence[];
+  readonly usableMetrics: readonly string[];
+  readonly unavailableMetrics: readonly string[];
+  readonly staleMetrics: readonly string[];
+  readonly excludedMetrics: readonly string[];
+  readonly coverage: MacroCoverage;
+  /**
+   * Heuristic data-coverage and evidence-agreement score in [0 .. 100].
+   * NOTE: This is NOT a calibrated probability and NOT a forecast probability.
+   */
+  readonly confidence: number | null;
+  readonly model: MacroAssessmentModelMetadata;
+  readonly reason?: string | null;
+}
+
+/**
+ * Explicit placeholders for future Macro V2 layers (DEC-010 / DEC-012).
+ */
 export interface MarketSnapshotQuantPlaceholder {
   readonly status: "NOT_IMPLEMENTED";
   readonly note: string;
@@ -197,12 +248,12 @@ export interface MarketSnapshotSynthesisPlaceholder {
 
 /**
  * Foundation contract for CurrentMarketSnapshot (DEC-010).
- * Holds typed observed DATA in M1B-1, with explicit placeholders for M2-M4 layers.
+ * Holds typed observed DATA and Gate M2 MacroAssessment.
  */
 export interface CurrentMarketSnapshot {
   readonly timestamp: number;
   readonly data: MarketSnapshotData;
-  readonly macro?: MarketSnapshotMacroPlaceholder | null;
+  readonly macro?: MacroAssessment | null;
   readonly quant?: MarketSnapshotQuantPlaceholder | null;
   readonly synthesis?: MarketSnapshotSynthesisPlaceholder | null;
 }
