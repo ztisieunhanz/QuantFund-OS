@@ -13,7 +13,8 @@ Before any major architecture decision, forensic repair plan, or coding-agent pr
 1. verify the current Git HEAD;
 2. verify working-tree status;
 3. read this file;
-4. inspect the relevant current source files.
+4. read `DECISIONS.md`;
+5. inspect the relevant current source files.
 
 Do not rely only on AI memory or previous agent reports.
 
@@ -21,426 +22,203 @@ Do not rely only on AI memory or previous agent reports.
 
 ## 2. Current Verified Checkpoint
 
-Repository:
-
-`ztisieunhanz/QuantFund-OS`
-
-Verified checkpoint before this documentation change:
-
-`65ea16c2b08710f1f09ac12902c3993f0745686c`
-
-Commit:
-
-`Gate 0: repair build and type contracts`
-
-Status at that checkpoint:
-
-- production build passes;
-- TypeScript contract/build baseline repaired;
-- Vitest infrastructure installed;
-- working tree was clean;
-- checkpoint was pushed to GitHub master.
-
-Gate 1 forensic audit was performed read-only against this checkpoint.
-
-No Gate 1 repair has been committed yet.
+- **Repository**: `ztisieunhanz/QuantFund-OS`
+- **HEAD Commit**: `49e42dea219069600fb0ba67495cef0598769540`
+- **Commit Message**: `Gate 2A: repair core quant validity`
+- **Gate Statuses**:
+  - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
+  - **Gate 1** (Forensic Audit): **COMPLETE**
+  - **Gate 2A** (Core Quant Validity Repair): **COMPLETE**
+- **Latest Verification Results**:
+  - `npm run build`: **PASS**
+  - `npx vitest run`: **PASS** (24/24 tests across 3 test files)
+  - `git diff --check`: **PASS**
+- **Working Tree State**: Clean immediately following Gate 2A commit.
 
 ---
 
 ## 3. Frozen Architecture
 
-The intended architecture is:
+The canonical QuantFund OS processing pipeline is:
 
+```
 POINT-IN-TIME DATA
-→ ALPHA ENGINES
-→ SIGNAL NORMALIZATION
-→ PERMISSION GATE
-→ RISK ENGINE
-→ OMEGA ALLOCATOR
-→ TARGET POSITION
-→ EXECUTION ENGINE
-→ SINGLE CANONICAL LEDGER / AUDIT / PnL
+  ↓
+ALPHA ENGINES (Adaptive Trend, Event Reaction, Mean Reversion)
+  ↓
+SIGNAL NORMALIZATION
+  ↓
+PERMISSION GATE
+  ↓
+RISK ENGINE
+  ↓
+OMEGA ALLOCATOR
+  ↓
+TARGET POSITION
+  ↓
+EXECUTION ENGINE
+  ↓
+SINGLE CANONICAL LEDGER / AUDIT / PnL
+```
 
-Current Alpha engines:
-
+### Alpha Engines
 - Adaptive Trend
 - Event Reaction
 - Mean Reversion
 
-Benchmark:
-
-- DCA is benchmark/control only.
-- DCA must not participate in Omega.
-- DCA must not become a fallback allocator.
-- DCA must not alter Alpha/Omega portfolio PnL.
+### Benchmark & Control Policy
+- DCA (Dollar-Cost Averaging) is benchmark/control only.
+- DCA must never participate in Omega allocation or become a fallback allocator.
+- DCA must never alter Alpha/Omega portfolio PnL or decisions.
 
 ---
 
-## 4. Non-Negotiable Invariants
+## 4. Core Non-Negotiable Invariants
 
-### Layer separation
+### Architectural Layer Separation
+- **Signal != Permission**: An Alpha engine generates signal metrics, not authorization to trade.
+- **Permission != Risk**: Being permitted to trade does not dictate risk limits.
+- **Risk != Allocation**: Risk boundaries define safe envelopes, not optimal asset weights.
+- **Allocation != Execution**: Target position weights require execution mechanics (order timing, slippage, fills) to become trades.
+- **Alpha does not decide final position size**: Omega and Risk control position sizing.
+- **Omega does not manufacture alpha**: Omega operates on existing Alpha, Permission, and Risk signals.
 
-Signal != Permission
+### Point-in-Time & Execution Integrity
+- **No future information**: No future data may influence decisions at time T.
+- **Point-in-Time execution**: All decisions use strictly available point-in-time state.
+- **Explicit execution timestamps**: Every execution is timestamped. `NEXT_BAR_OPEN` means decision at bar T executed at bar T+1 OPEN.
 
-Permission != Risk
+### Determinism & Research Discipline
+- **Determinism**: Same input data + config + seed strictly yields the same result. Unseeded `Math.random` is prohibited in validation fixtures.
+- **No superficial tuning**: Parameters and strategy formulas must never be tuned merely because a backtest or test result looks bad.
 
-Risk != Allocation
+### Single Canonical Ledger & Provenance
+- **Single Canonical Ledger**: Financial PnL, cash, positions, fills, and NAV belong exclusively to the canonical execution ledger. Alpha engines cannot maintain authoritative competing ledgers.
+- **No Rogue Simulation**: Alpha engines must not manufacture authoritative financial accounting telemetry.
+- **Truthful Market Provenance**: Synthetic data must never be presented or flagged as real/live market history. `LIVE` maps to live feeds; `SYNTHETIC` maps to synthetic data.
 
-Allocation != Execution
-
-Alpha engines do not decide final portfolio position size.
-
-Omega consumes existing Alpha / Permission / Risk information.
-
-Omega must not manufacture a new Alpha signal.
-
-### Point-in-time integrity
-
-No future information may influence a decision at time T.
-
-Every decision must use information available at or before T.
-
-Every execution must have an explicit timestamp.
-
-NEXT_BAR_OPEN means:
-
-decision at bar T
-→ execution at bar T+1 OPEN
-
-### Determinism
-
-Same:
-
-- input data
-- config
-- deterministic seed
-
-must produce the same result.
-
-Unseeded randomness is not acceptable in validation fixtures.
-
-### Accounting
-
-There must be one canonical execution/accounting ledger for the Alpha/Omega portfolio.
-
-UI or sub-bot simulations must not independently manufacture authoritative:
-
-- fills
-- cash
-- position quantity
-- fees
-- slippage
-- realized PnL
-- NAV
-- trade statistics
-
-### Research discipline
-
-Do not tune strategy parameters because a backtest looks bad.
-
-Do not alter strategy formulas merely to make tests pass.
-
-A passing test is not proof of correctness.
-
-A failing statistical test is not automatically proof of a strategy bug.
+### Domain & Portfolio Semantics
+- **1H Time Domain**: The canonical executable quant engine operates strictly on 1H bars (`QUANT_BAR_INTERVAL = "1h"`, `BAR_DURATION_MS = 3,600,000`, `BARS_PER_YEAR = 8,760`).
+- **Long-Only Execution**: The current executable portfolio is strictly long-only. Negative Alpha signals remain valid research telemetry, but final executable target asset weights must not claim short positions (non-negative weights).
 
 ---
 
-## 5. Current Time-Domain Policy
+## 5. Gate 2A Completed Repairs
 
-The current executable QuantFund OS engine is a:
+Gate 2A addressed and repaired the following core validity issues:
 
-**1-HOUR BAR ENGINE**
+1. **Canonical 1H Time Domain**:
+   - Explicitly defined constants: `QUANT_BAR_INTERVAL = "1h"`, `BAR_DURATION_MS = 3,600,000`, `BARS_PER_YEAR = 8,760`.
+   - Annualization aligned to hourly BTC/24x7 trading domain.
 
-Current production market state defaults to:
+2. **Explicit Replay Market Context**:
+   - Market context (interval + data source) is explicitly propagated through quant pipeline.
+   - Unsupported bar intervals block canonical quant execution.
+   - Stale 1H quant state is cleared when switching to unsupported bar intervals.
 
-`1h`
+3. **Macro/Event PIT Contamination Seam**:
+   - `PaperEngine` adapter no longer projects current/live macro values into historical replay.
+   - `macroTimeline` and `eventTimeline` remain empty until genuine historical point-in-time ingestion exists.
 
-Therefore:
+4. **Truthful Market Provenance**:
+   - Live data sources map strictly to `LIVE`.
+   - Synthetic sources map strictly to `SYNTHETIC`.
+   - Hidden default-to-LIVE replay paths eliminated.
 
-`1 bar = 1 hour`
+5. **Rogue Alpha Sub-Ledger Removed**:
+   - Removed rogue sub-simulation authority from strategy layer.
+   - Alpha engines restricted to signal/research telemetry.
+   - Per-strategy round-trip trade reconstruction deferred until canonical attribution exists.
 
-Runtime/backtest logic must not silently interpret one bar as one calendar day.
+6. **Fabricated Strategy-PnL Correlation Removed**:
+   - Eliminated synthetic `alphaScore × portfolio-PnL` proxies fed into Omega allocator.
+   - Strategy correlation remains null/unavailable until genuine PnL attribution is built.
 
-Multi-timeframe quant support is NOT currently implemented.
+7. **Long-Only Semantic Repair**:
+   - Preserved upstream negative alpha signals as research telemetry.
+   - Guaranteed executable Omega target weights remain non-negative in the long-only execution context.
 
-Non-1H input must not silently use 1H quantitative assumptions.
+8. **Deterministic Validation Fixtures**:
+   - Replaced unseeded `Math.random()` fixtures with seeded, deterministic test datasets and hourly timestamps.
 
----
-
-## 6. Gate Progress
-
-### Gate 0 — Build / Type Contract Repair
-
-Status:
-
-**COMPLETE**
-
-Checkpoint:
-
-`65ea16c2b08710f1f09ac12902c3993f0745686c`
-
-Gate 0 established a compilable baseline and restored type-contract consistency.
-
----
-
-### Gate 1 — Forensic Audit
-
-Status:
-
-**AUDIT COMPLETE — REPAIRS NOT YET APPLIED**
-
-Gate 1 was read-only.
-
-The audit report was independently reviewed before defining Gate 2.
-
-Important rule:
-
-Agent finding IDs from Gate 1 are evidence candidates, not automatically verified truth.
-
-Independent review reclassified several findings.
+9. **Targeted Invariant Tests Added (24/24 PASS)**:
+   - Event expiry in hourly bar domain.
+   - `NEXT_BAR_OPEN` execution timing.
+   - Long-only target weight clamping.
+   - Rogue Alpha ledger absence.
+   - Fabricated correlation absence.
+   - Provenance mapping accuracy.
+   - `PaperEngine` empty macro/event dataset seam.
+   - Stale-state clearing on unsupported interval.
+   - Multi-run test determinism.
 
 ---
 
-## 7. Independently Confirmed Core Problems
+## 6. Preserved Audit Findings (Not Proven Defective)
 
-These findings are currently considered sufficiently evidenced to guide the next repair gate.
+The following Gate 1 claims were audited and determined NOT to be core defects requiring code changes:
 
-### CORE-01 — 1H timeframe mismatch
-
-The production market store defaults to 1H bars, while parts of the quantitative engine still contain daily assumptions including:
-
-- `86_400_000` milliseconds per bar;
-- Event Reaction age expressed as elapsed calendar days;
-- validUntil calculations treating holding-period bars as days;
-- annualization based on `252`;
-- CAGR / Sharpe / Sortino time conversion based on daily observations.
-
-This is a core validity issue.
-
-Gate 2 must correct UNITS only.
-
-It must not tune Alpha parameters.
+- **Slippage `baseBps` Conversion**: Slippage `baseBps` conversion was not proven defective (`0.0005 × 10000 = 5 bps` is mathematically consistent).
+- **NEXT_BAR_OPEN Close Marking**: Executing at T+1 open and marking the resulting position at T+1 close is not by itself evidence of look-ahead.
+- **End-of-Bar NAV Close Marking**: End-of-bar NAV marked at close is not inherently invalid.
+- **Slippage Metric Reporting**: A separately reported slippage-cost metric is not automatically accounting double-counting.
 
 ---
 
-### CORE-02 — Historical macro contamination
+## 7. Open / Deferred Technical & Macro Risks
 
-Paper replay currently reads present/live macro-store values and projects them backward into historical replay.
+### Deferred Quant Engineering
+- Genuine historical point-in-time macro ingestion.
+- Genuine historical point-in-time event/news ingestion.
+- Genuine per-strategy PnL attribution.
+- Round-trip trade reconstruction and authoritative trade win-rate.
+- Multi-timeframe quant engine support.
+- Short-selling support and margin semantics.
+- Broader walk-forward methodology and aggregate metric updates.
+- Further Adaptive Trend persistence research.
+- Mean Reversion research improvements.
+- `liveRuntime` / execution API production hardening.
 
-This violates point-in-time historical integrity.
-
-If genuine historical macro data is unavailable, historical replay must not fabricate it.
-
----
-
-### CORE-03 — Synthetic event contamination
-
-Paper replay currently generates synthetic CPI / Fed / geopolitical events.
-
-These synthetic events must not be presented as genuine LIVE historical event data.
-
-Synthetic scenarios are allowed only in explicitly synthetic test/simulation contexts.
-
----
-
-### CORE-04 — Data provenance loss
-
-The market layer knows whether bars are:
-
-- live
-- synthetic
-
-That provenance is currently lost before the quant backtest configuration, which can report data as LIVE even when upstream data is synthetic.
-
-Data quality must remain truthful end-to-end.
+### Legacy Macro Risks (To Be Addressed in Macro V2)
+Inspection of legacy Macro code revealed structural risks that require audit and redesign:
+- **Synthetic Fallback Contamination**: Synthetic fallback paths can blend into apparently current macro state.
+- **Misleading Provenance**: Derived or substitute market metrics lack explicit data quality lineage.
+- **Hard-coded Data**: Vietnam market breadth, liquidity, and foreign flow contain hard-coded static arrays.
+- **Heuristic Output Presented as Authority**: Macro regime and allocation outputs are heuristic and must be represented as model interpretation rather than objective factual truth.
+- **Coupled Responsibilities**: Chatbot context mixes data retrieval, model evaluation, and UI rendering; `MacroView.tsx` currently owns excessive monolithic logic.
 
 ---
 
-### CORE-05 — Rogue Alpha sub-simulation
+## 8. Required Workflow
 
-`paperEngine.ts::simulateAlphaStrategy()` independently manufactures Alpha:
+For every major engineering gate:
 
-- target weights
-- cash
-- quantity
-- entry price
-- fees
-- slippage
-- realized PnL
-- wins/losses
-- fills
-- equity curves
-
-This bypasses the canonical:
-
-Permission
-→ Risk
-→ Omega
-→ Execution
-
-pipeline.
-
-It must not remain an authoritative Alpha-performance ledger.
-
----
-
-### CORE-06 — Fabricated strategy-PnL correlation
-
-The backtest currently creates strategy PnL proxies from:
-
-`alphaScore × total portfolio return`
-
-This is not genuine strategy-level PnL attribution.
-
-That synthetic proxy must not feed an Omega correlation penalty as though it were canonical strategy PnL.
-
-Until real attribution exists, fabricated correlation input should not be used.
-
----
-
-### CORE-07 — Long-only semantic mismatch
-
-Current execution is long-only.
-
-Omega may emit negative target asset weights while execution clamps them to zero.
-
-Therefore target state can imply a short position while the executable portfolio is actually flat.
-
-Current policy:
-
-Negative Alpha remains valid signal information.
-
-But final executable target weight in the current long-only portfolio must not claim a short position.
-
----
-
-### CORE-08 — Non-deterministic validation fixtures
-
-Some validation tests use unseeded `Math.random()`.
-
-A prior run produced 8/9 passing tests while a later unchanged run produced 9/9.
-
-Statistical validation fixtures must become deterministic before test results can be used as reliable evidence.
-
----
-
-## 8. Findings NOT Approved as Gate 2 Core Bugs
-
-The following Gate 1 claims must NOT automatically be implemented as repairs:
-
-### Slippage `baseBps`
-
-Current PaperEngine conversion:
-
-`0.0005 × 10000 = 5 bps`
-
-is mathematically consistent.
-
-Naming may be confusing, but this is not currently a critical accounting defect.
-
-### NEXT_BAR_OPEN close marking
-
-Executing at T+1 open and marking the resulting position to T+1 close is not by itself look-ahead.
-
-Do not redesign peak-NAV accounting solely from the previous audit claim.
-
-### NAV conservation test using close
-
-End-of-bar NAV being marked using close is not inherently incorrect.
-
-A separate explicit NEXT_BAR_OPEN timing test is needed instead.
-
-### Slippage reporting
-
-Slippage is already embedded in execution price.
-
-A separately reported slippage-cost metric is not automatically double-counting NAV.
-
-Do not redesign fee/slippage accounting without a reconciliation-specific finding.
-
----
-
-## 9. Deferred Issues
-
-Do not mix these into the immediate core repair unless independently required:
-
-- final round-trip trade reconstruction;
-- final win-rate definition;
-- walk-forward aggregate metric repair;
-- walk-forward methodology;
-- Adaptive Trend persistence research;
-- Mean Reversion trend-guard research;
-- Alpha statistical-quality tuning;
-- liveRuntime execution API redesign;
-- multi-timeframe engine support;
-- short-selling implementation;
-- real per-strategy PnL attribution;
-- real historical macro ingestion infrastructure;
-- real historical event ingestion infrastructure;
-- broad UI redesign.
-
----
-
-## 10. Next Gate
-
-Next planned work:
-
-**Gate 2A — Core Validity Repair**
-
-Strict scope:
-
-1. establish one coherent 1H time-domain contract;
-2. remove fake/future historical macro/event information;
-3. preserve market data provenance and dataQuality;
-4. remove rogue Alpha accounting as an authoritative ledger;
-5. stop fabricated strategy-PnL correlation from feeding Omega;
-6. align long-only Omega target semantics with executable behavior;
-7. make validation fixtures deterministic;
-8. add a small set of targeted invariant tests.
-
-Gate 2A must NOT:
-
-- tune Alpha parameters;
-- change Alpha formulas for performance;
-- change Omega base strategy weights;
-- change fee/slippage assumptions;
-- change DCA architecture;
-- implement shorts;
-- perform broad research refactors.
-
----
-
-## 11. Required Workflow
-
-For every major gate:
-
-1. ChatGPT independently verifies current repository state.
-2. ChatGPT defines the narrow task/specification.
-3. Coding agent reads the REAL local repository.
-4. Coding agent implements and runs real tests.
-5. Coding agent does not commit or push.
-6. Full diff is independently reviewed.
-7. Only reviewed changes are accepted.
-8. Create local Git checkpoint.
-9. Verify clean working tree.
+1. Verify current Git HEAD and working-tree state.
+2. Read `PROJECT_STATE.md` and `DECISIONS.md`.
+3. Independently inspect relevant current source.
+4. Define a narrow gate specification.
+5. Coding agent edits the real local repository and runs real tests.
+6. Coding agent does NOT commit or push before independent review.
+7. Independently review the actual diff, not only the agent summary.
+8. Only reviewed changes are checkpointed.
+9. Verify clean working tree after commit.
 10. Push reviewed checkpoint.
-11. Update this PROJECT_STATE.md after the milestone.
+11. Update source-of-truth documentation when project state changes.
 
-No AI agent should independently:
-
-design
-→ implement
-→ test
-→ approve
-→ commit
-
-the same architectural change without an independent review step.
+No single AI agent should independently design -> implement -> test -> approve -> commit the same architectural change without independent review.
 
 ---
 
-## 12. Current Immediate Action
+## 9. Next Active Engineering Gate
 
-Create this PROJECT_STATE.md documentation checkpoint first.
+### GATE M1 — MACRO V2 DATA INTEGRITY
 
-After it is reviewed and committed, Gate 2A begins from that new clean checkpoint.
+**Goal**: Establish truthful, typed, inspectable market-data contracts before building new Macro UI or chatbot reasoning.
+
+**Initial M1 Priorities**:
+1. Inventory all legacy macro and Vietnam market data feeds.
+2. Classify data feeds into explicit categories: `LIVE`, `DERIVED`, `SYNTHETIC`, or `UNAVAILABLE`.
+3. Establish unified metadata contract: `source`, `asOf`, `freshness`, and `quality`.
+4. Prevent synthetic or hard-coded fallbacks from masquerading as current market facts.
+5. Define the data-side schema for `CurrentMarketSnapshot`.
+6. Maintain strict scope: **No broad UI redesign, no chatbot rewrite, no quant parameter tuning** during M1.
