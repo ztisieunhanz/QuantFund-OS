@@ -292,8 +292,8 @@ describe("Macro V2 Data Contract & Provenance Foundation", () => {
       timestamp: REF_TIME,
       data: snapshotData,
       macro: null,
-      quant: { status: "NOT_IMPLEMENTED", note: "Reserved for Gate M3" },
-      synthesis: { status: "NOT_IMPLEMENTED", note: "Reserved for Gate M4" },
+      quant: { status: "UNAVAILABLE", strategies: [], strongestStrategyId: null },
+      synthesis: null,
     };
 
     // Assert provenance integrity across mixed metrics

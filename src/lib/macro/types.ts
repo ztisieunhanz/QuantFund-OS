@@ -233,8 +233,89 @@ export interface MacroAssessment {
   readonly reason?: string | null;
 }
 
+// ----------------------------------------------------------------------------
+// LAYER 3 - SYNTHESIS & ADAPTER TYPES (GATE M3)
+// ----------------------------------------------------------------------------
+
+export type SynthesisStatus =
+  | "AVAILABLE"
+  | "PARTIAL"
+  | "INSUFFICIENT_DATA";
+
+export type MarketStance =
+  | "RISK_ON"
+  | "RISK_OFF"
+  | "MIXED"
+  | "DEFENSIVE"
+  | "NEUTRAL"
+  | "UNDETERMINED";
+
+export interface QuantStrategySummary {
+  readonly id: string;
+  readonly name: string;
+  readonly signal: number | null;
+  readonly state: string;
+  readonly validUntil?: number | null;
+  readonly source: "ALPHA_ENGINE";
+}
+
+export interface QuantLayerSummary {
+  readonly status: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE";
+  readonly strategies: readonly QuantStrategySummary[];
+  readonly strongestStrategyId: string | null;
+  readonly note?: string | null;
+}
+
+export interface RiskLayerSummary {
+  readonly status: "AVAILABLE" | "UNAVAILABLE";
+  readonly riskState?: string | null;
+  readonly grossExposure?: number | null;
+  readonly allowedExposure?: number | null;
+  readonly drawdown?: number | null;
+  readonly note?: string | null;
+}
+
+export interface OmegaLayerSummary {
+  readonly status: "AVAILABLE" | "UNAVAILABLE";
+  readonly targetWeights?: Readonly<Record<string, number>> | null;
+  readonly source: "OMEGA_PAPER";
+  readonly note?: string | null;
+}
+
+export interface SynthesisEvidence {
+  readonly id: string;
+  readonly layer: "DATA" | "MACRO" | "QUANT" | "RISK" | "OMEGA";
+  readonly description: string;
+  readonly sourceIds: readonly string[];
+}
+
+export interface SynthesisAssessmentModelMetadata {
+  readonly name: string;
+  readonly version: string;
+  readonly classification: "SYNTHESIS";
+}
+
+export interface SynthesisAssessment {
+  readonly status: SynthesisStatus;
+  readonly stance: MarketStance;
+
+  readonly headline: string;
+  readonly rationale: readonly string[];
+
+  readonly supportingEvidence: readonly SynthesisEvidence[];
+  readonly conflictingEvidence: readonly SynthesisEvidence[];
+
+  readonly risks: readonly string[];
+  readonly invalidation: readonly string[];
+
+  readonly dataCoverage: number;
+  readonly confidence: number | null;
+
+  readonly model: SynthesisAssessmentModelMetadata;
+}
+
 /**
- * Explicit placeholders for future Macro V2 layers (DEC-010 / DEC-012).
+ * Backward compatibility alias placeholders for future layers.
  */
 export interface MarketSnapshotQuantPlaceholder {
   readonly status: "NOT_IMPLEMENTED";
@@ -247,15 +328,17 @@ export interface MarketSnapshotSynthesisPlaceholder {
 }
 
 /**
- * Foundation contract for CurrentMarketSnapshot (DEC-010).
- * Holds typed observed DATA and Gate M2 MacroAssessment.
+ * Unified CurrentMarketSnapshot contract (DEC-010, Gate M3).
+ * Contains DATA, MACRO, QUANT, RISK, OMEGA, and SYNTHESIS layers.
  */
 export interface CurrentMarketSnapshot {
   readonly timestamp: number;
   readonly data: MarketSnapshotData;
   readonly macro?: MacroAssessment | null;
-  readonly quant?: MarketSnapshotQuantPlaceholder | null;
-  readonly synthesis?: MarketSnapshotSynthesisPlaceholder | null;
+  readonly quant?: QuantLayerSummary | null;
+  readonly risk?: RiskLayerSummary | null;
+  readonly omega?: OmegaLayerSummary | null;
+  readonly synthesis?: SynthesisAssessment | null;
 }
 
 /**
