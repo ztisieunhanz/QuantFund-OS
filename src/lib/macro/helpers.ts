@@ -5,6 +5,7 @@
 // ============================================================================
 
 import type {
+  AvailableMacroDatum,
   DerivationMetadata,
   DerivedMacroDatum,
   FreshnessEvaluation,
@@ -274,4 +275,33 @@ export function isUsableDatum<T = number>(
   }
 
   return datum.quality === "USABLE";
+}
+
+/**
+ * Truthfully formats the display label for Gold macro datum based on provenance and basis.
+ * NEVER defaults to "Gold Spot (XAU)" unless a verified spot-XAU source is present.
+ */
+export function formatGoldLabel(datum?: MacroDatum<unknown> | null): string {
+  if (!datum || datum.status === "UNAVAILABLE") {
+    return "Gold";
+  }
+
+  const avail = datum as AvailableMacroDatum<unknown>;
+  if (avail.basis === "PAXG_TOKEN" || avail.instrument.includes("PAXG")) {
+    return "Gold (PAXG Token)";
+  }
+
+  if (
+    avail.basis === "GOLD_FUTURES_CONTINUOUS" ||
+    avail.instrument.includes("GC=") ||
+    avail.instrument === "GC=F"
+  ) {
+    return "Gold Futures (GC=F)";
+  }
+
+  if (avail.basis === "SPOT_XAU" || avail.basis === "SPOT_INDEX") {
+    return "Gold Spot (XAU)";
+  }
+
+  return "Gold Market Data";
 }

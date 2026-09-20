@@ -3,7 +3,7 @@ import { Header } from "@/components/layout/Header";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useUiStore } from "@/stores/uiStore";
 import { ChartView } from "@/views/ChartView";
-import { MacroView } from "@/views/MacroView";
+import { MacroViewV2 } from "@/views/MacroViewV2";
 import { TradingLabView } from "@/views/TradingLabView";
 
 export default function App() {
@@ -16,7 +16,7 @@ export default function App() {
       <div className="flex min-w-0 flex-1 flex-col">
         <Header />
         <main className="relative min-h-0 flex-1">
-          {view === "macro" ? <MacroView /> : null}
+          {view === "macro" ? <MacroViewV2 /> : null}
           {view === "charts" ? <ChartView /> : null}
           {view === "lab" ? <TradingLabView /> : null}
           <div className="scanlines absolute inset-0 pointer-events-none" />

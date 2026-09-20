@@ -1,8 +1,14 @@
+// ============================================================================
+// FILE: src/components/GlobalChatbot.tsx
+// MODULE: GLOBAL CHATBOT COMPONENT (GATE M4 GROUNDING)
+// PRINCIPLE: Grounded on Single Shared Authoritative CurrentMarketSnapshot
+// ============================================================================
+
 import React, { useState, useEffect, useRef } from "react";
 import { BrainCircuit, X, Send, Loader2, MessageSquareText, Target } from "lucide-react";
 import { clsx } from "@/lib/clsx";
-import { useMacroStore } from "@/stores/macroStore";
-import { usePortfolioStore } from "@/stores/portfolioStore";
+import { buildGroundedChatbotSystemPrompt } from "@/lib/macro/chatbotGrounding";
+import { useSnapshotStore } from "@/stores/snapshotStore";
 
 const CHAT_EXPIRY_MS = 60 * 60 * 1000;
 
@@ -11,21 +17,18 @@ interface Message {
   text: string;
 }
 
-// Bộ phân tích Markdown cơ bản giúp tin nhắn của AI hiển thị tuyệt đẹp (Tiêu đề, in đậm, xuống dòng)
 const FormatMessage = ({ text }: { text: string }) => {
-  const lines = text.split('\n');
+  const lines = text.split("\n");
   return (
     <div className="space-y-1.5 text-[13px] leading-relaxed">
       {lines.map((line, i) => {
-        if (!line.trim()) return <div key={i} className="h-1"></div>; // Khoảng trống
-        if (line.startsWith('### ')) return <h3 key={i} className="text-sm font-bold text-[#b388ff] mt-3 mb-1 uppercase tracking-wide">{line.replace('### ', '')}</h3>;
-        if (line.startsWith('## ')) return <h2 key={i} className="text-[13px] font-bold text-white mt-2 mb-1">{line.replace('## ', '')}</h2>;
+        if (!line.trim()) return <div key={i} className="h-1"></div>;
+        if (line.startsWith("### ")) return <h3 key={i} className="text-sm font-bold text-[#b388ff] mt-3 mb-1 uppercase tracking-wide">{line.replace("### ", "")}</h3>;
+        if (line.startsWith("## ")) return <h2 key={i} className="text-[13px] font-bold text-white mt-2 mb-1">{line.replace("## ", "")}</h2>;
         
-        // Xử lý in đậm và gạch đầu dòng
-        let isList = line.startsWith('- ') || line.startsWith('* ');
-        let content = isList ? line.substring(2) : line;
+        const isList = line.startsWith("- ") || line.startsWith("* ");
+        const content = isList ? line.substring(2) : line;
         
-        // Render thẻ in đậm **bold**
         const formattedHTML = content.replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>').replace(/\*(.*?)\*/g, '<em class="italic text-slate-300">$1</em>');
 
         if (isList) {
@@ -49,8 +52,8 @@ export const GlobalChatbot: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const portfolio = usePortfolioStore();
-  const { regime } = useMacroStore();
+  const snapshot = useSnapshotStore((s) => s.snapshot);
+  const loading = useSnapshotStore((s) => s.loading);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -60,18 +63,19 @@ export const GlobalChatbot: React.FC = () => {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
 
+    const initialGreeting = snapshot
+      ? "Xin chào! Tôi là **Trợ lý AI Quản trị Rủi ro (Quant Expert)**.\n\nDữ liệu `CurrentMarketSnapshot` đã được đồng bộ hóa thành công. Bạn cần tôi phân tích chiến lược gì hôm nay?"
+      : "Xin chào! Tôi là **Trợ lý AI Quản trị Rủi ro (Quant Expert)**.\n\nHệ thống đang chờ dữ liệu `CurrentMarketSnapshot`. Vui lòng mở màn hình Macro V2 để tải snapshot.";
+
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ 
-        sender: "ai", 
-        text: "Xin chào! Tôi là **Trợ lý AI Quản trị Rủi ro (Quant Expert)**.\n\nDữ liệu Vĩ mô và Danh mục của bạn đã được đồng bộ hóa thành công. Bạn cần tôi phân tích chiến lược gì hôm nay?" 
-      }]);
+      setMessages([{ sender: "ai", text: initialGreeting }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
       const savedHistory = localStorage.getItem("quant_chat_history");
       if (savedHistory) setMessages(JSON.parse(savedHistory));
     }
-  }, []);
+  }, [snapshot]);
 
   useEffect(() => {
     if (messages.length > 1) {
@@ -84,36 +88,41 @@ export const GlobalChatbot: React.FC = () => {
     const userText = text.trim();
     setInput("");
     setMessages((prev) => [...prev, { sender: "user", text: userText }]);
+
+    // Strict Gate M4 Requirement: Read snapshot from shared Zustand store only.
+    // MUST NOT call loadRuntimeMarketSnapshot() independently during handleSend().
+    const currentSnapshot = useSnapshotStore.getState().snapshot;
+
+    if (!currentSnapshot) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          sender: "ai",
+          text: "⚠️ **Snapshot Chưa Sẵn Sàng.** Vui lòng mở màn hình Macro V2 để tải dữ liệu `CurrentMarketSnapshot` trước khi gửi câu hỏi.",
+        },
+      ]);
+      return;
+    }
+
     setIsLoading(true);
 
     try {
       const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
       if (!apiKey) throw new Error("Missing API Key");
 
-      const systemPrompt = `
-        Đóng vai trò là một Chuyên gia Tài chính Định lượng (Quant Expert). Trả lời bằng tiếng Việt, trình bày BẮT BUỘC sử dụng Markdown:
-        - Dùng "### [Tiêu đề]" cho các luận điểm chính.
-        - Dùng "**[Chữ]**" để in đậm các con số hoặc từ khóa quan trọng.
-        - Dùng "- " để gạch đầu dòng các ý.
-        - XUỐNG DÒNG rõ ràng, KHÔNG viết thành một khối chữ dài.
-        
-        DỮ LIỆU THỰC TẾ CỦA KHÁCH HÀNG:
-        - Tổng NAV: $${portfolio.getTotalNav()}
-        - Tiền mặt: $${portfolio.cashUsd}
-        - Trạng thái Vĩ mô: ${regime?.label || 'Chưa rõ'} (Điểm rủi ro: ${regime?.score || 0}/100)
-        - Phân bổ tài sản: ${JSON.stringify(portfolio.assets.map(a => ({ Tên: a.name, Giá_trị: `$${a.currentValue}`, Tỷ_trọng: `${a.allocationPercent}%` })))}
-      `;
+      const systemPrompt = buildGroundedChatbotSystemPrompt(currentSnapshot);
 
       const apiContents = [
         { role: "user", parts: [{ text: systemPrompt }] },
-        { role: "model", parts: [{ text: "Đã hiểu, tôi sẽ phân tích sắc bén và trình bày Markdown rõ ràng." }] },
-        ...messages.slice(1).map(m => ({ role: m.sender === "user" ? "user" : "model", parts: [{ text: m.text }] })),
-        { role: "user", parts: [{ text: userText }] }
+        { role: "model", parts: [{ text: "Đã hiểu, tôi sẽ phân tích dựa trên dữ liệu CurrentMarketSnapshot được cung cấp." }] },
+        ...messages.slice(1).map((m) => ({ role: m.sender === "user" ? "user" : "model", parts: [{ text: m.text }] })),
+        { role: "user", parts: [{ text: userText }] },
       ];
 
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: apiContents, generationConfig: { temperature: 0.2 } })
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: apiContents, generationConfig: { temperature: 0.2 } }),
       });
 
       const data = await response.json();
@@ -127,11 +136,37 @@ export const GlobalChatbot: React.FC = () => {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault(); // Ngăn xuống dòng
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
       handleSend(input);
     }
   };
+
+  // Truthful Sync Status Display
+  let statusText = "Snapshot Unavailable";
+  let statusColor = "text-rose-400";
+  let dotColor = "bg-rose-400";
+
+  if (loading) {
+    statusText = "Loading Snapshot...";
+    statusColor = "text-amber-400";
+    dotColor = "bg-amber-400 animate-pulse";
+  } else if (snapshot) {
+    const synthStatus = snapshot.synthesis?.status;
+    if (synthStatus === "AVAILABLE") {
+      statusText = "Grounded Snapshot Ready";
+      statusColor = "text-emerald-400";
+      dotColor = "bg-emerald-400 animate-pulse";
+    } else if (synthStatus === "PARTIAL") {
+      statusText = "Partial Snapshot Ready";
+      statusColor = "text-amber-400";
+      dotColor = "bg-amber-400 animate-pulse";
+    } else {
+      statusText = "Insufficient Data";
+      statusColor = "text-rose-400";
+      dotColor = "bg-rose-400";
+    }
+  }
 
   return (
     <>
@@ -154,8 +189,8 @@ export const GlobalChatbot: React.FC = () => {
               </div>
               <div>
                 <h3 className="font-bold text-sm text-slate-100 tracking-wide">AI Quant Expert</h3>
-                <p className="text-[11px] text-emerald-400 flex items-center gap-1.5 mt-0.5">
-                  <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span> Data Synced
+                <p className={clsx("text-[11px] flex items-center gap-1.5 mt-0.5 font-mono", statusColor)}>
+                  <span className={clsx("w-1.5 h-1.5 rounded-full", dotColor)}></span> {statusText}
                 </p>
               </div>
             </div>
@@ -179,7 +214,7 @@ export const GlobalChatbot: React.FC = () => {
             ))}
             {isLoading && (
               <div className="flex items-center gap-2 text-slate-400 text-xs p-2">
-                <Loader2 size={16} className="animate-spin text-[#b388ff]" /> Trợ lý đang tính toán dữ liệu...
+                <Loader2 size={16} className="animate-spin text-[#b388ff]" /> Trợ lý đang suy luận dữ liệu...
               </div>
             )}
             <div ref={messagesEndRef} />
