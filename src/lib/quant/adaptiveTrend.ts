@@ -10,6 +10,7 @@ import type {
   SignalOutput,
   PointInTimeBar,
 } from "@/lib/quant/types";
+import { BAR_DURATION_MS, BARS_PER_YEAR } from "@/lib/quant/timeDomain";
 
 // ----------------------------------------------------------------------------
 // 1. CONFIGURATION INTERFACE & DEFAULT PARAMETERS
@@ -74,7 +75,8 @@ function calculateRealizedVolAnnualized(bars: readonly PointInTimeBar[], period:
   if (logReturns.length <= 1) return null;
   const mean = logReturns.reduce((sum, r) => sum + r, 0) / logReturns.length;
   const variance = logReturns.reduce((sum, r) => sum + (r - mean) ** 2, 0) / (logReturns.length - 1);
-  return Math.sqrt(variance * 252);
+  // Annualize using 1H bars per year (BARS_PER_YEAR = 8760), not 252 trading days
+  return Math.sqrt(variance * BARS_PER_YEAR);
 }
 
 function calculateSMA(bars: readonly PointInTimeBar[], period: number): number | null {
@@ -207,7 +209,8 @@ export function evaluateAdaptiveTrend(
     forecastVol: Math.round(forecastVol * 1000) / 1000,
     holdingPeriod,
     decayRate: null,
-    validUntil: currentBarTimestamp + holdingPeriod * 86_400_000,
+    // validUntil uses 1H BAR_DURATION_MS, not 86_400_000 (1 day)
+    validUntil: currentBarTimestamp + holdingPeriod * BAR_DURATION_MS,
     rationale: `AdaptiveTrend[${signLong >= 0 ? "+" : "-"}${signMed >= 0 ? "+" : "-"}${signShort >= 0 ? "+" : "-"}]: Persistence=${persistenceRatio.toFixed(2)}, ChandelierBreak=${chandelierExitTriggered}`,
     // Khắc phục Lỗi 3: Đổi rawFeatures sang metadata đúng chuẩn types.ts
     metadata: {

@@ -11,6 +11,7 @@ import type {
   PointInTimeBar,
   AssetId,
 } from "@/lib/quant/types";
+import { BAR_DURATION_MS, BARS_PER_YEAR } from "@/lib/quant/timeDomain";
 
 // ----------------------------------------------------------------------------
 // 1. CONFIGURATION INTERFACE & DEFAULT PARAMETERS
@@ -55,7 +56,8 @@ function calculateRealizedVolAnnualized(bars: readonly PointInTimeBar[], period 
   if (logReturns.length === 0) return null;
   const mean = logReturns.reduce((sum, r) => sum + r, 0) / logReturns.length;
   const variance = logReturns.reduce((sum, r) => sum + (r - mean) ** 2, 0) / (logReturns.length - 1);
-  return Math.sqrt(variance * 252);
+  // Annualize using 1H bars per year (BARS_PER_YEAR = 8760), not 252 trading days
+  return Math.sqrt(variance * BARS_PER_YEAR);
 }
 
 /**
@@ -148,10 +150,11 @@ export function evaluateEventReaction(
   }
 
   // RULE C: TUỔI CỦA SỰ KIỆN & CHU KỲ NẮM GIỮ TỐI ĐA (EXPIRY)
+  // Count elapsed 1H bars, not calendar days. 1 bar = BAR_DURATION_MS = 3_600_000ms
   const elapsedMs = decisionTimestamp - latestEvent.publicationTimestamp;
-  const elapsedDays = Math.floor(elapsedMs / 86_400_000);
+  const elapsedBars = Math.floor(elapsedMs / BAR_DURATION_MS);
 
-  if (elapsedDays >= config.maxHoldingPeriodBars) {
+  if (elapsedBars >= config.maxHoldingPeriodBars) {
     return {
       strategyId,
       assetId,
@@ -163,8 +166,8 @@ export function evaluateEventReaction(
       holdingPeriod: 0,
       decayRate: null,
       validUntil: null,
-      rationale: `EVENT_EXPIRED: Elapsed bars (${elapsedDays}) >= MaxHoldingPeriod (${config.maxHoldingPeriodBars})`,
-      metadata: { elapsedDays },
+      rationale: `EVENT_EXPIRED: Elapsed bars (${elapsedBars}) >= MaxHoldingPeriod (${config.maxHoldingPeriodBars})`,
+      metadata: { elapsedBars },
     };
   }
 
@@ -243,8 +246,9 @@ export function evaluateEventReaction(
   const volFilterMultiplier = vixZ > config.volSpikeFilterZScore ? 0.5 : 1.0;
 
   // 5. TÍNH TOÁN SUY GIẢM TÍN HIỆU THEO THỜI GIAN (EXPONENTIAL HALF-LIFE DECAY)
-  // Công thức: DecayMultiplier = 0.5 ^ (elapsedDays / halfLife)
-  const decayMultiplier = Math.pow(0.5, elapsedDays / config.halfLifeDecayBars);
+  // Công thức: DecayMultiplier = 0.5 ^ (elapsedBars / halfLife)
+  // elapsedBars counts 1H bars elapsed since the event publication
+  const decayMultiplier = Math.pow(0.5, elapsedBars / config.halfLifeDecayBars);
   const decayRatePerBar = 1.0 - Math.pow(0.5, 1.0 / config.halfLifeDecayBars);
 
   // 6. TÍNH TOÁN ALPHA SCORE VÀ CONFIDENCE
@@ -262,8 +266,9 @@ export function evaluateEventReaction(
   const forecastVol = calculateRealizedVolAnnualized(priceHistory, 20) ?? config.defaultVolAnnualized;
   const expectedReturn = rawAlphaScore * forecastVol * config.assumedInformationRatio;
 
-  const remainingHoldingPeriod = Math.max(1, config.maxHoldingPeriodBars - elapsedDays);
-  const validUntilTimestamp = latestEvent.publicationTimestamp + config.maxHoldingPeriodBars * 86_400_000;
+  const remainingHoldingPeriod = Math.max(1, config.maxHoldingPeriodBars - elapsedBars);
+  // validUntil uses 1H BAR_DURATION_MS, not 86_400_000 (1 day)
+  const validUntilTimestamp = latestEvent.publicationTimestamp + config.maxHoldingPeriodBars * BAR_DURATION_MS;
 
   return {
     strategyId,
@@ -285,7 +290,7 @@ export function evaluateEventReaction(
       expectedDirection,
       postEventReturn,
       marketConfirms,
-      elapsedDays,
+      elapsedBars,
       decayMultiplier,
       sourceQuality: latestEvent.sourceQuality,
     },

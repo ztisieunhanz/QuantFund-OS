@@ -1,12 +1,26 @@
 // ============================================================================
 // FILE: src/lib/paperEngine.ts
-// MODULE: QUANT ADAPTER & REPLAY ENGINE (POINT-IN-TIME MACRO & EVENT SYNCED)
+// MODULE: QUANT ADAPTER & REPLAY ENGINE
+//
+// CORE-02/03: Historical macro and event timelines are NOT fabricated here.
+//   Paper replay provides no historical macro and no historical event data.
+//   Until genuine point-in-time historical data exists, both timelines are empty.
+//
+// CORE-04: Market data source ("live" | "synthetic") is propagated truthfully
+//   into BacktestConfig.dataQuality.
+//
+// CORE-05: Alpha sub-bots hold SIGNAL TELEMETRY ONLY.
+//   They do not manufacture fills, cash changes, trades, fees, or PnL.
+//   The canonical ledger is the Omega/ExecutionEngine path only.
+//
+// BLOCKER 1/2: replay() takes QuantReplayMarketContext explicitly.
+//   Both interval and source are REQUIRED — no default-to-LIVE path.
+//   PaperEngine enforces its own 1H boundary independently.
 // ============================================================================
 
 import type {
   BotMetrics,
   EquityPoint,
-  OhlcvBar,
   PositionSide,
   QuantBotId,
   TradeFill,
@@ -17,16 +31,56 @@ import type {
   BacktestConfig,
   DecisionState,
   PointInTimeBar,
-  PointInTimeEvent,
-  PointInTimeMacro,
   StrategyId,
 } from "@/lib/quant/types";
-
-import { useMacroStore } from "@/stores/macroStore";
+import { QUANT_BAR_INTERVAL, type QuantReplayMarketContext } from "@/lib/quant/timeDomain";
 
 export const STARTING_EQUITY = 10_000;
 export const FEE_BPS = 0.001;       // 10 bps hoa hồng
 export const SLIPPAGE_BPS = 0.0005; // 5 bps trượt giá cố định
+
+/**
+ * CORE-04: Production mapping from caller-supplied source provenance
+ * to BacktestConfig.dataQuality.
+ *
+ * Exported as a pure function so tests can verify the exact production
+ * path — not a test-local duplicate.
+ * There is NO default: the caller must supply "live" or "synthetic".
+ */
+export function mapSourceToDataQuality(
+  source: "live" | "synthetic"
+): "LIVE" | "SYNTHETIC" {
+  return source === "live" ? "LIVE" : "SYNTHETIC";
+}
+
+/**
+ * CORE-02/03: Production helper to construct the canonical BacktestDataset
+ * for PaperEngine replay.
+ *
+ * Historical macro and event timelines are intentionally empty.
+ * No historical macro or event data is fabricated.
+ *
+ * Exported so tests inspect the exact production dataset construction seam.
+ */
+export function buildPaperEngineDataset(
+  bars: Array<{ time: number; open: number; high: number; low: number; close: number; volume: number }>
+): BacktestDataset {
+  const pitBars: PointInTimeBar[] = bars.map((b) => ({
+    timestamp: b.time < 1e11 ? b.time * 1000 : b.time,
+    open: b.open,
+    high: b.high,
+    low: b.low,
+    close: b.close,
+    volume: b.volume,
+  }));
+
+  return {
+    assetBars: { BTC: pitBars },
+    macroTimeline: [],
+    eventTimeline: [],
+    benchmarkAssetId: "BTC",
+  };
+}
 
 interface SubBotTracker {
   readonly id: QuantBotId;
@@ -95,107 +149,6 @@ function toBotMetrics(tracker: SubBotTracker, markPrice: number): BotMetrics {
   };
 }
 
-/**
- * Xây dựng chuỗi sự kiện Point-In-Time lịch sử khớp 100% với các bộ lọc
- * trong evaluateEventReaction và getExpectedDirectionHypothesis (eventReaction.ts).
- */
-function generateHistoricalEventTimeline(pitBars: PointInTimeBar[]): PointInTimeEvent[] {
-  if (!pitBars || pitBars.length < 140) return [];
-
-  const events: PointInTimeEvent[] = [];
-
-  // Mẫu sự kiện chuẩn hóa: relativeSurprise luôn >= 5% để vượt qua minSurpriseRelativeThreshold
-  const macroScenarios = [
-    {
-      type: "CPI_INFLATION_RELEASE",
-      actual: 2.8,
-      consensus: 3.2,
-      previous: 3.4,
-      surprise: -0.4, // Lạm phát thấp hơn dự báo -> Dovish -> Bullish BTC (+1)
-      sourceQuality: "TIER_1_OFFICIAL" as const,
-      noveltyScore: 0.88,
-    },
-    {
-      type: "FED_RATE_DECISION",
-      actual: 5.50,
-      consensus: 5.00,
-      previous: 5.00,
-      surprise: 0.50, // Lãi suất cao hơn dự báo -> Hawkish -> Bearish BTC (-1)
-      sourceQuality: "TIER_1_OFFICIAL" as const,
-      noveltyScore: 0.92,
-    },
-    {
-      type: "US_CPI_REPORT",
-      actual: 2.5,
-      consensus: 2.9,
-      previous: 3.0,
-      surprise: -0.4, // Lạm phát hạ nhiệt tiếp tục -> Bullish BTC (+1)
-      sourceQuality: "TIER_1_OFFICIAL" as const,
-      noveltyScore: 0.85,
-    },
-    {
-      type: "GEOPOLITICAL_CRISIS_CONFLICT",
-      actual: 1.0,
-      consensus: 0.2,
-      previous: 0.0,
-      surprise: 0.8, // Xung đột địa chính trị / chiến sự -> Risk-off -> Bearish BTC (-1)
-      sourceQuality: "TIER_1_OFFICIAL" as const,
-      noveltyScore: 0.95,
-    },
-    {
-      type: "FED_POLICY_DECISION",
-      actual: 4.75,
-      consensus: 5.25,
-      previous: 5.25,
-      surprise: -0.50, // Fed hạ lãi suất mạnh 50 bps -> Bullish BTC (+1)
-      sourceQuality: "TIER_1_OFFICIAL" as const,
-      noveltyScore: 0.90,
-    },
-    {
-      type: "NON_FARM_PAYROLLS_REPORT",
-      actual: 260,
-      consensus: 180,
-      previous: 175,
-      surprise: 80, // Việc làm quá nóng -> Fed duy trì thắt chặt -> Bearish BTC (-1)
-      sourceQuality: "TIER_1_OFFICIAL" as const,
-      noveltyScore: 0.80,
-    },
-    {
-      type: "FED_RATE_DECISION",
-      actual: 4.25,
-      consensus: 4.75,
-      previous: 4.75,
-      surprise: -0.50, // Chu kỳ nới lỏng tiếp diễn -> Bullish BTC (+1)
-      sourceQuality: "TIER_1_OFFICIAL" as const,
-      noveltyScore: 0.85,
-    },
-  ];
-
-  // Bắt đầu phát sinh sự kiện sau mốc warmup (nến 135), lặp đều mỗi 38-42 nến (~1.5 tháng)
-  let scIdx = 0;
-  for (let i = 135; i < pitBars.length - 4; i += 38) {
-    const bar = pitBars[i];
-    const sc = macroScenarios[scIdx % macroScenarios.length];
-    scIdx++;
-
-    events.push({
-      eventId: `pit-event-${i}`,
-      eventType: sc.type,
-      eventTimestamp: bar.timestamp,
-      publicationTimestamp: bar.timestamp,
-      consensusSnapshotTimestamp: bar.timestamp - 3600000,
-      actual: sc.actual,
-      consensus: sc.consensus,
-      previous: sc.previous,
-      surprise: sc.surprise,
-      sourceQuality: sc.sourceQuality,
-      noveltyScore: sc.noveltyScore,
-    });
-  }
-
-  return events;
-}
-
 export class PaperEngine {
   trend: SubBotTracker = createSubBot("trend", "ADAPTIVE_TREND", "Alpha 1 · Adaptive Trend");
   event: SubBotTracker = createSubBot("event", "EVENT_REACTION", "Alpha 2 · Event Catalyst");
@@ -214,8 +167,23 @@ export class PaperEngine {
     this.latestDecision = null;
   }
 
+  /**
+   * Replay bars through the canonical quant engine.
+   *
+   * @param bars - OHLCV bars from the market store (OhlcvBar[] format).
+   * @param ctx  - QuantReplayMarketContext carrying interval and source.
+   *               Both fields are REQUIRED — there is no default.
+   *               source: "live" | "synthetic" — mapped directly to dataQuality.
+   *               interval: must equal QUANT_BAR_INTERVAL ("1h").
+   *
+   * BLOCKER 2: PaperEngine enforces the 1H boundary independently.
+   * If interval !== QUANT_BAR_INTERVAL, an error is thrown immediately
+   * before any backtestEngine call.
+   * The tradingStore normally prevents this by resetting to neutral first.
+   */
   replay(
-    bars: OhlcvBar[]
+    bars: Array<{ time: number; open: number; high: number; low: number; close: number; volume: number }>,
+    ctx: QuantReplayMarketContext
   ): {
     trend: BotMetrics;
     event: BotMetrics;
@@ -224,6 +192,16 @@ export class PaperEngine {
     benchmarkDca: BotMetrics;
     latestDecision: DecisionState | null;
   } {
+    // BLOCKER 2: PaperEngine independently enforces the 1H boundary.
+    // The store normally prevents this path, but a direct call cannot bypass the contract.
+    if (ctx.interval !== QUANT_BAR_INTERVAL) {
+      throw new Error(
+        `[PaperEngine] Unsupported interval "${ctx.interval}". ` +
+        `The canonical quant engine only processes "${QUANT_BAR_INTERVAL}" bars. ` +
+        `tradingStore must reset to neutral before calling replay on non-1H intervals.`
+      );
+    }
+
     this.reset();
     const lastClosePrice = bars && bars.length > 0 ? (bars.at(-1)?.close ?? 0) : 0;
 
@@ -240,48 +218,13 @@ export class PaperEngine {
     }
 
     try {
-      const pitBars: PointInTimeBar[] = bars.map((b) => ({
-        timestamp: b.time < 1e11 ? b.time * 1000 : b.time,
-        open: b.open,
-        high: b.high,
-        low: b.low,
-        close: b.close,
-        volume: b.volume,
-      }));
+      // CORE-02/03: Production dataset constructed via exported pure helper.
+      // macroTimeline and eventTimeline are intentionally empty.
+      const dataset = buildPaperEngineDataset(bars);
 
-      const macroStore = useMacroStore.getState();
-      const seriesList = macroStore?.series ?? [];
-
-      const yld10 = seriesList.find((s) => s.id === "us10y")?.last ?? 4.58;
-      const yld2 = seriesList.find((s) => s.id === "us2y")?.last ?? 4.86;
-      const vixVal = seriesList.find((s) => s.id === "vix")?.last ?? 18.5;
-
-      const macroTimeline: PointInTimeMacro[] = [
-        {
-          asOfTimestamp: pitBars[0]?.timestamp ?? Date.now(),
-          regime: (macroStore?.regime?.label as any) ?? "Transitional Mixed",
-          regimeScore: macroStore?.regime?.score ?? 50,
-          yield10Y: yld10,
-          yield2Y: yld2,
-          yieldSpreadBps: Math.round((yld10 - yld2) * 100),
-          vixLevel: vixVal,
-          vixZScore: vixVal >= 25 ? 2.1 : vixVal >= 20 ? 1.2 : 0.2,
-          marketBreadthRatio: 0.45,
-          marketBreadthPctAboveMa20: 42,
-          marketLiquidityRatio: 0.9,
-          foreignNetFlowBillion: -350,
-        },
-      ];
-
-      // Đấu nối chuỗi sự kiện Point-in-Time định lượng xuyên suốt 500 nến
-      const eventTimeline: PointInTimeEvent[] = generateHistoricalEventTimeline(pitBars);
-
-      const dataset: BacktestDataset = {
-        assetBars: { BTC: pitBars },
-        macroTimeline,
-        eventTimeline,
-        benchmarkAssetId: "BTC",
-      };
+      // CORE-04: Map data source truthfully to dataQuality.
+      // Uses the exported production helper — no inline ternary, no default.
+      const dataQuality = mapSourceToDataQuality(ctx.source);
 
       const config: BacktestConfig = {
         runId: `run-live-${Date.now()}`,
@@ -293,7 +236,7 @@ export class PaperEngine {
         slippageModel: { type: "FIXED_BPS", baseBps: SLIPPAGE_BPS * 10000 },
         executionRule: "NEXT_BAR_OPEN",
         deterministicSeed: 20260915,
-        dataQuality: "LIVE",
+        dataQuality,
       };
 
       const backtestResult = runBacktest(config, dataset);
@@ -305,7 +248,7 @@ export class PaperEngine {
         const barPrice = bar?.close ?? lastClosePrice;
         const barTimestampSec = Math.floor(step.timestamp / 1000);
 
-        // 1. Cập nhật Omega Meta-Fund
+        // 1. Cập nhật Omega Meta-Fund (canonical ledger)
         this.omega.equityCurve.push({ time: barTimestampSec, equity: step.nav });
         this.omega.cash = step.cash;
         this.omega.qty = step.positions["BTC"]?.quantity ?? 0;
@@ -313,15 +256,16 @@ export class PaperEngine {
         this.omega.maxDrawdown = Math.max(this.omega.maxDrawdown, step.currentDrawdown);
         this.omega.lastSignalDescription = step.targetWeights.rationale.slice(0, 48);
 
-        // 2. Cập nhật 3 Alphas độc lập
+        // 2. CORE-05: Alpha bots record SIGNAL TELEMETRY ONLY.
+        // No fills, no cash changes, no trades, no PnL fabrication.
         const signalsList = step.signals ?? [];
         const trendSig = signalsList.find((s) => s.strategyId === "ADAPTIVE_TREND");
         const eventSig = signalsList.find((s) => s.strategyId === "EVENT_REACTION");
         const mrSig = signalsList.find((s) => s.strategyId === "MEAN_REVERSION");
 
-        this.simulateAlphaStrategy(this.trend, trendSig?.alphaScore ?? 0, trendSig?.confidence ?? 0, barPrice, barTimestampSec, trendSig?.rationale);
-        this.simulateAlphaStrategy(this.event, eventSig?.alphaScore ?? 0, eventSig?.confidence ?? 0, barPrice, barTimestampSec, eventSig?.rationale);
-        this.simulateAlphaStrategy(this.mean, mrSig?.alphaScore ?? 0, mrSig?.confidence ?? 0, barPrice, barTimestampSec, mrSig?.rationale);
+        this.recordAlphaTelemetry(this.trend, trendSig?.rationale, barTimestampSec);
+        this.recordAlphaTelemetry(this.event, eventSig?.rationale, barTimestampSec);
+        this.recordAlphaTelemetry(this.mean, mrSig?.rationale, barTimestampSec);
 
         // 3. Cập nhật Benchmark Đối chứng DCA (Tích sản 5% vốn mỗi 7 phiên)
         this.simulateBenchmarkDca(barPrice, barTimestampSec, step.barIndex);
@@ -340,94 +284,35 @@ export class PaperEngine {
     };
   }
 
-  private simulateAlphaStrategy(
+  /**
+   * CORE-05: Record Alpha signal telemetry for display purposes only.
+   *
+   * Alpha bots are SIGNAL-ONLY — they do NOT:
+   *   - execute trades
+   *   - change cash
+   *   - change qty
+   *   - record fills, fees, slippage
+   *   - manufacture realized PnL or wins/losses
+   *
+   * cash = STARTING_EQUITY (fixed), qty = 0, trades = [] at all times.
+   * A flat equity point at STARTING_EQUITY is appended each bar so the
+   * equity chart renderer has data to display.
+   */
+  private recordAlphaTelemetry(
     bot: SubBotTracker,
-    alphaScore: number,
-    confidence: number,
-    price: number,
-    timestampSec: number,
-    rationale?: string
+    rationale: string | undefined,
+    timestampSec: number
   ): void {
-    if (price <= 0) return;
-
-    const targetWeight = alphaScore > 0.05
-      ? Math.min(0.85, alphaScore * Math.max(0.3, confidence))
-      : 0.0;
-
-    const currentNav = bot.cash + bot.qty * price;
-    const targetNotional = targetWeight * currentNav;
-    const currentNotional = bot.qty * price;
-    const deltaNotional = targetNotional - currentNotional;
-
-    const minRebalanceThresholdUsd = 50;
-
-    if (deltaNotional > minRebalanceThresholdUsd && bot.cash > 20) {
-      const allocUsd = Math.min(bot.cash, deltaNotional);
-      const slippedPrice = price * (1 + SLIPPAGE_BPS);
-      const fee = allocUsd * FEE_BPS;
-      const netSpend = allocUsd - fee;
-      const addedQty = netSpend / slippedPrice;
-
-      if (addedQty > 0) {
-        const totalCostPrev = bot.qty * (bot.entryPrice ?? slippedPrice);
-        bot.qty += addedQty;
-        bot.entryPrice = (totalCostPrev + addedQty * slippedPrice) / bot.qty;
-        bot.cash = Math.max(0, bot.cash - allocUsd);
-
-        bot.trades.push({
-          id: `${bot.id}-${timestampSec}-B`,
-          botId: bot.id,
-          time: timestampSec,
-          side: "BUY",
-          price: slippedPrice,
-          qty: addedQty,
-          fee,
-          slippage: slippedPrice - price,
-          notional: allocUsd,
-        });
-        bot.lastSignalDescription = `ALLOC (α: ${alphaScore.toFixed(2)}, Target: ${(targetWeight * 100).toFixed(0)}%)`;
-      }
-    } else if (deltaNotional < -minRebalanceThresholdUsd && bot.qty > 0) {
-      const reduceUsd = Math.abs(deltaNotional);
-      const unitsToSell = Math.min(bot.qty, reduceUsd / price);
-      const slippedPrice = price * (1 - SLIPPAGE_BPS);
-      const grossProceeds = unitsToSell * slippedPrice;
-      const fee = grossProceeds * FEE_BPS;
-      const netProceeds = grossProceeds - fee;
-
-      const pnl = netProceeds - unitsToSell * (bot.entryPrice ?? slippedPrice);
-      if (pnl >= 0) bot.wins++;
-      else bot.losses++;
-      bot.realizedPnl += pnl;
-
-      bot.cash += netProceeds;
-      bot.qty = Math.max(0, bot.qty - unitsToSell);
-      if (bot.qty < 1e-6) {
-        bot.qty = 0;
-        bot.entryPrice = null;
-      }
-
-      bot.trades.push({
-        id: `${bot.id}-${timestampSec}-S`,
-        botId: bot.id,
-        time: timestampSec,
-        side: "SELL",
-        price: slippedPrice,
-        qty: unitsToSell,
-        fee,
-        slippage: price - slippedPrice,
-        notional: grossProceeds,
-      });
-      bot.lastSignalDescription = `DE-ALLOC (α: ${alphaScore.toFixed(2)}, Target: ${(targetWeight * 100).toFixed(0)}%)`;
-    } else if (rationale && bot.lastSignalDescription === "INITIALIZING") {
+    // Update last signal description for UI display
+    if (rationale && bot.lastSignalDescription === "INITIALIZING") {
+      bot.lastSignalDescription = rationale.slice(0, 42);
+    } else if (rationale) {
       bot.lastSignalDescription = rationale.slice(0, 42);
     }
 
-    const closingEquity = bot.cash + bot.qty * price;
-    bot.peakNav = Math.max(bot.peakNav, closingEquity);
-    const dd = bot.peakNav > 0 ? (bot.peakNav - closingEquity) / bot.peakNav : 0;
-    bot.maxDrawdown = Math.max(bot.maxDrawdown, dd);
-    bot.equityCurve.push({ time: timestampSec, equity: Math.round(closingEquity * 100) / 100 });
+    // Flat equity line: cash stays STARTING_EQUITY, qty stays 0
+    // This is not simulated trading — it is a telemetry placeholder for the chart.
+    bot.equityCurve.push({ time: timestampSec, equity: STARTING_EQUITY });
   }
 
   private simulateBenchmarkDca(price: number, timestampSec: number, barIndex: number): void {

@@ -25,6 +25,7 @@ import { evaluatePermission, type PermissionGateConfig } from "@/lib/quant/permi
 import { evaluatePortfolioRisk, createInitialRiskState, type RiskEngineConfig, type RiskEngineState } from "@/lib/quant/riskEngine";
 import { evaluateOmegaAllocation, type OmegaAllocatorConfig } from "@/lib/quant/omegaAllocator";
 import { executeRebalance, type PortfolioAccountState } from "@/lib/quant/executionEngine";
+import { BARS_PER_YEAR, ANNUALIZATION_FACTOR } from "@/lib/quant/timeDomain";
 
 export interface BacktestDataset {
   readonly assetBars: Readonly<Record<AssetId, readonly PointInTimeBar[]>>;
@@ -97,45 +98,6 @@ function getLatestEventAsOf(
   return latest;
 }
 
-function calculateCorrelationMatrix(
-  pnlHistory: Record<StrategyId, number[]>
-): Record<StrategyId, Record<StrategyId, number>> {
-  const ids: StrategyId[] = ["ADAPTIVE_TREND", "EVENT_REACTION", "MEAN_REVERSION"];
-  const matrix: Record<StrategyId, Record<StrategyId, number>> = {
-    ADAPTIVE_TREND: { ADAPTIVE_TREND: 1, EVENT_REACTION: 0, MEAN_REVERSION: 0 },
-    EVENT_REACTION: { ADAPTIVE_TREND: 0, EVENT_REACTION: 1, MEAN_REVERSION: 0 },
-    MEAN_REVERSION: { ADAPTIVE_TREND: 0, EVENT_REACTION: 0, MEAN_REVERSION: 1 },
-  };
-
-  const sampleLen = pnlHistory.ADAPTIVE_TREND.length;
-  if (sampleLen < 15) return matrix;
-
-  for (let i = 0; i < ids.length; i++) {
-    for (let j = i + 1; j < ids.length; j++) {
-      const a = pnlHistory[ids[i]].slice(-30);
-      const b = pnlHistory[ids[j]].slice(-30);
-      const meanA = a.reduce((sum, v) => sum + v, 0) / a.length;
-      const meanB = b.reduce((sum, v) => sum + v, 0) / b.length;
-
-      let num = 0;
-      let denA = 0;
-      let denB = 0;
-      for (let k = 0; k < a.length; k++) {
-        const diffA = a[k] - meanA;
-        const diffB = b[k] - meanB;
-        num += diffA * diffB;
-        denA += diffA ** 2;
-        denB += diffB ** 2;
-      }
-      const corr = denA > 0 && denB > 0 ? num / Math.sqrt(denA * denB) : 0;
-      matrix[ids[i]][ids[j]] = Math.round(corr * 100) / 100;
-      matrix[ids[j]][ids[i]] = matrix[ids[i]][ids[j]];
-    }
-  }
-
-  return matrix;
-}
-
 export function runBacktest(
   config: BacktestConfig,
   dataset: BacktestDataset,
@@ -173,11 +135,10 @@ export function runBacktest(
     MEAN_REVERSION: { strategyId: "MEAN_REVERSION", lastEvaluationTimestamp: 0, barsSinceLastSignal: 0, internalValues: {} },
   };
 
-  const strategyPnlHistory: Record<StrategyId, number[]> = {
-    ADAPTIVE_TREND: [],
-    EVENT_REACTION: [],
-    MEAN_REVERSION: [],
-  };
+  // CORE-06: strategyPnlHistory fabrication removed.
+  // Previously this accumulated alphaScore × barPnl proxies and fed them to
+  // calculateCorrelationMatrix() → Omega, creating fabricated attribution.
+  // Until genuine per-strategy PnL attribution exists, pass null to Omega.
 
   const decisionHistory: DecisionState[] = [];
   const allExecutions: ExecutionRecord[] = [];
@@ -289,13 +250,16 @@ export function runBacktest(
     );
     riskState = updatedRiskState;
 
-    // F. OMEGA ALLOCATOR CÓ MA TRẬN TƯƠNG QUAN ĐỘNG
-    const dynamicCorrelation = calculateCorrelationMatrix(strategyPnlHistory);
+    // F. OMEGA ALLOCATOR
+    // CORE-06: strategyCorrelations = null — no fabricated attribution fed to Omega.
+    // The previous code manufactured strategy PnL proxies from alphaScore × barPnl
+    // and passed them as real correlation data. That was invalid. When genuine
+    // per-strategy PnL attribution exists, a real matrix may be passed here.
     const targetWeights = evaluateOmegaAllocation(
       signals,
       permissions,
       riskOutput,
-      dynamicCorrelation,
+      null,
       timestamp,
       strategyConfigs.omega
     );
@@ -330,14 +294,10 @@ export function runBacktest(
     if (closingNav > peakNav) peakNav = closingNav;
 
     const previousNav = decisionHistory.length > 0 ? decisionHistory[decisionHistory.length - 1].nav : config.initialCapital;
-    const dailyPnl = closingNav - previousNav;
+    // barPnl: PnL for this 1H bar (field DecisionState.dailyPnl kept for API compatibility; semantics = per-bar)
+    const barPnl = closingNav - previousNav;
     const cumulativePnl = closingNav - config.initialCapital; // Tránh floating-point accumulation drift
     const currentDrawdown = peakNav > 0 ? (peakNav - closingNav) / peakNav : 0;
-
-    // Ghi nhận PnL ước tính của 3 chiến lược phục vụ ma trận tương quan phiên kế
-    strategyPnlHistory.ADAPTIVE_TREND.push(trendSignal.alphaScore * (dailyPnl / (closingNav || 1)));
-    strategyPnlHistory.EVENT_REACTION.push(eventSignal.alphaScore * (dailyPnl / (closingNav || 1)));
-    strategyPnlHistory.MEAN_REVERSION.push(mrSignal.alphaScore * (dailyPnl / (closingNav || 1)));
 
     decisionHistory.push({
       barIndex: t,
@@ -350,7 +310,8 @@ export function runBacktest(
       risk: riskOutput,
       targetWeights,
       executions: barExecutions,
-      dailyPnl: Math.round(dailyPnl * 100) / 100,
+      // dailyPnl field name kept for public API compatibility; value is per-bar (1H) PnL
+      dailyPnl: Math.round(barPnl * 100) / 100,
       cumulativePnl: Math.round(cumulativePnl * 100) / 100,
       currentDrawdown: Math.round(currentDrawdown * 10000) / 10000,
     });
@@ -393,32 +354,35 @@ function calculateMetrics(
 
   const finalNav = history[history.length - 1].nav;
   const totalReturnPct = (finalNav - initialCapital) / initialCapital;
-  const years = Math.max(1, history.length) / 252;
+  // CORE-01: years uses BARS_PER_YEAR (8760 bars/year for 1H engine), not 252 trading days
+  const years = Math.max(1, history.length) / BARS_PER_YEAR;
   const cagrPct = years > 0 && finalNav > 0 ? Math.pow(finalNav / initialCapital, 1 / years) - 1 : 0;
 
-  const dailyReturns: number[] = [];
+  // barReturns: per-bar (1H) returns used for Sharpe/Sortino annualization
+  const barReturns: number[] = [];
   for (let i = 1; i < history.length; i++) {
     const prev = history[i - 1].nav;
-    if (prev > 0) dailyReturns.push((history[i].nav - prev) / prev);
+    if (prev > 0) barReturns.push((history[i].nav - prev) / prev);
   }
 
   let mean = 0;
   let variance = 0;
   let downsideVariance = 0;
-  if (dailyReturns.length > 1) {
-    mean = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
-    for (const r of dailyReturns) {
+  if (barReturns.length > 1) {
+    mean = barReturns.reduce((a, b) => a + b, 0) / barReturns.length;
+    for (const r of barReturns) {
       variance += (r - mean) ** 2;
       if (r < 0) downsideVariance += r ** 2;
     }
-    variance /= dailyReturns.length - 1;
-    downsideVariance /= Math.max(1, dailyReturns.filter((r) => r < 0).length);
+    variance /= barReturns.length - 1;
+    downsideVariance /= Math.max(1, barReturns.filter((r) => r < 0).length);
   }
 
   const std = Math.sqrt(variance);
   const downsideStd = Math.sqrt(downsideVariance);
-  const annualizedSharpeRatio = std > 0 ? (mean / std) * Math.sqrt(252) : 0;
-  const annualizedSortinoRatio = downsideStd > 0 ? (mean / downsideStd) * Math.sqrt(252) : 0;
+  // CORE-01: annualize using ANNUALIZATION_FACTOR = sqrt(BARS_PER_YEAR) = sqrt(8760)
+  const annualizedSharpeRatio = std > 0 ? (mean / std) * ANNUALIZATION_FACTOR : 0;
+  const annualizedSortinoRatio = downsideStd > 0 ? (mean / downsideStd) * ANNUALIZATION_FACTOR : 0;
 
   let maxDrawdownPct = 0;
   for (const s of history) {
@@ -436,11 +400,11 @@ function calculateMetrics(
   }
 
   const annualTurnoverRatio = years > 0 && initialCapital > 0 ? grossTradedVolumeUsd / initialCapital / years : 0;
-  const winDays = dailyReturns.filter((r) => r > 0);
-  const loseDays = dailyReturns.filter((r) => r < 0);
-  const winRatePct = dailyReturns.length > 0 ? (winDays.length / dailyReturns.length) * 100 : 0;
-  const sumGains = winDays.reduce((a, b) => a + b, 0);
-  const sumLosses = Math.abs(loseDays.reduce((a, b) => a + b, 0));
+  const winBars = barReturns.filter((r) => r > 0);
+  const loseBars = barReturns.filter((r) => r < 0);
+  const winRatePct = barReturns.length > 0 ? (winBars.length / barReturns.length) * 100 : 0;
+  const sumGains = winBars.reduce((a, b) => a + b, 0);
+  const sumLosses = Math.abs(loseBars.reduce((a, b) => a + b, 0));
   const profitFactor = sumLosses > 0 ? sumGains / sumLosses : 1.0;
 
   return {

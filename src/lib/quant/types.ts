@@ -174,7 +174,12 @@ export interface TargetPosition {
 
 export interface TargetPortfolioWeight {
   readonly asOfTimestamp: number;
-  readonly assetWeights: Readonly<Record<AssetId, number>>; // Trọng số từng tài sản (âm = Short)
+  // CORE-07: Current executable portfolio is LONG-ONLY.
+  // assetWeights values are clamped to >= 0 before this struct is returned from OmegaAllocator.
+  // Negative alpha signal information is valid upstream but must not produce negative
+  // executable weights in the current long-only engine.
+  // (Type kept as number for future compatibility if short-selling is ever implemented.)
+  readonly assetWeights: Readonly<Record<AssetId, number>>;
   readonly cashWeight: number;                             // Tiền mặt phòng vệ
   readonly grossExposure: number;                          // Tổng tuyệt đối |Weights|
   readonly netExposure: number;                            // Tổng đại số Weights

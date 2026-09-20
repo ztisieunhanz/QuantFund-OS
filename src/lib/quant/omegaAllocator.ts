@@ -91,9 +91,23 @@ export function evaluateOmegaAllocation(
   }
 
   // 4. CHUẨN HÓA VÀ ÁP TRẦN ĐÒN BẨY GỘP THEO RISK ENGINE (GROSS EXPOSURE CAP)
+  //
+  // CORE-07: Long-only executable clamp.
+  // Negative alphaScore is valid signal information (allowed upstream), but the
+  // current executable portfolio is LONG-ONLY. A negative raw accumulator entry
+  // (from a strategy with negative effective alpha) must NOT produce a negative
+  // final assetWeight in the returned TargetPortfolioWeight. The clamp occurs
+  // here — before scaling and before the result is handed to ExecutionEngine —
+  // so that target state never claims a short position that execution won't take.
+  // ExecutionEngine.Math.max(0, ...) remains as a defensive guard.
+  const longOnlyAccumulator: Record<AssetId, number> = {};
+  for (const [asset, weight] of Object.entries(assetWeightAccumulator)) {
+    longOnlyAccumulator[asset] = Math.max(0, weight);
+  }
+
   let totalGrossRequested = 0;
-  for (const weight of Object.values(assetWeightAccumulator)) {
-    totalGrossRequested += Math.abs(weight);
+  for (const weight of Object.values(longOnlyAccumulator)) {
+    totalGrossRequested += Math.abs(weight); // always >= 0 after clamp
   }
 
   const finalAssetWeights: Record<AssetId, number> = {};
@@ -107,10 +121,11 @@ export function evaluateOmegaAllocation(
   let finalGross = 0;
   let finalNet = 0;
 
-  for (const [asset, rawWeight] of Object.entries(assetWeightAccumulator)) {
+  for (const [asset, rawWeight] of Object.entries(longOnlyAccumulator)) {
     // Áp trần tỷ trọng tối đa cho từng tài sản đơn lẻ (Concentration Cap)
+    // rawWeight is already >= 0; scaledWeight is >= 0; cap is non-negative
     let scaledWeight = rawWeight * scalingFactor;
-    scaledWeight = Math.sign(scaledWeight) * Math.min(Math.abs(scaledWeight), config.maxAssetWeightCap);
+    scaledWeight = Math.min(scaledWeight, config.maxAssetWeightCap);
 
     finalAssetWeights[asset] = Math.round(scaledWeight * 1000) / 1000;
     finalGross += Math.abs(finalAssetWeights[asset]);

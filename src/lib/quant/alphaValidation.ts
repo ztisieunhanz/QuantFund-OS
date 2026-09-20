@@ -6,6 +6,7 @@
 
 import type { PointInTimeBar, StrategyContext, StrategyState, SignalOutput } from "./types";
 import { evaluateAdaptiveTrend, type AdaptiveTrendConfig, DEFAULT_ADAPTIVE_TREND_CONFIG } from "./adaptiveTrend";
+import { BARS_PER_YEAR } from "./timeDomain";
 
 
 // ----------------------------------------------------------------------------
@@ -153,7 +154,8 @@ export function testAlphaMonotonicity(
     for (const r of matchingReturns) variance += (r - meanRet) ** 2;
     variance /= Math.max(1, matchingReturns.length - 1);
     const std = Math.sqrt(variance);
-    const annualizedSharpe = std > 0 ? (meanRet / std) * Math.sqrt(252 / forwardHorizonBars) : 0;
+    // Annualize using 1H bars per year (BARS_PER_YEAR = 8760), not 252 trading days
+    const annualizedSharpe = std > 0 ? (meanRet / std) * Math.sqrt(BARS_PER_YEAR / forwardHorizonBars) : 0;
 
     return {
       bucketLabel: b.label,
@@ -277,9 +279,10 @@ export function runTrendAblationStudy(
     let variance = 0;
     for (const r of dailyReturns) variance += (r - mean) ** 2;
     variance /= Math.max(1, dailyReturns.length - 1);
-    const sharpe = Math.sqrt(variance) > 0 ? (mean / Math.sqrt(variance)) * Math.sqrt(252) : 0;
-    const annReturn = mean * 252 * 100;
-    const turnover = tradedVolume / (dailyReturns.length / 252 || 1);
+    // CORE-01: annualize using BARS_PER_YEAR (8760 bars/year for 1H engine)
+    const sharpe = Math.sqrt(variance) > 0 ? (mean / Math.sqrt(variance)) * Math.sqrt(BARS_PER_YEAR) : 0;
+    const annReturn = mean * BARS_PER_YEAR * 100;
+    const turnover = tradedVolume / (dailyReturns.length / BARS_PER_YEAR || 1);
 
     if (idx === 0) baseSharpe = sharpe;
 

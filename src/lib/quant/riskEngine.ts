@@ -8,6 +8,7 @@ import type {
   CircuitBreakerStatus,
   PointInTimeBar,
 } from "@/lib/quant/types";
+import { BARS_PER_YEAR } from "@/lib/quant/timeDomain";
 
 export interface RiskEngineConfig {
   readonly targetAnnualVolatility: number;  // Giả định chính sách (mặc định 12%)
@@ -65,7 +66,7 @@ function calculateBenchmarkRealizedVol(
   if (returns.length < 5) return Math.max(0.20, volFloor);
   const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
   const variance = returns.reduce((sum, r) => sum + (r - mean) ** 2, 0) / (returns.length - 1);
-  const rawVol = Math.sqrt(variance * 252);
+  const rawVol = Math.sqrt(variance * BARS_PER_YEAR); // Annualize using 1H bars/year (8760)
 
   // Bảo đảm luôn có sàn biến động để không chia cho số quá nhỏ
   return Math.max(rawVol, volFloor);

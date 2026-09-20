@@ -6,6 +6,8 @@
 
 import type { PointInTimeBar } from "./types";
 import { evaluatePortfolioRisk, createInitialRiskState, type RiskEngineConfig, DEFAULT_RISK_ENGINE_CONFIG } from "./riskEngine";
+import { BAR_DURATION_MS } from "./timeDomain";
+
 
 // ----------------------------------------------------------------------------
 // 1. STRESS-TEST REPORT CONTRACTS
@@ -118,7 +120,8 @@ export function stressTestVolFloorBoundary(
   for (let i = 0; i < 30; i++) {
     price += (i % 2 === 0 ? 10 : -10); // Biến động siêu nhỏ
     flatBars.push({
-      timestamp: startMs + i * 86400000,
+      // 1H bar spacing: use BAR_DURATION_MS (3_600_000ms), not 86400000 (1 day)
+      timestamp: startMs + i * BAR_DURATION_MS,
       open: price,
       high: price + 15,
       low: price - 15,

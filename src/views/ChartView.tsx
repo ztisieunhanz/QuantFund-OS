@@ -19,6 +19,7 @@ import { clsx } from "@/lib/clsx";
 import { formatNumber, formatPct } from "@/lib/math";
 import type { BinanceInterval } from "@/lib/binance";
 import type { OhlcvBar } from "@/types/market";
+import { QUANT_BAR_INTERVAL } from "@/lib/quant/timeDomain";
 import { useMarketStore } from "@/stores/marketStore";
 import { useTradingStore } from "@/stores/tradingStore";
 
@@ -124,8 +125,13 @@ export function ChartView() {
   }, [bars.length, load]);
 
   useEffect(() => {
-    if (bars.length >= 130) runOnBars(bars);
-  }, [bars, runOnBars]);
+    // BLOCKER 1: pass QuantReplayMarketContext explicitly — interval + source together.
+    // Trigger runOnBars if interval !== QUANT_BAR_INTERVAL (to trigger store reset guard even if bars < 130)
+    // or when bars.length >= 130 for 1H replay.
+    if (interval !== QUANT_BAR_INTERVAL || bars.length >= 130) {
+      runOnBars(bars, { interval, source });
+    }
+  }, [bars, runOnBars, interval, source]);
 
   // Tính toán toán học cho các tín hiệu Quant
   const quantData = useMemo(() => calculateQuantOverlays(bars), [bars]);

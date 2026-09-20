@@ -10,6 +10,7 @@ import type {
   SignalOutput,
   PointInTimeBar,
 } from "@/lib/quant/types";
+import { BAR_DURATION_MS, BARS_PER_YEAR } from "@/lib/quant/timeDomain";
 
 // ----------------------------------------------------------------------------
 // 1. CONFIGURATION INTERFACE & DEFAULT PARAMETERS
@@ -74,7 +75,8 @@ function calculateRealizedVolAnnualized(bars: readonly PointInTimeBar[], period:
   if (logReturns.length === 0) return null;
   const mean = logReturns.reduce((sum, r) => sum + r, 0) / logReturns.length;
   const variance = logReturns.reduce((sum, r) => sum + (r - mean) ** 2, 0) / (logReturns.length - 1);
-  return Math.sqrt(variance * 252);
+  // Annualize using 1H bars per year (BARS_PER_YEAR = 8760), not 252 trading days
+  return Math.sqrt(variance * BARS_PER_YEAR);
 }
 
 // ----------------------------------------------------------------------------
@@ -202,7 +204,8 @@ export function evaluateMeanReversion(
   // Mean Reversion là chiến lược hồi quy nhanh, holding period ngắn (3-5 bar)
   const holdingPeriod = Math.min(config.maxHoldingPeriodBars, config.baseHoldingPeriodBars);
   const decayRatePerBar = 1.0 / holdingPeriod; // Suy giảm tuyến tính sau mỗi bar không chạm target
-  const validUntilTimestamp = currentBarTimestamp + holdingPeriod * 86_400_000;
+  // validUntil uses 1H BAR_DURATION_MS, not 86_400_000 (1 day)
+  const validUntilTimestamp = currentBarTimestamp + holdingPeriod * BAR_DURATION_MS;
 
   return {
     strategyId,

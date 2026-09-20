@@ -24,6 +24,7 @@ import {
 import { Panel } from "@/components/ui/Panel";
 import { clsx } from "@/lib/clsx";
 import { FEE_BPS, STARTING_EQUITY } from "@/lib/paperEngine";
+import { QUANT_BAR_INTERVAL } from "@/lib/quant/timeDomain";
 import { formatNumber, formatPct, formatUsd } from "@/lib/math";
 import { useMarketStore } from "@/stores/marketStore";
 import { useTradingStore } from "@/stores/tradingStore";
@@ -35,6 +36,7 @@ export function TradingLabView() {
   const loadMarket = useMarketStore((s) => s.load);
   const lastPrice = useMarketStore((s) => s.lastPrice);
   const source = useMarketStore((s) => s.source);
+  const interval = useMarketStore((s) => s.interval);
 
   const trend = useTradingStore((s) => s.trend);
   const event = useTradingStore((s) => s.event);
@@ -56,18 +58,23 @@ export function TradingLabView() {
   }, [bars.length, loadMarket]);
 
   useEffect(() => {
-    if (bars.length >= 130) runOnBars(bars);
-  }, [bars, runOnBars]);
+    // BLOCKER 1: pass QuantReplayMarketContext explicitly — interval + source together.
+    // Trigger runOnBars if interval !== QUANT_BAR_INTERVAL (to trigger store reset guard even if bars < 130)
+    // or when bars.length >= 130 for 1H replay.
+    if (interval !== QUANT_BAR_INTERVAL || bars.length >= 130) {
+      runOnBars(bars, { interval, source });
+    }
+  }, [bars, runOnBars, interval, source]);
 
   const handleReplay = useCallback(() => {
     if (replaying || bars.length < 130) return;
     setReplaying(true);
     resetTrading();
     setTimeout(() => {
-      runOnBars(bars);
+      runOnBars(bars, { interval, source });
       setReplaying(false);
     }, 120);
-  }, [replaying, bars, resetTrading, runOnBars]);
+  }, [replaying, bars, interval, source, resetTrading, runOnBars]);
 
   const combinedEquitySeries = useMemo(() => {
     const timeMap = new Map<

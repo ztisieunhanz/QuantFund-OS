@@ -16,6 +16,7 @@ import { useMacroStore } from "@/stores/macroStore";
 import { usePortfolioStore } from "@/stores/portfolioStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useMarketStore } from "@/stores/marketStore";
+import { QUANT_BAR_INTERVAL } from "@/lib/quant/timeDomain";
 import { loadVietnamMarket, type VietnamMarketState } from "@/lib/vietnamFeed";
 import type { AllocationWeights, AssetKey } from "@/types/market";
 
@@ -171,7 +172,8 @@ export function MacroView() {
   const { loading, error: _error, series, regime, correlation, load } = useMacroStore();
   usePortfolioStore();
   const { trend, event, mean, benchmarkDca, runOnBars } = useTradingStore();
-  const { bars, load: loadBars } = useMarketStore();
+  const { bars, source, load: loadBars } = useMarketStore();
+  const interval = useMarketStore((s) => s.interval);
 
   const [_vietnamState, setVietnamState] = useState<VietnamMarketState | null>(null);
   const [input, setInput] = useState("");
@@ -191,10 +193,13 @@ export function MacroView() {
   }, [load, loadBars]);
 
   useEffect(() => {
-    if (bars.length >= 130 && (trend?.totalTrades ?? 0) === 0) {
-      runOnBars(bars);
+    // BLOCKER 1: pass QuantReplayMarketContext explicitly — interval + source together.
+    // Trigger runOnBars if interval !== QUANT_BAR_INTERVAL (to trigger store reset guard even if bars < 130)
+    // or when bars.length >= 130 for 1H replay.
+    if (interval !== QUANT_BAR_INTERVAL || bars.length >= 130) {
+      runOnBars(bars, { interval, source });
     }
-  }, [bars, runOnBars, trend?.totalTrades]);
+  }, [bars, runOnBars, interval, source]);
 
   const pieData = useMemo(() => {
     if (!regime) return [];
