@@ -176,3 +176,21 @@ All decisions in this log follow a compact, standard format:
 - **Scope / Consequences**: Gate M1 must be complete and verified before starting M2/M3/M4 or broad UI redesigns.
 - **Explicit Non-Goals**: Does not start UI layout work during Gate M1.
 - **Supersedes / Superseded by**: None
+
+---
+
+### DEC-013: Vietnam Market Layer 1 Scope & Data Contract
+- **ID**: `DEC-013`
+- **Date**: 2026-09-21
+- **Status**: `ACCEPTED`
+- **Decision**: Define the explicit scope, universe boundary, and accounting conventions for Layer 1 Vietnam market telemetry:
+  1. **VN-Index**: Semantic instrument identifier is `"VNINDEX"` representing the official HOSE VN-Index. Yahoo-specific `"^VNINDEX"` or provider symbols belong strictly in provider adapter mappings, not in the core architecture contract.
+  2. **Market Breadth**: Scope is strictly restricted to HOSE listed common equities (excluding ETFs, covered warrants, fund certificates, preferred shares, and non-common equity instruments). `advancing`/`declining`/`unchanged` are measured against the official HOSE exchange reference price. Security status handling must follow explicit provider metadata where available or fail closed if universe eligibility cannot be established. `pctAboveMA20/50/200` use dynamic eligible denominators comprising only common stocks with sufficient valid historical bars ($\ge 20/50/200$).
+  3. **Liquidity**: Restricted strictly to HOSE order-matching trading VALUE in Billion VND (excluding negotiated/put-through transactions). Evaluated strictly on completed daily session basis (`ratioToMa20 = matchingValueBillion / ma20ValueBillion`). Incomplete intraday values are never compared against full-day MA20.
+  4. **Foreign Flow**: Restricted strictly to HOSE foreign-investor net trading VALUE in Billion VND on a completed-session basis (`net1dBillion` = latest completed valid session, `net5dBillion` = rolling sum of latest 5 completed valid sessions). Does not mix HNX or UPCoM. Transaction-scope treatment must remain consistent across 1d and 5d without mixing negotiated and matched values.
+  5. **Layer 1 Telemetry Scope**: Vietnam metrics remain supplementary Layer 1 telemetry. They do NOT enter current global `coreMetricIds` or alter Macro V2 regime scoring. Any future regime/synthesis integration requires an explicit separate decision.
+  6. **Fail-Closed Provenance (DEC-005)**: Preserve strict fail-closed data integrity. No synthetic, PRNG, or hardcoded fallback data is permitted. Provider, instrument, source, and `asOf` timestamps must be truthful.
+- **Rationale**: Eliminates cross-exchange skew (HNX/UPCoM), transaction-type distortion (put-through trades), ticker coupling, and time-of-day bias while upholding fail-closed data integrity.
+- **Scope / Consequences**: All future Vietnam data provider adapters and contract types must conform to this HOSE-only, completed-session schema.
+- **Explicit Non-Goals**: Does not alter global core macro regime scoring, introduce HNX/UPCoM feeds, or implement a specific data provider.
+- **Supersedes / Superseded by**: None
