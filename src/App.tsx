@@ -1,4 +1,5 @@
 import { FeedSync } from "@/components/FeedSync";
+import { GlobalChatbot } from "@/components/GlobalChatbot";
 import { Header } from "@/components/layout/Header";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useUiStore } from "@/stores/uiStore";
@@ -22,6 +23,7 @@ export default function App() {
           <div className="scanlines absolute inset-0 pointer-events-none" />
         </main>
       </div>
+      <GlobalChatbot />
     </div>
   );
 }

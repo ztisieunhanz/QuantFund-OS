@@ -408,4 +408,32 @@ describe("GATE M4 — CHATBOT GROUNDING & MACRO V2 MIGRATION TESTS", () => {
     expect(unavailDatum.status).toBe("UNAVAILABLE");
     expect(unavailDatum.value).toBeNull();
   });
+
+  // J. Risk UNAVAILABLE serialization does not claim live portfolio is operating without risk limits
+  it("J. Risk UNAVAILABLE serialization does not assert live portfolio operating without risk limits", () => {
+    const data = createMockSnapshotDataWithPaxg();
+    const snapshot = buildCurrentMarketSnapshot({
+      timestamp: REF_TIME,
+      data,
+    });
+
+    const context = serializeCurrentMarketSnapshotForChatbot(snapshot);
+    expect(context).toContain("Risk State: UNAVAILABLE");
+    expect(context).toContain("Risk Layer assessment is unavailable/uncalculated in current snapshot");
+    expect(context).not.toContain("Operating without live risk limits");
+  });
+
+  // K. Grounded system prompt prohibits trading recommendations and live portfolio unhedged claims under UNAVAILABLE
+  it("K. Grounded system prompt explicitly prohibits trading-action recommendations and ungrounded risk claims", () => {
+    const data = createMockSnapshotDataWithPaxg();
+    const snapshot = buildCurrentMarketSnapshot({
+      timestamp: REF_TIME,
+      data,
+    });
+
+    const prompt = buildGroundedChatbotSystemPrompt(snapshot);
+    expect(prompt).toContain("TUYỆT ĐỐI KHÔNG tự tạo ra bất kỳ khuyến nghị hành động giao dịch nào");
+    expect(prompt).toContain("không giao dịch / dừng giao dịch / chờ đợi");
+    expect(prompt).toContain("TUYỆT ĐỐI KHÔNG tự diễn giải trạng thái Risk UNAVAILABLE thành kết luận danh mục thực tế đang vận hành không có quản trị rủi ro");
+  });
 });

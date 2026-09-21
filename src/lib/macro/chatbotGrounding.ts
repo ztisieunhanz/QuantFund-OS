@@ -96,7 +96,7 @@ export function serializeCurrentMarketSnapshotForChatbot(
     lines.push(`Gross Exposure: ${r.grossExposure != null ? r.grossExposure : "N/A"}`);
     if (r.note) lines.push(`Risk Note: ${r.note}`);
   } else {
-    lines.push("Risk State: UNAVAILABLE (Operating without live risk limits)");
+    lines.push("Risk State: UNAVAILABLE (Risk Layer assessment is unavailable/uncalculated in current snapshot)");
   }
 
   // Omega Layer
@@ -163,6 +163,8 @@ export function serializeCurrentMarketSnapshotForChatbot(
   lines.push("- Do NOT claim strategy profitability, win rate, Sharpe ratio, or PnL unless canonical validated evidence exists.");
   lines.push("- Do NOT reinterpret Omega paper weights as an investment recommendation or financial advice.");
   lines.push("- Do NOT claim confidence is a forecast probability.");
+  lines.push("- Do NOT convert INSUFFICIENT_DATA or UNAVAILABLE states into any trading-action recommendation (including buy, sell, hold, enter, exit, adjust exposure, or 'do not trade / stop trading / wait before trading'). Explain that stance is UNDETERMINED and list missing data/models.");
+  lines.push("- Do NOT interpret Risk State UNAVAILABLE as proof or assertion that a live portfolio is operating without risk limits or risk management.");
 
   return lines.join("\n");
 }
@@ -188,7 +190,8 @@ QUY TẮC AN TOÀN & CHÍNH XÁC (NON-NEGOTIABLE):
 3. KHÔNG gọi chiến lược mạnh nhất là "chiến lược tốt nhất" hay "chiến lược lời nhất". Chỉ mô tả nó là chiến lược có tín hiệu alpha chuẩn hóa tuyệt đối lớn nhất hiện tại.
 4. KHÔNG bịa đặt tỷ lệ thắng (win rate), PnL, PnL từng chiến lược hay Sharpe ratio.
 5. KHÔNG biến phân bổ Omega Paper thành lời khuyên đầu tư tài chính. Mọi phân bổ chỉ là mô phỏng nghiên cứu (Paper/Research Allocation).
-6. Khi trạng thái tổng hợp là PARTIAL hoặc INSUFFICIENT_DATA, BẮT BUỘC phải nêu rõ yếu tố không chắc chắn (Uncertainty).
+6. Khi trạng thái tổng hợp là PARTIAL hoặc INSUFFICIENT_DATA, BẮT BUỘC phải nêu rõ yếu tố không chắc chắn (Uncertainty). TUYỆT ĐỐI KHÔNG tự tạo ra bất kỳ khuyến nghị hành động giao dịch nào (bao gồm mua, bán, nắm giữ, gia tăng/hạ tỷ trọng, hoặc "không giao dịch / dừng giao dịch / chờ đợi"). Chỉ giải thích lập trường là UNDETERMINED và nêu rõ các dữ liệu/mô hình còn thiếu.
+7. TUYỆT ĐỐI KHÔNG tự diễn giải trạng thái Risk UNAVAILABLE thành kết luận danh mục thực tế đang vận hành không có quản trị rủi ro hay hạn mức rủi ro. Chỉ nêu rõ đánh giá Risk Layer chưa được tính toán hoặc đang thiếu dữ liệu trong snapshot hiện tại.
 
 ${contextStr}
   `.trim();
