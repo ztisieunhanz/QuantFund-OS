@@ -64,15 +64,6 @@ describe("Vietnam Layer 1 Adapter Integration (Gate M6E-4)", () => {
     totalPages: 1,
   };
 
-  const validForeignsPayload = {
-    data: [
-      { code: "AAA", tradingDate: SESSION_DATE, netVal: 100e9 },
-      { code: "BBB", tradingDate: SESSION_DATE, netVal: 50e9 },
-    ],
-    currentPage: 1,
-    totalPages: 1,
-  };
-
   const validDchartPayload = {
     s: "ok",
     t: [1700000000, 1700086400],
@@ -85,7 +76,7 @@ describe("Vietnam Layer 1 Adapter Integration (Gate M6E-4)", () => {
 
   it("A. VNINDEX valid DChart response returns LIVE VNDirect VNINDEX datum", async () => {
     const fetchFn = createMockFetch({
-      "/api/vndirect/dchart/dchart/history": { data: validDchartPayload },
+      "/api/vndirect/dchart/history": { data: validDchartPayload },
     });
 
     const datum = await fetchVnIndexDatumV2({ fetchFn, fetchedAt: FETCHED_AT });
@@ -171,55 +162,60 @@ describe("Vietnam Layer 1 Adapter Integration (Gate M6E-4)", () => {
   });
 
   it("H & K. Liquidity uses nmValue, requires 20 completed sessions, and status remains null", async () => {
-    // Populate 18 sessions -> Liquidity should fail closed (insufficient 20-session history)
-    const fetchFn19 = createMockFetch({
+    // Generate 20 dates and DChart timestamps
+    const timestamps: number[] = [];
+    const routeMap: Record<string, { status?: number; data: unknown }> = {
       "/v4/stocks": { data: validSecurityMasterPayload },
-      "/v4/stock_prices": { data: validStockPricesPayload },
-    });
+    };
 
-    for (let i = 1; i <= 18; i++) {
-      const date = `2026-06-${String(i).padStart(2, "0")}`;
-      const payload = {
-        data: [
-          { code: "AAA", date, close: 20.0, basicPrice: 19.0, nmValue: 10e9, ptValue: 50e9 },
-          { code: "BBB", date, close: 18.0, basicPrice: 19.0, nmValue: 20e9, ptValue: 0 },
-        ],
-        currentPage: 1,
-        totalPages: 1,
+    for (let i = 1; i <= 20; i++) {
+      const dayStr = String(i).padStart(2, "0");
+      const date = `2026-06-${dayStr}`;
+      const stamp = Math.floor(new Date(`${date}T00:00:00Z`).getTime() / 1000);
+      timestamps.push(stamp);
+
+      routeMap[`/v4/stock_prices?q=floor:HOSE~type:STOCK~date:${date}`] = {
+        data: {
+          data: [
+            { code: "AAA", date, close: 20.0, basicPrice: 19.0, nmValue: 10e9, ptValue: 50e9 },
+            { code: "BBB", date, close: 18.0, basicPrice: 19.0, nmValue: 20e9, ptValue: 0 },
+          ],
+          currentPage: 1,
+          totalPages: 1,
+        },
       };
-      const customFetch = createMockFetch({
-        "/v4/stocks": { data: validSecurityMasterPayload },
-        "/v4/stock_prices": { data: payload },
-      });
-      await fetchVietnamBreadthV2({ fetchFn: customFetch, fetchedAt: FETCHED_AT });
     }
 
+    // Default probe route
+    routeMap["/v4/stock_prices?q=floor:HOSE~type:STOCK&sort=date:desc&size=1"] = {
+      data: {
+        data: [{ code: "AAA", date: "2026-06-20", close: 20.0, basicPrice: 19.0, nmValue: 10e9, ptValue: 50e9 }],
+      },
+    };
+
+    // 19 sessions DChart calendar
+    routeMap["/api/vndirect/dchart/history"] = {
+      data: {
+        s: "ok",
+        t: timestamps.slice(0, 19),
+        c: Array(19).fill(1200),
+      },
+    };
+
+    const fetchFn19 = createMockFetch(routeMap);
     const liq19 = await fetchVietnamLiquidityV2({ fetchFn: fetchFn19, fetchedAt: FETCHED_AT });
     expect(liq19.status).toBe("UNAVAILABLE");
 
-    // Add 19th & 20th session
-    for (let i = 19; i <= 20; i++) {
-      const date = `2026-06-${String(i).padStart(2, "0")}`;
-      const payload = {
-        data: [
-          { code: "AAA", date, close: 20.0, basicPrice: 19.0, nmValue: 10e9, ptValue: 50e9 },
-          { code: "BBB", date, close: 18.0, basicPrice: 19.0, nmValue: 20e9, ptValue: 0 },
-        ],
-        currentPage: 1,
-        totalPages: 1,
-      };
-      const customFetch = createMockFetch({
-        "/v4/stocks": { data: validSecurityMasterPayload },
-        "/v4/stock_prices": { data: payload },
-      });
-      await fetchVietnamBreadthV2({ fetchFn: customFetch, fetchedAt: FETCHED_AT });
-    }
+    // 20 sessions DChart calendar
+    routeMap["/api/vndirect/dchart/history"] = {
+      data: {
+        s: "ok",
+        t: timestamps,
+        c: Array(20).fill(1200),
+      },
+    };
 
-    const fetchFn20 = createMockFetch({
-      "/v4/stocks": { data: validSecurityMasterPayload },
-      "/v4/stock_prices": { data: validStockPricesPayload },
-    });
-
+    const fetchFn20 = createMockFetch(routeMap);
     const liq20 = await fetchVietnamLiquidityV2({ fetchFn: fetchFn20, fetchedAt: FETCHED_AT });
     expect(liq20.status).toBe("AVAILABLE");
     if (liq20.status === "AVAILABLE") {
@@ -231,35 +227,52 @@ describe("Vietnam Layer 1 Adapter Integration (Gate M6E-4)", () => {
     }
   });
 
-  it("I & K. Foreign flow uses netVal, requires 5 completed sessions, and status remains null", async () => {
-    // Add 5 sessions of foreign flow
-    for (let i = 1; i <= 5; i++) {
-      const date = `2026-06-${String(i).padStart(2, "0")}`;
-      const payload = {
-        data: [
-          { code: "AAA", tradingDate: date, netVal: 100e9 },
-          { code: "BBB", tradingDate: date, netVal: 50e9 },
-        ],
-        currentPage: 1,
-        totalPages: 1,
-      };
-      const customFetch = createMockFetch({
-        "/v4/stocks": { data: validSecurityMasterPayload },
-        "/v4/foreigns": { data: payload },
-      });
-      await fetchVietnamForeignFlowV2({ fetchFn: customFetch, fetchedAt: FETCHED_AT });
+  it("I & K. Foreign flow uses netVal, requires 5 completed sessions, and can skip incomplete sessions", async () => {
+    const timestamps: number[] = [];
+    const routeMap: Record<string, { status?: number; data: unknown }> = {
+      "/v4/stocks": { data: validSecurityMasterPayload },
+    };
+
+    for (let i = 1; i <= 6; i++) {
+      const dayStr = String(i).padStart(2, "0");
+      const date = `2026-06-${dayStr}`;
+      const stamp = Math.floor(new Date(`${date}T00:00:00Z`).getTime() / 1000);
+      timestamps.push(stamp);
+
+      // Session 3 is incomplete/missing foreign data
+      if (i === 3) {
+        routeMap[`/v4/foreigns?q=floor:HOSE~type:STOCK~tradingDate:${date}`] = {
+          data: { data: [] },
+        };
+      } else {
+        routeMap[`/v4/foreigns?q=floor:HOSE~type:STOCK~tradingDate:${date}`] = {
+          data: {
+            data: [
+              { code: "AAA", tradingDate: date, netVal: 100e9 },
+              { code: "BBB", tradingDate: date, netVal: 50e9 },
+            ],
+            currentPage: 1,
+            totalPages: 1,
+          },
+        };
+      }
     }
 
-    const fetchFn = createMockFetch({
-      "/v4/stocks": { data: validSecurityMasterPayload },
-      "/v4/foreigns": { data: validForeignsPayload },
-    });
+    routeMap["/api/vndirect/dchart/history"] = {
+      data: {
+        s: "ok",
+        t: timestamps,
+        c: Array(6).fill(1200),
+      },
+    };
 
+    const fetchFn = createMockFetch(routeMap);
     const ff = await fetchVietnamForeignFlowV2({ fetchFn, fetchedAt: FETCHED_AT });
+
     expect(ff.status).toBe("AVAILABLE");
     if (ff.status === "AVAILABLE") {
       expect(ff.value.net1dBillion).toBe(150); // (100 + 50)
-      expect(ff.value.net5dBillion).toBe(750); // 150 * 5
+      expect(ff.value.net5dBillion).toBe(750); // 150 * 5 (skipping missing session 3)
       expect(ff.value.status).toBeNull(); // K: status remains null
       expect(ff.basis).toBe("HOSE_COMMON_EQUITY_FOREIGN_NET_VALUE_BILLION_VND");
     }
@@ -268,7 +281,7 @@ describe("Vietnam Layer 1 Adapter Integration (Gate M6E-4)", () => {
   it("J. Independent session dates do not invalidate unrelated Vietnam datums", async () => {
     // VNINDEX returns date A, Breadth returns date B
     const fetchFn = createMockFetch({
-      "/api/vndirect/dchart/dchart/history": { data: validDchartPayload },
+      "/api/vndirect/dchart/history": { data: validDchartPayload },
       "/v4/stocks": { data: validSecurityMasterPayload },
       "/v4/stock_prices": { data: validStockPricesPayload },
     });
@@ -335,5 +348,24 @@ describe("Vietnam Layer 1 Adapter Integration (Gate M6E-4)", () => {
     expect(withVietnamAssessment.confidence).toBe(baseAssessment.confidence);
     expect(withVietnamAssessment.evidence).toEqual(baseAssessment.evidence);
     expect(withVietnamAssessment.conflicts).toEqual(baseAssessment.conflicts);
+  });
+
+  it("O. FINfo session-date telemetry asOf does not fabricate a 15:00 market-close timestamp", async () => {
+    const fetchFn = createMockFetch({
+      "/v4/stocks": { data: validSecurityMasterPayload },
+      "/v4/stock_prices": { data: validStockPricesPayload },
+    });
+
+    const breadth = await fetchVietnamBreadthV2({ fetchFn, fetchedAt: FETCHED_AT });
+
+    expect(breadth.status).toBe("AVAILABLE");
+    if (breadth.status === "AVAILABLE") {
+      expect(breadth.asOf).toBe(new Date("2026-07-02T00:00:00Z").getTime());
+      const d = new Date(breadth.asOf);
+      expect(d.getUTCHours()).toBe(0);
+      expect(d.getUTCMinutes()).toBe(0);
+      expect(d.getUTCSeconds()).toBe(0);
+      expect(d.toISOString().slice(0, 10)).toBe("2026-07-02");
+    }
   });
 });

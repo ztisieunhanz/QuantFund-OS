@@ -288,6 +288,91 @@ export function calculateVietnamLiquidity(
  * Parses and calculates Foreign Net Flow for session targetDate (net1dBillion) and 5-session rolling sum (net5dBillion).
  * Reconciles strictly against authoritative HOSE common equity universe.
  */
+/**
+ * Parses foreigns payload for a target session date and reconciles against authoritative universe.
+ * Fails closed if any symbol in authoritativeSymbols is missing or duplicated.
+ */
+export function parseVndirectForeigns(
+  payload: unknown,
+  sessionDate: string,
+  authoritativeSymbols: Set<string>
+): Result<ParsedForeignRow[]> {
+  if (!payload || typeof payload !== "object") {
+    return { success: false, error: `Invalid foreign payload structure for session ${sessionDate}` };
+  }
+
+  const items = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as { data?: unknown[] }).data)
+    ? (payload as { data: unknown[] }).data
+    : null;
+
+  if (!items || items.length === 0) {
+    return { success: false, error: `Foreign payload empty for session ${sessionDate}` };
+  }
+
+  const rows: ParsedForeignRow[] = [];
+  const seenSymbols = new Set<string>();
+
+  for (const item of items) {
+    if (!item || typeof item !== "object") {
+      return { success: false, error: "Malformed row in foreign payload" };
+    }
+
+    const rec = item as Record<string, unknown>;
+    const code = typeof rec.code === "string" ? rec.code.trim().toUpperCase() : null;
+    const tradingDate =
+      typeof rec.tradingDate === "string"
+        ? rec.tradingDate.trim()
+        : typeof rec.date === "string"
+        ? rec.date.trim()
+        : null;
+    const netVal = typeof rec.netVal === "number" && Number.isFinite(rec.netVal) ? rec.netVal : null;
+
+    if (!code || !tradingDate || netVal === null) {
+      return { success: false, error: `Malformed fields in foreign row for '${code || "unknown"}'` };
+    }
+
+    if (tradingDate !== sessionDate) {
+      return {
+        success: false,
+        error: `Foreign row date '${tradingDate}' does not match expected session '${sessionDate}'`,
+      };
+    }
+
+    if (authoritativeSymbols.has(code)) {
+      if (seenSymbols.has(code)) {
+        return {
+          success: false,
+          error: `Duplicate symbol '${code}' in foreign payload for ${sessionDate}`,
+        };
+      }
+      seenSymbols.add(code);
+      rows.push({ code, tradingDate, netVal });
+    }
+  }
+
+  const missingSymbols: string[] = [];
+  for (const authSymbol of authoritativeSymbols) {
+    if (!seenSymbols.has(authSymbol)) {
+      missingSymbols.push(authSymbol);
+    }
+  }
+
+  if (missingSymbols.length > 0) {
+    return {
+      success: false,
+      error: `Foreign flow universe reconciliation failed: ${missingSymbols.length} authoritative symbols missing for session ${sessionDate}`,
+    };
+  }
+
+  return { success: true, data: rows };
+}
+
+/**
+ * Parses and calculates Vietnam Foreign Flow for current session D and 5-session rolling net5d.
+ * Requires exactly 5 valid completed market session payloads.
+ */
 export function parseAndCalculateVietnamForeignFlow(
   currentPayload: unknown,
   targetDate: string,
@@ -301,95 +386,17 @@ export function parseAndCalculateVietnamForeignFlow(
     };
   }
 
-  const parseSingleSessionForeign = (
-    payload: unknown,
-    sessionDate: string
-  ): Result<number> => {
-    if (!payload || typeof payload !== "object") {
-      return { success: false, error: `Invalid foreign payload for session ${sessionDate}` };
-    }
-
-    const items = Array.isArray(payload)
-      ? payload
-      : Array.isArray((payload as { data?: unknown[] }).data)
-      ? (payload as { data: unknown[] }).data
-      : null;
-
-    if (!items || items.length === 0) {
-      return { success: false, error: `Foreign payload empty for session ${sessionDate}` };
-    }
-
-    let netSum = 0;
-    const seenSymbols = new Set<string>();
-
-    for (const item of items) {
-      if (!item || typeof item !== "object") {
-        return { success: false, error: "Malformed row in foreign payload" };
-      }
-
-      const rec = item as Record<string, unknown>;
-      const code = typeof rec.code === "string" ? rec.code.trim().toUpperCase() : null;
-      const tradingDate =
-        typeof rec.tradingDate === "string"
-          ? rec.tradingDate.trim()
-          : typeof rec.date === "string"
-          ? rec.date.trim()
-          : null;
-      const netVal = typeof rec.netVal === "number" && Number.isFinite(rec.netVal) ? rec.netVal : null;
-
-      if (!code || !tradingDate || netVal === null) {
-        return { success: false, error: `Malformed fields in foreign row for '${code || "unknown"}'` };
-      }
-
-      if (tradingDate !== sessionDate) {
-        return {
-          success: false,
-          error: `Foreign row date '${tradingDate}' does not match expected session '${sessionDate}'`,
-        };
-      }
-
-      if (authoritativeSymbols.has(code)) {
-        if (seenSymbols.has(code)) {
-          return {
-            success: false,
-            error: `Duplicate symbol '${code}' in foreign payload for ${sessionDate}`,
-          };
-        }
-        seenSymbols.add(code);
-        netSum += netVal;
-      }
-    }
-
-    // Reconciliation check
-    const missingSymbols: string[] = [];
-    for (const authSymbol of authoritativeSymbols) {
-      if (!seenSymbols.has(authSymbol)) {
-        missingSymbols.push(authSymbol);
-      }
-    }
-
-    if (missingSymbols.length > 0) {
-      return {
-        success: false,
-        error: `Foreign flow universe reconciliation failed: ${missingSymbols.length} authoritative symbols missing for session ${sessionDate}`,
-      };
-    }
-
-    return { success: true, data: netSum / 1e9 };
-  };
-
   // Parse current session net1d
-  const currentNetResult = parseSingleSessionForeign(currentPayload, targetDate);
+  const currentNetResult = parseVndirectForeigns(currentPayload, targetDate, authoritativeSymbols);
   if (!currentNetResult.success) {
     return currentNetResult;
   }
 
-  const net1dBillion = currentNetResult.data;
+  const net1dBillion = currentNetResult.data.reduce((sum, r) => sum + r.netVal, 0) / 1e9;
 
   // Calculate 5-session rolling net5d
   let net5dSum = 0;
   for (const sessionPayload of historical5Payloads) {
-    // Extract date from first valid row
     const items = Array.isArray(sessionPayload)
       ? sessionPayload
       : (sessionPayload as { data?: unknown[] })?.data ?? [];
@@ -401,11 +408,11 @@ export function parseAndCalculateVietnamForeignFlow(
         ? firstRow.date.trim()
         : targetDate;
 
-    const sessionResult = parseSingleSessionForeign(sessionPayload, sessionDate);
+    const sessionResult = parseVndirectForeigns(sessionPayload, sessionDate, authoritativeSymbols);
     if (!sessionResult.success) {
       return sessionResult;
     }
-    net5dSum += sessionResult.data;
+    net5dSum += sessionResult.data.reduce((sum, r) => sum + r.netVal, 0) / 1e9;
   }
 
   const net5dBillion = net5dSum;

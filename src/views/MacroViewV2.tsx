@@ -34,7 +34,16 @@ import { useSnapshotStore } from "@/stores/snapshotStore";
 
 function formatTimestamp(asOf?: number | null): string {
   if (!asOf || !Number.isFinite(asOf)) return "N/A";
-  return new Date(asOf).toLocaleTimeString("en-US", {
+  const date = new Date(asOf);
+  if (
+    date.getUTCHours() === 0 &&
+    date.getUTCMinutes() === 0 &&
+    date.getUTCSeconds() === 0 &&
+    date.getUTCMilliseconds() === 0
+  ) {
+    return date.toISOString().slice(0, 10);
+  }
+  return date.toLocaleTimeString("en-US", {
     hour12: false,
     hour: "2-digit",
     minute: "2-digit",

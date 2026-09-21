@@ -17,11 +17,13 @@ import type {
 import {
   fetchPaginatedVndirectFinfo,
   fetchVndirectDchart,
+  fetchVndirectFinfo,
 } from "./vndirectClient";
 import {
   calculateVietnamBreadth,
   calculateVietnamLiquidity,
   parseAndCalculateVietnamForeignFlow,
+  parseVndirectForeigns,
   parseVndirectSecurityMaster,
   parseVndirectStockPrices,
   type ParsedStockPriceRow,
@@ -458,7 +460,7 @@ export async function fetchVnIndexDatumV2(
     : undefined;
 
   const result = await fetchVndirectDchart<DchartHistoryResponse>(
-    "/dchart/history?symbol=VNINDEX&resolution=D",
+    "/history?symbol=VNINDEX&resolution=D",
     customFetch
   );
 
@@ -511,6 +513,50 @@ export async function fetchVnIndexDatumV2(
     reason: "No valid finite close observation found in DChart VNINDEX response",
     fetchedAt,
   });
+}
+
+/**
+ * Retrieves official provider-derived VNINDEX market trading session dates (newest to oldest).
+ */
+async function getMarketSessionCalendar(
+  opts?: AdapterOptions
+): Promise<string[]> {
+  const fetchFn = opts?.fetchFn;
+  const customFetch = fetchFn
+    ? async (url: string) => {
+        const res = await fetchFn(url);
+        return { ok: res.ok, status: res.status, json: res.json };
+      }
+    : undefined;
+
+  const result = await fetchVndirectDchart<DchartHistoryResponse>(
+    "/history?symbol=VNINDEX&resolution=D",
+    customFetch
+  );
+
+  if (!result.success || !result.data || result.data.s !== "ok" || !Array.isArray(result.data.t)) {
+    return [];
+  }
+
+  const dates: string[] = [];
+  const seen = new Set<string>();
+
+  for (let i = result.data.t.length - 1; i >= 0; i--) {
+    const stamp = result.data.t[i];
+    if (stamp != null && Number.isFinite(stamp) && stamp > 0) {
+      const d = new Date(stamp * 1000);
+      const year = d.getUTCFullYear();
+      const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(d.getUTCDate()).padStart(2, "0");
+      const dateStr = `${year}-${month}-${day}`;
+      if (!seen.has(dateStr)) {
+        seen.add(dateStr);
+        dates.push(dateStr);
+      }
+    }
+  }
+
+  return dates;
 }
 
 /**
@@ -570,8 +616,38 @@ export async function fetchVietnamBreadthV2(
     });
   }
 
+  // 1. Discover latest stock_prices session date D from global HOSE probe
+  const probeRes = await fetchVndirectFinfo<unknown>(
+    "/v4/stock_prices?q=floor:HOSE~type:STOCK&sort=date:desc&size=1",
+    customFetch
+  );
+
+  let sessionDate: string | null = null;
+  if (probeRes.success && probeRes.data) {
+    const rawData = probeRes.data as Record<string, unknown>;
+    const items = Array.isArray(rawData)
+      ? rawData
+      : Array.isArray(rawData.data)
+      ? (rawData.data as unknown[])
+      : [];
+    const firstRow = items[0] as Record<string, unknown> | undefined;
+    if (typeof firstRow?.date === "string") {
+      sessionDate = firstRow.date.trim();
+    }
+  }
+
+  if (!sessionDate) {
+    return createUnavailableDatum("breadth", {
+      provider: "VNDirect",
+      instrument: "HOSE_BREADTH",
+      reason: "VNDirect stock_prices probe failed or missing session date",
+      fetchedAt,
+    });
+  }
+
+  // 2. Fetch exact D cross-section using bounded pagination helper (totalPages = 1 for size=500)
   const stockPricesRes = await fetchPaginatedVndirectFinfo<unknown>(
-    "/v4/stock_prices?q=floor:HOSE~type:STOCK&size=500",
+    `/v4/stock_prices?q=floor:HOSE~type:STOCK~date:${sessionDate}&size=500`,
     customFetch
   );
 
@@ -579,19 +655,7 @@ export async function fetchVietnamBreadthV2(
     return createUnavailableDatum("breadth", {
       provider: "VNDirect",
       instrument: "HOSE_BREADTH",
-      reason: "VNDirect stock_prices feed failed or empty",
-      fetchedAt,
-    });
-  }
-
-  const firstRow = stockPricesRes.data[0] as Record<string, unknown>;
-  const sessionDate = typeof firstRow?.date === "string" ? firstRow.date.trim() : null;
-
-  if (!sessionDate) {
-    return createUnavailableDatum("breadth", {
-      provider: "VNDirect",
-      instrument: "HOSE_BREADTH",
-      reason: "VNDirect stock_prices payload missing valid session date",
+      reason: `VNDirect stock_prices fetch for date ${sessionDate} failed or empty`,
       fetchedAt,
     });
   }
@@ -626,7 +690,8 @@ export async function fetchVietnamBreadthV2(
   }
 
   const breadthValue = calculateVietnamBreadth(parsedRows, sessionDate, globalHistoryMap);
-  const sessionAsOf = new Date(`${sessionDate}T15:00:00+07:00`).getTime();
+  // Session-date anchor (UTC midnight for date YYYY-MM-DD). Does NOT represent a provider-reported intraday observation or exchange close clock.
+  const sessionAsOf = new Date(`${sessionDate}T00:00:00Z`).getTime();
 
   return createLiveDatum({
     id: "breadth",
@@ -665,23 +730,30 @@ export async function fetchVietnamLiquidityV2(
     });
   }
 
-  if (globalDailyLiquidityHistory.length < 20) {
+  // Use provider-derived VNINDEX market-session calendar
+  const candidateDates = await getMarketSessionCalendar(opts);
+
+  for (const dateStr of candidateDates) {
+    if (globalDailyLiquidityHistory.length >= 20) {
+      break;
+    }
+
+    const alreadyCached = globalDailyLiquidityHistory.some((item) => item.date === dateStr);
+    if (alreadyCached) {
+      continue;
+    }
+
+    // Fetch exact date cross-section
     const stockPricesRes = await fetchPaginatedVndirectFinfo<unknown>(
-      "/v4/stock_prices?q=floor:HOSE~type:STOCK&size=500",
+      `/v4/stock_prices?q=floor:HOSE~type:STOCK~date:${dateStr}&size=500`,
       customFetch
     );
+
     if (stockPricesRes.success && Array.isArray(stockPricesRes.data) && stockPricesRes.data.length > 0) {
-      const firstRow = stockPricesRes.data[0] as Record<string, unknown>;
-      const sessionDate = typeof firstRow?.date === "string" ? firstRow.date.trim() : null;
-      if (sessionDate) {
-        const parseRes = parseVndirectStockPrices(stockPricesRes.data, sessionDate, authSymbols);
-        if (parseRes.success) {
-          const existingIndex = globalDailyLiquidityHistory.findIndex((item) => item.date === sessionDate);
-          if (existingIndex < 0) {
-            globalDailyLiquidityHistory.push({ date: sessionDate, rows: parseRes.data });
-            globalDailyLiquidityHistory.sort((a, b) => a.date.localeCompare(b.date));
-          }
-        }
+      const parseRes = parseVndirectStockPrices(stockPricesRes.data, dateStr, authSymbols);
+      if (parseRes.success) {
+        globalDailyLiquidityHistory.push({ date: dateStr, rows: parseRes.data });
+        globalDailyLiquidityHistory.sort((a, b) => a.date.localeCompare(b.date));
       }
     }
   }
@@ -714,7 +786,8 @@ export async function fetchVietnamLiquidityV2(
     });
   }
 
-  const sessionAsOf = new Date(`${currentSession.date}T15:00:00+07:00`).getTime();
+  // Session-date anchor (UTC midnight for date YYYY-MM-DD). Does NOT represent a provider-reported intraday observation or exchange close clock.
+  const sessionAsOf = new Date(`${currentSession.date}T00:00:00Z`).getTime();
 
   return createLiveDatum({
     id: "liquidity",
@@ -753,43 +826,32 @@ export async function fetchVietnamForeignFlowV2(
     });
   }
 
-  const foreignRes = await fetchPaginatedVndirectFinfo<unknown>(
-    "/v4/foreigns?q=floor:HOSE~type:STOCK&size=500",
-    customFetch
-  );
+  // Use provider-derived VNINDEX market-session calendar
+  const candidateDates = await getMarketSessionCalendar(opts);
 
-  if (!foreignRes.success || !Array.isArray(foreignRes.data) || foreignRes.data.length === 0) {
-    return createUnavailableDatum("foreignFlow", {
-      provider: "VNDirect",
-      instrument: "HOSE_FOREIGN_FLOW",
-      reason: "VNDirect foreigns feed failed or empty",
-      fetchedAt,
-    });
-  }
+  for (const dateStr of candidateDates) {
+    if (globalDailyForeignHistory.length >= 5) {
+      break;
+    }
 
-  const firstRow = foreignRes.data[0] as Record<string, unknown>;
-  const sessionDate =
-    typeof firstRow?.tradingDate === "string"
-      ? firstRow.tradingDate.trim()
-      : typeof firstRow?.date === "string"
-      ? firstRow.date.trim()
-      : null;
+    const alreadyCached = globalDailyForeignHistory.some((item) => item.date === dateStr);
+    if (alreadyCached) {
+      continue;
+    }
 
-  if (!sessionDate) {
-    return createUnavailableDatum("foreignFlow", {
-      provider: "VNDirect",
-      instrument: "HOSE_FOREIGN_FLOW",
-      reason: "VNDirect foreigns payload missing valid session date",
-      fetchedAt,
-    });
-  }
+    // Fetch exact tradingDate cross-section
+    const foreignRes = await fetchPaginatedVndirectFinfo<unknown>(
+      `/v4/foreigns?q=floor:HOSE~type:STOCK~tradingDate:${dateStr}&size=500`,
+      customFetch
+    );
 
-  const existingIndex = globalDailyForeignHistory.findIndex((item) => item.date === sessionDate);
-  if (existingIndex >= 0) {
-    globalDailyForeignHistory[existingIndex] = { date: sessionDate, payload: foreignRes.data };
-  } else {
-    globalDailyForeignHistory.push({ date: sessionDate, payload: foreignRes.data });
-    globalDailyForeignHistory.sort((a, b) => a.date.localeCompare(b.date));
+    if (foreignRes.success && Array.isArray(foreignRes.data) && foreignRes.data.length > 0) {
+      const parseCheck = parseVndirectForeigns(foreignRes.data, dateStr, authSymbols);
+      if (parseCheck.success) {
+        globalDailyForeignHistory.push({ date: dateStr, payload: foreignRes.data });
+        globalDailyForeignHistory.sort((a, b) => a.date.localeCompare(b.date));
+      }
+    }
   }
 
   if (globalDailyForeignHistory.length < 5) {
@@ -805,7 +867,9 @@ export async function fetchVietnamForeignFlowV2(
     globalDailyForeignHistory.length - 5
   );
 
-  const currentPayload = latest5Sessions[latest5Sessions.length - 1].payload;
+  const currentSession = latest5Sessions[latest5Sessions.length - 1];
+  const sessionDate = currentSession.date;
+  const currentPayload = currentSession.payload;
   const history5Payloads = latest5Sessions.map((s) => s.payload);
 
   const calcRes = parseAndCalculateVietnamForeignFlow(
@@ -824,7 +888,8 @@ export async function fetchVietnamForeignFlowV2(
     });
   }
 
-  const sessionAsOf = new Date(`${sessionDate}T15:00:00+07:00`).getTime();
+  // Session-date anchor (UTC midnight for date YYYY-MM-DD). Does NOT represent a provider-reported intraday observation or exchange close clock.
+  const sessionAsOf = new Date(`${sessionDate}T00:00:00Z`).getTime();
 
   return createLiveDatum({
     id: "foreignFlow",

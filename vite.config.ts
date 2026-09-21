@@ -75,9 +75,9 @@ export default defineConfig(({ mode }) => {
           // 2c. PROXY: VNDIRECT DCHART API
           server.middlewares.use('/api/vndirect/dchart', async (req, res) => {
             try {
-              const targetUrl = `https://dchart-api.vndirect.com.vn${req.url || ''}`;
+              const targetUrl = `https://dchart-api.vndirect.com.vn/dchart${req.url || ''}`;
               const response = await fetch(targetUrl, {
-                headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+                headers: { 'User-Agent': 'Mozilla/5.0' },
               });
               res.statusCode = response.status;
               res.setHeader('Content-Type', 'application/json');

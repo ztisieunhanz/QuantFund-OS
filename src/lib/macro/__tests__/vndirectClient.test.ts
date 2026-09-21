@@ -217,12 +217,45 @@ describe("VNDirect Transport Client & Dev Gateway Contract (Gate M6E-2)", () => 
       json: async () => mockDchartData,
     } as unknown as Response);
 
-    const result = await fetchVndirectDchart<typeof mockDchartData>("/dchart/history?symbol=VNINDEX&resolution=D");
+    const result = await fetchVndirectDchart<typeof mockDchartData>("/history?symbol=VNINDEX&resolution=D");
 
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data).toEqual(mockDchartData);
-      expect(result.url).toBe("/api/vndirect/dchart/dchart/history?symbol=VNINDEX&resolution=D");
+      expect(result.url).toBe("/api/vndirect/dchart/history?symbol=VNINDEX&resolution=D");
+    }
+  });
+
+  it("I. Gate M6E-5 Regression: DChart path never contains duplicated dchart segment", async () => {
+    const mockDchartData = { t: [1700000000], c: [1250.5] };
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => mockDchartData,
+    } as unknown as Response);
+    global.fetch = fetchSpy;
+
+    const result = await fetchVndirectDchart<typeof mockDchartData>("/history?symbol=VNINDEX&resolution=D");
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // 1. Client/application route is exactly /api/vndirect/dchart/history?...
+      expect(result.url).toBe("/api/vndirect/dchart/history?symbol=VNINDEX&resolution=D");
+
+      // 2. /api/vndirect/dchart/dchart/history is NEVER generated
+      expect(result.url).not.toContain("/dchart/dchart");
+
+      // 3. Dev gateway mapping conceptually produces upstream: https://dchart-api.vndirect.com.vn/dchart/history?...
+      const clientPath = result.url; // e.g. "/api/vndirect/dchart/history?symbol=VNINDEX&resolution=D"
+      const gatewayPrefix = "/api/vndirect/dchart";
+      const reqUrlInMiddleware = clientPath.slice(gatewayPrefix.length); // "/history?symbol=VNINDEX&resolution=D"
+      const targetUrlUpstream = `https://dchart-api.vndirect.com.vn/dchart${reqUrlInMiddleware}`;
+
+      expect(targetUrlUpstream).toBe("https://dchart-api.vndirect.com.vn/dchart/history?symbol=VNINDEX&resolution=D");
+      expect(targetUrlUpstream).not.toContain("/dchart/dchart");
+
+      // 4. Verify fetch call does not pass forced Accept: application/json header
+      expect(fetchSpy).toHaveBeenCalledWith("/api/vndirect/dchart/history?symbol=VNINDEX&resolution=D");
     }
   });
 });
