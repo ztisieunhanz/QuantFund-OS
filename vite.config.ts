@@ -54,6 +54,42 @@ export default defineConfig(({ mode }) => {
             }
           });
 
+          // 2b. PROXY: VNDIRECT FINFO API
+          server.middlewares.use('/api/vndirect/finfo', async (req, res) => {
+            try {
+              const targetUrl = `https://api-finfo.vndirect.com.vn${req.url || ''}`;
+              const response = await fetch(targetUrl, {
+                headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+              });
+              res.statusCode = response.status;
+              res.setHeader('Content-Type', 'application/json');
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.end(await response.text());
+            } catch (err: any) {
+              res.statusCode = 502;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: { message: 'VNDirect FINfo Proxy Failed' } }));
+            }
+          });
+
+          // 2c. PROXY: VNDIRECT DCHART API
+          server.middlewares.use('/api/vndirect/dchart', async (req, res) => {
+            try {
+              const targetUrl = `https://dchart-api.vndirect.com.vn${req.url || ''}`;
+              const response = await fetch(targetUrl, {
+                headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+              });
+              res.statusCode = response.status;
+              res.setHeader('Content-Type', 'application/json');
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.end(await response.text());
+            } catch (err: any) {
+              res.statusCode = 502;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: { message: 'VNDirect DChart Proxy Failed' } }));
+            }
+          });
+
           // 3. HANDLER: GEMINI AI CHAT ADVISOR
           server.middlewares.use('/api/ai-advisor', async (req, res) => {
             if (req.method !== 'POST') {
