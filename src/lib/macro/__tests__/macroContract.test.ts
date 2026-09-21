@@ -23,6 +23,7 @@ import type {
   LiveMacroDatum,
   MacroDatum,
   MarketSnapshotData,
+  VietnamBreadthData,
 } from "../types";
 
 describe("Macro V2 Data Contract & Provenance Foundation", () => {
@@ -319,5 +320,35 @@ describe("Macro V2 Data Contract & Provenance Foundation", () => {
     expect(snapshot.data.gold.status === "AVAILABLE" && snapshot.data.gold.basis).toBe("PAXG_TOKEN");
 
     expect(snapshot.macro).toBeNull();
+  });
+
+  it("6. VietnamBreadthData supports nullable adRatio and pctAboveMA fields (DEC-014)", () => {
+    const breadthDataNullable: VietnamBreadthData = {
+      advancing: 120,
+      declining: 0,
+      unchanged: 50,
+      adRatio: null, // Null when declining == 0
+      pctAboveMA20: 45.5,
+      pctAboveMA50: null, // Null when cold-start history < 50
+      pctAboveMA200: null, // Null when cold-start history < 200
+    };
+
+    expect(breadthDataNullable.adRatio).toBeNull();
+    expect(breadthDataNullable.pctAboveMA20).toBe(45.5);
+    expect(breadthDataNullable.pctAboveMA50).toBeNull();
+    expect(breadthDataNullable.pctAboveMA200).toBeNull();
+
+    const breadthDatum = createHardcodedDatum({
+      id: "breadth",
+      value: breadthDataNullable,
+      provider: "VNDirect",
+      asOf: REF_TIME - ONE_DAY,
+      fetchedAt: REF_TIME,
+    });
+
+    expect(breadthDatum.status).toBe("AVAILABLE");
+    expect(breadthDatum.value.adRatio).toBeNull();
+    expect(breadthDatum.value.pctAboveMA50).toBeNull();
+    expect(breadthDatum.value.pctAboveMA200).toBeNull();
   });
 });

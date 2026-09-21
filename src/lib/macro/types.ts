@@ -140,10 +140,10 @@ export interface VietnamBreadthData {
   readonly advancing: number;
   readonly declining: number;
   readonly unchanged: number;
-  readonly adRatio: number;
-  readonly pctAboveMA20: number;
-  readonly pctAboveMA50: number;
-  readonly pctAboveMA200: number;
+  readonly adRatio: number | null;
+  readonly pctAboveMA20: number | null;
+  readonly pctAboveMA50: number | null;
+  readonly pctAboveMA200: number | null;
 }
 
 export interface VietnamLiquidityData {

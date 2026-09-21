@@ -194,3 +194,22 @@ All decisions in this log follow a compact, standard format:
 - **Scope / Consequences**: All future Vietnam data provider adapters and contract types must conform to this HOSE-only, completed-session schema.
 - **Explicit Non-Goals**: Does not alter global core macro regime scoring, introduce HNX/UPCoM feeds, or implement a specific data provider.
 - **Supersedes / Superseded by**: None
+
+---
+
+### DEC-014: Vietnam Market Layer 1 Data Contracts & Semantics Refinement
+- **ID**: `DEC-014`
+- **Date**: 2026-09-21
+- **Status**: `ACCEPTED`
+- **Decision**: Refine and freeze Vietnam market data contracts, universe rules, session dependency, and calculation semantics:
+  1. **Provider-Independent Authoritative Universe**: The eligible breadth universe is defined by the complete, verified Security Master response from the currently selected provider. Selected implementation provider is VNDirect, with parameter mapping: `floor=HOSE`, `type=STOCK`, `status=listed`. Static universe count heuristics (e.g. `< 100`) and price/volume-zero heuristics for trading status are strictly prohibited. Returned session price rows must be reconciled against the authoritative security master; missing required rows prevent truthful computation and fail closed (`status: "UNAVAILABLE"`).
+  2. **Per-Datum Session Dependency & Composite Synchronization**: Each Vietnam Layer 1 metric (`vnindex`, `breadth`, `liquidity`, `foreignFlow`) evaluates session availability independently based on its own feed requirements. A failure or publication delay in `vnindex` does not invalidate `breadth` or `liquidity` if their own feed requirements are satisfied. Composite UI presentation or chatbot grounding that claims a single unified Vietnam session requires explicit date equality (`D_vnindex == D_stock == D_foreign`). Otherwise, per-metric session dates must be explicitly displayed.
+  3. **Nullable AD Ratio Contract**: `VietnamBreadthData.adRatio` is typed as `number | null`. If `declining > 0`, `adRatio = advancing / declining`. If `declining == 0`, `adRatio = null`. Zero division, denominator 1 substitution, infinity, or advancing count substitution are prohibited.
+  4. **Moving Average Breadth Semantics (Option A) & Per-Security History**: `pctAboveMA_H(D) = count(close_D > SMA_H) / count(securities with H valid closes) * 100`. `SMA_H` includes session D close (`H` in `{20, 50, 200}`). MA calculation requires per-security historical EOD close state (`Map<symbol, Array<{date, close}>>`) up to 200 completed sessions. Securities with fewer than H valid completed session closes (such as newly listed stocks) are excluded from both numerator and denominator for horizon H. `pctAboveMA20`, `pctAboveMA50`, and `pctAboveMA200` are typed as `number | null` to support independent availability during cold-start or incomplete historical state. Forward fill, interpolation, and synthetic history generation are strictly prohibited.
+  5. **Instrument Scope Alignment**: Breadth, Liquidity (`nmValue`), and Foreign Flow (`netVal`) are restricted strictly to common equities (`floor:HOSE~type:STOCK`). Basis metadata tags: `"HOSE_COMMON_EQUITY_NORMAL_MATCHED_VALUE_BILLION_VND"` and `"HOSE_COMMON_EQUITY_FOREIGN_NET_VALUE_BILLION_VND"`.
+  6. **Bounded Transport Pagination**: Pagination iteration is bounded by provider `totalPages` metadata. An operational guard (50 pages) acts purely as transport safety. Exceeding the guard returns `status: "UNAVAILABLE"` and never truncates successful results.
+  7. **Preservation of Macro V2 Synthesis Contract (DEC-013)**: Vietnam market metrics remain supplementary Layer 1 telemetry. They MUST NOT alter current global macro regime scoring, confidence, or stance.
+- **Rationale**: Establishes provider-independent universe integrity, strict mathematical handling of zero denominators and incomplete historical observations, independent per-metric session availability, and bounded transport execution without corrupting macro regime scoring.
+- **Scope / Consequences**: All Vietnam Layer 1 provider adapters, parsers, and type contracts must strictly implement these rules.
+- **Explicit Non-Goals**: Does not alter global core macro regime scoring or implement provider transport/parsers in this sub-gate.
+- **Supersedes / Superseded by**: None
