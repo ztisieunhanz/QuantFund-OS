@@ -28,7 +28,7 @@ import { QUANT_BAR_INTERVAL } from "@/lib/quant/timeDomain";
 import { formatNumber, formatPct, formatUsd } from "@/lib/math";
 import { useMarketStore } from "@/stores/marketStore";
 import { useTradingStore } from "@/stores/tradingStore";
-import { useMacroStore } from "@/stores/macroStore";
+import { useSnapshotStore } from "@/stores/snapshotStore";
 import type { BotMetrics } from "@/types/market";
 
 export function TradingLabView() {
@@ -48,8 +48,10 @@ export function TradingLabView() {
   const resetTrading = useTradingStore((s) => s.reset);
   const lastRunAt = useTradingStore((s) => s.lastRunAt);
 
-  const regime = useMacroStore((s) => s.regime);
-  const isRiskOff = Boolean(regime && regime.score < 45);
+  const snapshot = useSnapshotStore((s) => s.snapshot);
+  const macroRegime = snapshot?.macro?.regime ?? null;
+  const macroStatus = snapshot?.macro?.status ?? "INSUFFICIENT_DATA";
+  const isRiskOffV2 = macroRegime === "RISK_OFF" || macroRegime === "LIQUIDITY_STRESS";
 
   const [replaying, setReplaying] = useState(false);
 
@@ -180,7 +182,7 @@ export function TradingLabView() {
           <div className="text-2xl font-mono font-bold text-white mt-1">
             {formatUsd(omega.equity)}
           </div>
-          <div className={clsx("text-[11px] font-mono font-bold", omega.pnl >= 0 ? "text-up" : "text-down")}>
+          <div className={clsx("text-[11px] font-mono font-bold", omega.pnl != null && omega.pnl >= 0 ? "text-up" : omega.pnl != null ? "text-down" : "text-muted")}>
             PnL: {formatUsd(omega.pnl)} ({formatPct(omega.pnlPct)})
           </div>
         </div>
@@ -217,7 +219,7 @@ export function TradingLabView() {
               {cbStatus}
             </span>
             <span className="text-muted text-[11px] ml-2 font-normal">
-              Max DD: {formatPct(-omega.maxDrawdown, 1)}
+              Max DD: {omega.maxDrawdown != null ? formatPct(-omega.maxDrawdown, 1) : "N/A"}
             </span>
           </div>
           <div className="text-[10px] text-muted truncate font-mono" title={cbReason}>
@@ -238,12 +240,25 @@ export function TradingLabView() {
         </div>
       </div>
 
-      {isRiskOff && (
-        <div className="flex items-center gap-2 rounded border border-amber/50 bg-amber/10 p-2.5 text-[11px] font-medium text-amber shadow-sm">
+      {macroStatus === "AVAILABLE" && macroRegime ? (
+        <div
+          className={clsx(
+            "flex items-center gap-2 rounded border p-2.5 text-[11px] font-medium shadow-sm",
+            isRiskOffV2
+              ? "border-amber/50 bg-amber/10 text-amber"
+              : "border-cyan/40 bg-cyan/10 text-cyan"
+          )}
+        >
           <AlertTriangle size={16} />
           <span>
-            <strong>MACRO PERMISSION NOTICE:</strong> Môi trường Risk-Off (Regime Score: {regime?.score.toFixed(1)}/100).
-            Hệ thống đang kích hoạt Permission Gate thắt chặt phơi nhiễm gộp của các vị thế Momentum.
+            <strong>MACRO CONTEXT (V2):</strong> Môi trường vĩ mô: <strong>{macroRegime}</strong>. Hệ thống đang giám sát dữ liệu Layer 2 từ CurrentMarketSnapshot.
+          </span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 rounded border border-line/40 bg-panel-2 p-2.5 text-[11px] font-medium text-muted shadow-sm">
+          <AlertTriangle size={16} />
+          <span>
+            <strong>MACRO CONTEXT (V2):</strong> Dữ liệu vĩ mô chưa sẵn sàng (Status: {macroStatus}). Mở màn hình Macro V2 để cập nhật snapshot.
           </span>
         </div>
       )}
@@ -313,7 +328,7 @@ export function TradingLabView() {
 }
 
 function BotCard({ bot, rule, isBenchmark }: { bot: BotMetrics; rule: string; isBenchmark?: boolean }) {
-  const up = bot.pnl >= 0;
+  const up = bot.pnl != null ? bot.pnl >= 0 : true;
   return (
     <Panel
       title={
@@ -333,7 +348,7 @@ function BotCard({ bot, rule, isBenchmark }: { bot: BotMetrics; rule: string; is
           </span>
         </div>
       }
-      right={<span className="text-[10px] text-muted font-mono">{bot.trades.length} fills</span>}
+      right={<span className="text-[10px] text-muted font-mono">{bot.totalTrades != null ? `${bot.totalTrades} fills` : "N/A"}</span>}
     >
       <div className="space-y-3">
         <div className="text-[11px] text-muted font-mono leading-relaxed min-h-[32px]">{rule}</div>
@@ -349,8 +364,8 @@ function BotCard({ bot, rule, isBenchmark }: { bot: BotMetrics; rule: string; is
         </div>
         <div className="grid grid-cols-4 gap-2 font-mono text-[11px]">
           <Kpi label="WIN RATE" value={formatPct(bot.winRate, 1)} />
-          <Kpi label="MAX DD" value={formatPct(-bot.maxDrawdown, 1)} down />
-          <Kpi label="TRADES" value={String(bot.totalTrades)} />
+          <Kpi label="MAX DD" value={bot.maxDrawdown != null ? formatPct(-bot.maxDrawdown, 1) : "N/A"} down={Boolean(bot.maxDrawdown && bot.maxDrawdown > 0)} />
+          <Kpi label="TRADES" value={bot.totalTrades != null ? String(bot.totalTrades) : "N/A"} />
           <Kpi label="CASH" value={formatUsd(bot.cash, 0)} />
         </div>
         <div className="text-[10px] text-muted font-mono truncate border-t border-line/40 pt-1.5">

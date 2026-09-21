@@ -87,19 +87,20 @@ export interface EquityPoint {
 export interface BotMetrics {
   readonly botId: QuantBotId;
   readonly name: string;
-  readonly cash: number;
-  readonly qty: number;
-  readonly lastPrice: number;
-  readonly equity: number;
-  readonly pnl: number;
-  readonly pnlPct: number;
-  readonly winRate: number;
-  readonly maxDrawdown: number;
-  readonly totalTrades: number;
-  readonly wins: number;
-  readonly losses: number;
+  readonly cash: number | null;
+  readonly qty: number | null;
+  readonly lastPrice: number | null;
+  readonly equity: number | null;
+  readonly pnl: number | null;
+  readonly pnlPct: number | null;
+  readonly winRate: number | null;
+  readonly maxDrawdown: number | null;
+  readonly totalTrades: number | null;
+  readonly wins: number | null;
+  readonly losses: number | null;
   readonly position: PositionSide; // LONG | SHORT | FLAT
   readonly lastSignal: string;
   readonly trades: readonly TradeFill[];
   readonly equityCurve: readonly EquityPoint[];
+  readonly status?: "AVAILABLE" | "UNAVAILABLE" | "PARTIAL";
 }

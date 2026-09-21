@@ -36,14 +36,14 @@ export async function loadRuntimeMarketSnapshot(
   const macro = evaluateMacroRegimeV2(data, referenceTimeMs);
 
   // 3. Layer 2: Extract current canonical Quant, Risk, and Omega state from tradingStore (if available)
-  const latestDecision = useTradingStore.getState().latestDecision;
+  const { latestDecision, isRestored } = useTradingStore.getState();
   const signals = latestDecision?.signals ?? null;
   const riskOutput = latestDecision?.risk ?? null;
   const targetWeights = latestDecision?.targetWeights ?? null;
   const drawdown = latestDecision?.currentDrawdown ?? null;
 
   // 4. Layer 3: Build & Return Unified CurrentMarketSnapshot
-  return buildCurrentMarketSnapshot({
+  const snapshot = buildCurrentMarketSnapshot({
     timestamp: referenceTimeMs,
     data,
     macro,
@@ -52,4 +52,16 @@ export async function loadRuntimeMarketSnapshot(
     targetWeights,
     drawdown,
   });
+
+  // GATE M7B: Truthfully annotate restored research provenance without modifying canonical decision timestamp
+  if (isRestored && latestDecision) {
+    const decisionTimeStr = new Date(latestDecision.timestamp).toISOString().slice(0, 19).replace("T", " ");
+    const restoredNote = `Restored research state (asOf ${decisionTimeStr} UTC)`;
+    if (snapshot.omega && snapshot.omega.status === "AVAILABLE") {
+      (snapshot.omega as { note?: string | null }).note =
+        (targetWeights?.rationale ? `${targetWeights.rationale} · ` : "") + restoredNote;
+    }
+  }
+
+  return snapshot;
 }

@@ -95,19 +95,22 @@ export function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
 }
 
-export function formatNumber(n: number, digits = 2): string {
+export function formatNumber(n: number | null | undefined, digits = 2): string {
+  if (n == null || !Number.isFinite(n)) return "N/A";
   return n.toLocaleString("en-US", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
 }
 
-export function formatPct(n: number, digits = 2): string {
+export function formatPct(n: number | null | undefined, digits = 2): string {
+  if (n == null || !Number.isFinite(n)) return "N/A";
   const sign = n >= 0 ? "+" : "";
   return `${sign}${(n * 100).toFixed(digits)}%`;
 }
 
-export function formatUsd(n: number, digits = 2): string {
+export function formatUsd(n: number | null | undefined, digits = 2): string {
+  if (n == null || !Number.isFinite(n)) return "N/A";
   const abs = Math.abs(n).toLocaleString("en-US", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
