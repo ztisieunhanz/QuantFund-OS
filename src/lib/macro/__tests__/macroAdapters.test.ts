@@ -308,4 +308,72 @@ describe("Macro V2 Live Feed Adapters & Loader", () => {
     expect(parseBinanceKlines([[0, "10", "12", "9", "100"]])).toBeNull(); // 0 timestamp
     expect(parseBinanceKlines([[-100, "10", "12", "9", "100"]])).toBeNull(); // negative timestamp
   });
+
+  // 17. Gate M5C: Yahoo-backed adapters use ONLY /api/yahoo same-origin contract and never direct query1.finance.yahoo.com
+  it("17. Yahoo-backed adapters use ONLY /api/yahoo same-origin contract and never direct query1.finance.yahoo.com", async () => {
+    const requestedUrls: string[] = [];
+    const trackingFetch: FetchFn = async (url: string): Promise<FetchResponse> => {
+      requestedUrls.push(url);
+      if (url.includes("/api/yahoo")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => validYahooChart(100.0, ASOF_TIMESTAMP_SEC),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    };
+
+    await fetchDxyDatumV2({ fetchFn: trackingFetch, fetchedAt: FETCHED_AT });
+    await fetchUs10yDatumV2({ fetchFn: trackingFetch, fetchedAt: FETCHED_AT });
+    await fetchUs2yDatumV2({ fetchFn: trackingFetch, fetchedAt: FETCHED_AT });
+    await fetchVixDatumV2({ fetchFn: trackingFetch, fetchedAt: FETCHED_AT });
+
+    expect(requestedUrls.every((url) => url.startsWith("/api/yahoo/"))).toBe(true);
+    expect(requestedUrls.some((url) => url.includes("query1.finance.yahoo.com"))).toBe(false);
+  });
+
+  // 18. Gate M5C: Failed /api/yahoo request returns UNAVAILABLE without direct fallback or synthetic defaults
+  it("18. Failed /api/yahoo request returns UNAVAILABLE without direct query1 fallback or synthetic defaults", async () => {
+    const requestedUrls: string[] = [];
+    const failingFetch: FetchFn = async (url: string): Promise<FetchResponse> => {
+      requestedUrls.push(url);
+      return { ok: false, status: 404, json: async () => ({ error: "Not found" }) };
+    };
+
+    const dxy = await fetchDxyDatumV2({ fetchFn: failingFetch, fetchedAt: FETCHED_AT });
+    const vnindex = await fetchVnIndexDatumV2({ fetchFn: failingFetch, fetchedAt: FETCHED_AT });
+
+    expect(dxy.status).toBe("UNAVAILABLE");
+    expect(dxy.value).toBeNull();
+    expect(vnindex.status).toBe("UNAVAILABLE");
+    expect(vnindex.value).toBeNull();
+
+    expect(requestedUrls.every((url) => url.startsWith("/api/yahoo/"))).toBe(true);
+    expect(requestedUrls.some((url) => url.includes("query1.finance.yahoo.com"))).toBe(false);
+  });
+
+  // 19. Gate M5C: BTC and Gold use Binance primary and fallback only to /api/yahoo
+  it("19. BTC and Gold use Binance primary and fallback only to /api/yahoo", async () => {
+    const requestedUrls: string[] = [];
+    const fallbackFetch: FetchFn = async (url: string): Promise<FetchResponse> => {
+      requestedUrls.push(url);
+      if (url.includes("binance")) {
+        return { ok: false, status: 500, json: async () => ({}) };
+      }
+      if (url.includes("/api/yahoo")) {
+        return { ok: true, status: 200, json: async () => validYahooChart(2000.0, ASOF_TIMESTAMP_SEC) };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    };
+
+    const gold = await fetchGoldDatumV2({ fetchFn: fallbackFetch, fetchedAt: FETCHED_AT });
+
+    expect(gold.status).toBe("AVAILABLE");
+    if (gold.status === "AVAILABLE") {
+      expect(gold.provider).toBe("Yahoo");
+    }
+    expect(requestedUrls.some((url) => url.includes("/api/yahoo/"))).toBe(true);
+    expect(requestedUrls.some((url) => url.includes("query1.finance.yahoo.com"))).toBe(false);
+  });
 });

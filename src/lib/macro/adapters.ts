@@ -168,7 +168,6 @@ export async function fetchBtcDatumV2(
   // 2. Try Yahoo
   const yahooUrls = [
     `/api/yahoo/v8/finance/chart/${encodeURIComponent("BTC-USD")}?interval=1d&range=2y`,
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent("BTC-USD")}?interval=1d&range=2y`,
   ];
   const yahooData = await tryFetchUrls(yahooUrls, fetchFn);
   const yahooParsed = parseYahooChart(yahooData);
@@ -228,7 +227,6 @@ export async function fetchGoldDatumV2(
   // 2. Try Yahoo Gold Futures (GC=F)
   const yahooUrls = [
     `/api/yahoo/v8/finance/chart/${encodeURIComponent("GC=F")}?interval=1d&range=2y`,
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent("GC=F")}?interval=1d&range=2y`,
   ];
   const yahooData = await tryFetchUrls(yahooUrls, fetchFn);
   const yahooParsed = parseYahooChart(yahooData);
@@ -266,7 +264,6 @@ export async function fetchDxyDatumV2(
 
   const yahooUrls = [
     `/api/yahoo/v8/finance/chart/${encodeURIComponent("DX-Y.NYB")}?interval=1d&range=2y`,
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent("DX-Y.NYB")}?interval=1d&range=2y`,
   ];
   const yahooData = await tryFetchUrls(yahooUrls, fetchFn);
   const yahooParsed = parseYahooChart(yahooData);
@@ -304,7 +301,6 @@ export async function fetchUs10yDatumV2(
 
   const yahooUrls = [
     `/api/yahoo/v8/finance/chart/${encodeURIComponent("^TNX")}?interval=1d&range=2y`,
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent("^TNX")}?interval=1d&range=2y`,
   ];
   const yahooData = await tryFetchUrls(yahooUrls, fetchFn);
   const yahooParsed = parseYahooChart(yahooData);
@@ -342,7 +338,6 @@ export async function fetchUs2yDatumV2(
 
   const yahooUrls = [
     `/api/yahoo/v8/finance/chart/${encodeURIComponent("2YY=F")}?interval=1d&range=2y`,
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent("2YY=F")}?interval=1d&range=2y`,
   ];
   const yahooData = await tryFetchUrls(yahooUrls, fetchFn);
   const yahooParsed = parseYahooChart(yahooData);
@@ -380,7 +375,6 @@ export async function fetchVixDatumV2(
 
   const yahooUrls = [
     `/api/yahoo/v8/finance/chart/${encodeURIComponent("^VIX")}?interval=1d&range=2y`,
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent("^VIX")}?interval=1d&range=2y`,
   ];
   const yahooData = await tryFetchUrls(yahooUrls, fetchFn);
   const yahooParsed = parseYahooChart(yahooData);
@@ -418,7 +412,6 @@ export async function fetchVnIndexDatumV2(
 
   const yahooUrls = [
     `/api/yahoo/v8/finance/chart/${encodeURIComponent("^VNINDEX")}?interval=1d&range=2y`,
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent("^VNINDEX")}?interval=1d&range=2y`,
   ];
   const yahooData = await tryFetchUrls(yahooUrls, fetchFn);
   const yahooParsed = parseYahooChart(yahooData);
