@@ -14,6 +14,23 @@ import type {
   VietnamForeignFlowData,
   VietnamLiquidityData,
 } from "./types";
+import {
+  fetchPaginatedVndirectFinfo,
+  fetchVndirectDchart,
+} from "./vndirectClient";
+import {
+  calculateVietnamBreadth,
+  calculateVietnamLiquidity,
+  parseAndCalculateVietnamForeignFlow,
+  parseVndirectSecurityMaster,
+  parseVndirectStockPrices,
+  type ParsedStockPriceRow,
+} from "./vndirectParsers";
+import {
+  addSecurityCloseObservation,
+  createEmptyHistoryMap,
+  type PerSecurityHistoryMap,
+} from "./vietnamHistory";
 
 export interface FetchResponse {
   readonly ok: boolean;
@@ -399,87 +416,423 @@ export async function fetchVixDatumV2(
   });
 }
 
+let globalHistoryMap: PerSecurityHistoryMap = createEmptyHistoryMap();
+let globalDailyLiquidityHistory: Array<{ date: string; rows: ParsedStockPriceRow[] }> = [];
+let globalDailyForeignHistory: Array<{ date: string; payload: unknown }> = [];
+
+/**
+ * Resets in-memory Vietnam history caches (primarily used for deterministic test isolation).
+ */
+export function resetVietnamAdapterCaches(): void {
+  globalHistoryMap = createEmptyHistoryMap();
+  globalDailyLiquidityHistory = [];
+  globalDailyForeignHistory = [];
+}
+
+interface DchartHistoryResponse {
+  readonly t?: number[];
+  readonly o?: number[];
+  readonly h?: number[];
+  readonly l?: number[];
+  readonly c?: number[];
+  readonly v?: number[];
+  readonly s?: string;
+}
+
 /**
  * Adapter G: VNINDEX
- * Yahoo ^VNINDEX
- * Failure: UNAVAILABLE (NO SYNTHETIC BASE SERIES FALLBACK IN V2)
+ * Primary: VNDirect DChart symbol=VNINDEX
+ * Failure: UNAVAILABLE (NO YAHOO AND NO SYNTHETIC FALLBACK IN V2)
  */
 export async function fetchVnIndexDatumV2(
   opts?: AdapterOptions
 ): Promise<MacroDatum<number>> {
-  const fetchFn = opts?.fetchFn ?? defaultFetchFn;
+  const fetchFn = opts?.fetchFn;
   const fetchedAt = opts?.fetchedAt ?? Date.now();
 
-  const yahooUrls = [
-    `/api/yahoo/v8/finance/chart/${encodeURIComponent("^VNINDEX")}?interval=1d&range=2y`,
-  ];
-  const yahooData = await tryFetchUrls(yahooUrls, fetchFn);
-  const yahooParsed = parseYahooChart(yahooData);
+  const customFetch = fetchFn
+    ? async (url: string) => {
+        const res = await fetchFn(url);
+        return { ok: res.ok, status: res.status, json: res.json };
+      }
+    : undefined;
 
-  if (yahooParsed) {
-    return createLiveDatum({
-      id: "vnindex",
-      value: yahooParsed.value,
-      provider: "Yahoo",
-      instrument: "^VNINDEX",
-      asOf: yahooParsed.asOf,
+  const result = await fetchVndirectDchart<DchartHistoryResponse>(
+    "/dchart/history?symbol=VNINDEX&resolution=D",
+    customFetch
+  );
+
+  if (!result.success || !result.data || result.data.s !== "ok") {
+    return createUnavailableDatum("vnindex", {
+      provider: "VNDirect",
+      instrument: "VNINDEX",
+      reason: "VNDirect DChart VNINDEX feed failed or malformed",
       fetchedAt,
-      basis: "INDEX",
     });
   }
 
+  const { t, c } = result.data;
+  if (!Array.isArray(t) || !Array.isArray(c) || t.length === 0 || c.length === 0) {
+    return createUnavailableDatum("vnindex", {
+      provider: "VNDirect",
+      instrument: "VNINDEX",
+      reason: "VNDirect DChart VNINDEX payload missing timestamp/close arrays",
+      fetchedAt,
+    });
+  }
+
+  for (let i = t.length - 1; i >= 0; i -= 1) {
+    const close = c[i];
+    const stamp = t[i];
+
+    if (
+      close != null &&
+      Number.isFinite(close) &&
+      close > 0 &&
+      stamp != null &&
+      Number.isFinite(stamp) &&
+      stamp > 0
+    ) {
+      return createLiveDatum({
+        id: "vnindex",
+        value: close,
+        provider: "VNDirect",
+        instrument: "VNINDEX",
+        asOf: stamp * 1000,
+        fetchedAt,
+        basis: "SPOT_INDEX",
+      });
+    }
+  }
+
   return createUnavailableDatum("vnindex", {
-    provider: "Yahoo",
-    instrument: "^VNINDEX",
-    reason: "Yahoo VNINDEX feed failed (No synthetic base series fallback in V2)",
+    provider: "VNDirect",
+    instrument: "VNINDEX",
+    reason: "No valid finite close observation found in DChart VNINDEX response",
     fetchedAt,
   });
 }
 
 /**
+ * Loads Authoritative Security Master universe set (floor:HOSE, type:STOCK, status:listed).
+ */
+async function getAuthoritativeUniverse(
+  opts?: AdapterOptions
+): Promise<Set<string> | null> {
+  const fetchFn = opts?.fetchFn;
+  const customFetch = fetchFn
+    ? async (url: string) => {
+        const res = await fetchFn(url);
+        return { ok: res.ok, status: res.status, json: res.json };
+      }
+    : undefined;
+
+  const res = await fetchPaginatedVndirectFinfo<unknown>(
+    "/v4/stocks?q=floor:HOSE~type:STOCK~status:listed&size=500",
+    customFetch
+  );
+
+  if (!res.success) {
+    return null;
+  }
+
+  const parsed = parseVndirectSecurityMaster(res.data);
+  if (!parsed.success) {
+    return null;
+  }
+
+  return parsed.data;
+}
+
+/**
  * Vietnam Internal Metric Adapter: Breadth
- * Return UNAVAILABLE (No verified live feed connected yet)
  */
 export async function fetchVietnamBreadthV2(
   opts?: AdapterOptions
 ): Promise<MacroDatum<VietnamBreadthData>> {
+  const fetchFn = opts?.fetchFn;
   const fetchedAt = opts?.fetchedAt ?? Date.now();
-  return createUnavailableDatum("breadth", {
-    provider: "VietnamExchange",
+
+  const customFetch = fetchFn
+    ? async (url: string) => {
+        const res = await fetchFn(url);
+        return { ok: res.ok, status: res.status, json: res.json };
+      }
+    : undefined;
+
+  const authSymbols = await getAuthoritativeUniverse(opts);
+  if (!authSymbols) {
+    return createUnavailableDatum("breadth", {
+      provider: "VNDirect",
+      instrument: "HOSE_BREADTH",
+      reason: "Authoritative Security Master universe could not be established",
+      fetchedAt,
+    });
+  }
+
+  const stockPricesRes = await fetchPaginatedVndirectFinfo<unknown>(
+    "/v4/stock_prices?q=floor:HOSE~type:STOCK&size=500",
+    customFetch
+  );
+
+  if (!stockPricesRes.success || !Array.isArray(stockPricesRes.data) || stockPricesRes.data.length === 0) {
+    return createUnavailableDatum("breadth", {
+      provider: "VNDirect",
+      instrument: "HOSE_BREADTH",
+      reason: "VNDirect stock_prices feed failed or empty",
+      fetchedAt,
+    });
+  }
+
+  const firstRow = stockPricesRes.data[0] as Record<string, unknown>;
+  const sessionDate = typeof firstRow?.date === "string" ? firstRow.date.trim() : null;
+
+  if (!sessionDate) {
+    return createUnavailableDatum("breadth", {
+      provider: "VNDirect",
+      instrument: "HOSE_BREADTH",
+      reason: "VNDirect stock_prices payload missing valid session date",
+      fetchedAt,
+    });
+  }
+
+  const parseRes = parseVndirectStockPrices(stockPricesRes.data, sessionDate, authSymbols);
+  if (!parseRes.success) {
+    return createUnavailableDatum("breadth", {
+      provider: "VNDirect",
+      instrument: "HOSE_BREADTH",
+      reason: parseRes.error,
+      fetchedAt,
+    });
+  }
+
+  const parsedRows = parseRes.data;
+
+  for (const row of parsedRows) {
+    globalHistoryMap = addSecurityCloseObservation(
+      globalHistoryMap,
+      row.code,
+      sessionDate,
+      row.close
+    );
+  }
+
+  const existingIndex = globalDailyLiquidityHistory.findIndex((item) => item.date === sessionDate);
+  if (existingIndex >= 0) {
+    globalDailyLiquidityHistory[existingIndex] = { date: sessionDate, rows: parsedRows };
+  } else {
+    globalDailyLiquidityHistory.push({ date: sessionDate, rows: parsedRows });
+    globalDailyLiquidityHistory.sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  const breadthValue = calculateVietnamBreadth(parsedRows, sessionDate, globalHistoryMap);
+  const sessionAsOf = new Date(`${sessionDate}T15:00:00+07:00`).getTime();
+
+  return createLiveDatum({
+    id: "breadth",
+    value: breadthValue,
+    provider: "VNDirect",
     instrument: "HOSE_BREADTH",
-    reason: "No verified live market breadth feed connected",
+    asOf: Number.isFinite(sessionAsOf) ? sessionAsOf : fetchedAt,
     fetchedAt,
+    basis: "HOSE_COMMON_EQUITY_EOD",
   });
 }
 
 /**
  * Vietnam Internal Metric Adapter: Liquidity
- * Return UNAVAILABLE (No verified live feed connected yet)
  */
 export async function fetchVietnamLiquidityV2(
   opts?: AdapterOptions
 ): Promise<MacroDatum<VietnamLiquidityData>> {
+  const fetchFn = opts?.fetchFn;
   const fetchedAt = opts?.fetchedAt ?? Date.now();
-  return createUnavailableDatum("liquidity", {
-    provider: "VietnamExchange",
+
+  const customFetch = fetchFn
+    ? async (url: string) => {
+        const res = await fetchFn(url);
+        return { ok: res.ok, status: res.status, json: res.json };
+      }
+    : undefined;
+
+  const authSymbols = await getAuthoritativeUniverse(opts);
+  if (!authSymbols) {
+    return createUnavailableDatum("liquidity", {
+      provider: "VNDirect",
+      instrument: "HOSE_LIQUIDITY",
+      reason: "Authoritative Security Master universe could not be established",
+      fetchedAt,
+    });
+  }
+
+  if (globalDailyLiquidityHistory.length < 20) {
+    const stockPricesRes = await fetchPaginatedVndirectFinfo<unknown>(
+      "/v4/stock_prices?q=floor:HOSE~type:STOCK&size=500",
+      customFetch
+    );
+    if (stockPricesRes.success && Array.isArray(stockPricesRes.data) && stockPricesRes.data.length > 0) {
+      const firstRow = stockPricesRes.data[0] as Record<string, unknown>;
+      const sessionDate = typeof firstRow?.date === "string" ? firstRow.date.trim() : null;
+      if (sessionDate) {
+        const parseRes = parseVndirectStockPrices(stockPricesRes.data, sessionDate, authSymbols);
+        if (parseRes.success) {
+          const existingIndex = globalDailyLiquidityHistory.findIndex((item) => item.date === sessionDate);
+          if (existingIndex < 0) {
+            globalDailyLiquidityHistory.push({ date: sessionDate, rows: parseRes.data });
+            globalDailyLiquidityHistory.sort((a, b) => a.date.localeCompare(b.date));
+          }
+        }
+      }
+    }
+  }
+
+  if (globalDailyLiquidityHistory.length < 20) {
+    return createUnavailableDatum("liquidity", {
+      provider: "VNDirect",
+      instrument: "HOSE_LIQUIDITY",
+      reason: `Insufficient 20-session liquidity history (available: ${globalDailyLiquidityHistory.length}/20)`,
+      fetchedAt,
+    });
+  }
+
+  const latest20Sessions = globalDailyLiquidityHistory.slice(
+    globalDailyLiquidityHistory.length - 20
+  );
+  const currentSession = latest20Sessions[latest20Sessions.length - 1];
+
+  const liquidityRes = calculateVietnamLiquidity(
+    currentSession.rows,
+    latest20Sessions.map((s) => s.rows)
+  );
+
+  if (!liquidityRes.success) {
+    return createUnavailableDatum("liquidity", {
+      provider: "VNDirect",
+      instrument: "HOSE_LIQUIDITY",
+      reason: liquidityRes.error,
+      fetchedAt,
+    });
+  }
+
+  const sessionAsOf = new Date(`${currentSession.date}T15:00:00+07:00`).getTime();
+
+  return createLiveDatum({
+    id: "liquidity",
+    value: liquidityRes.data,
+    provider: "VNDirect",
     instrument: "HOSE_LIQUIDITY",
-    reason: "No verified live market liquidity feed connected",
+    asOf: Number.isFinite(sessionAsOf) ? sessionAsOf : fetchedAt,
     fetchedAt,
+    basis: "HOSE_COMMON_EQUITY_NORMAL_MATCHED_VALUE_BILLION_VND",
   });
 }
 
 /**
  * Vietnam Internal Metric Adapter: Foreign Flow
- * Return UNAVAILABLE (No verified live feed connected yet)
  */
 export async function fetchVietnamForeignFlowV2(
   opts?: AdapterOptions
 ): Promise<MacroDatum<VietnamForeignFlowData>> {
+  const fetchFn = opts?.fetchFn;
   const fetchedAt = opts?.fetchedAt ?? Date.now();
-  return createUnavailableDatum("foreignFlow", {
-    provider: "VietnamExchange",
+
+  const customFetch = fetchFn
+    ? async (url: string) => {
+        const res = await fetchFn(url);
+        return { ok: res.ok, status: res.status, json: res.json };
+      }
+    : undefined;
+
+  const authSymbols = await getAuthoritativeUniverse(opts);
+  if (!authSymbols) {
+    return createUnavailableDatum("foreignFlow", {
+      provider: "VNDirect",
+      instrument: "HOSE_FOREIGN_FLOW",
+      reason: "Authoritative Security Master universe could not be established",
+      fetchedAt,
+    });
+  }
+
+  const foreignRes = await fetchPaginatedVndirectFinfo<unknown>(
+    "/v4/foreigns?q=floor:HOSE~type:STOCK&size=500",
+    customFetch
+  );
+
+  if (!foreignRes.success || !Array.isArray(foreignRes.data) || foreignRes.data.length === 0) {
+    return createUnavailableDatum("foreignFlow", {
+      provider: "VNDirect",
+      instrument: "HOSE_FOREIGN_FLOW",
+      reason: "VNDirect foreigns feed failed or empty",
+      fetchedAt,
+    });
+  }
+
+  const firstRow = foreignRes.data[0] as Record<string, unknown>;
+  const sessionDate =
+    typeof firstRow?.tradingDate === "string"
+      ? firstRow.tradingDate.trim()
+      : typeof firstRow?.date === "string"
+      ? firstRow.date.trim()
+      : null;
+
+  if (!sessionDate) {
+    return createUnavailableDatum("foreignFlow", {
+      provider: "VNDirect",
+      instrument: "HOSE_FOREIGN_FLOW",
+      reason: "VNDirect foreigns payload missing valid session date",
+      fetchedAt,
+    });
+  }
+
+  const existingIndex = globalDailyForeignHistory.findIndex((item) => item.date === sessionDate);
+  if (existingIndex >= 0) {
+    globalDailyForeignHistory[existingIndex] = { date: sessionDate, payload: foreignRes.data };
+  } else {
+    globalDailyForeignHistory.push({ date: sessionDate, payload: foreignRes.data });
+    globalDailyForeignHistory.sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  if (globalDailyForeignHistory.length < 5) {
+    return createUnavailableDatum("foreignFlow", {
+      provider: "VNDirect",
+      instrument: "HOSE_FOREIGN_FLOW",
+      reason: `Insufficient 5-session foreign flow history (available: ${globalDailyForeignHistory.length}/5)`,
+      fetchedAt,
+    });
+  }
+
+  const latest5Sessions = globalDailyForeignHistory.slice(
+    globalDailyForeignHistory.length - 5
+  );
+
+  const currentPayload = latest5Sessions[latest5Sessions.length - 1].payload;
+  const history5Payloads = latest5Sessions.map((s) => s.payload);
+
+  const calcRes = parseAndCalculateVietnamForeignFlow(
+    currentPayload,
+    sessionDate,
+    history5Payloads,
+    authSymbols
+  );
+
+  if (!calcRes.success) {
+    return createUnavailableDatum("foreignFlow", {
+      provider: "VNDirect",
+      instrument: "HOSE_FOREIGN_FLOW",
+      reason: calcRes.error,
+      fetchedAt,
+    });
+  }
+
+  const sessionAsOf = new Date(`${sessionDate}T15:00:00+07:00`).getTime();
+
+  return createLiveDatum({
+    id: "foreignFlow",
+    value: calcRes.data,
+    provider: "VNDirect",
     instrument: "HOSE_FOREIGN_FLOW",
-    reason: "No verified live foreign flow feed connected",
+    asOf: Number.isFinite(sessionAsOf) ? sessionAsOf : fetchedAt,
     fetchedAt,
+    basis: "HOSE_COMMON_EQUITY_FOREIGN_NET_VALUE_BILLION_VND",
   });
 }

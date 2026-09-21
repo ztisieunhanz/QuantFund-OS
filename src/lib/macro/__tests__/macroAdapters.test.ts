@@ -349,7 +349,7 @@ describe("Macro V2 Live Feed Adapters & Loader", () => {
     expect(vnindex.status).toBe("UNAVAILABLE");
     expect(vnindex.value).toBeNull();
 
-    expect(requestedUrls.every((url) => url.startsWith("/api/yahoo/"))).toBe(true);
+    expect(requestedUrls.every((url) => url.startsWith("/api/yahoo/") || url.startsWith("/api/vndirect/"))).toBe(true);
     expect(requestedUrls.some((url) => url.includes("query1.finance.yahoo.com"))).toBe(false);
   });
 

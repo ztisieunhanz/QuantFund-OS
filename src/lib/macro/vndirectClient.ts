@@ -58,25 +58,28 @@ function buildUrl(basePath: string, pathAndQuery: string): string {
   return `${basePath}${cleanPath}`;
 }
 
+export type TransportFetchFn = (
+  url: string
+) => Promise<{ ok: boolean; status: number; statusText?: string; json: () => Promise<unknown> }>;
+
 /**
  * Executes a single same-origin HTTP GET request to the FINfo gateway.
  */
 export async function fetchVndirectFinfo<T>(
-  pathAndQuery: string
+  pathAndQuery: string,
+  customFetchFn?: TransportFetchFn
 ): Promise<VndirectTransportResult<T>> {
   const url = buildUrl(VNDIRECT_FINFO_BASE_PATH, pathAndQuery);
 
   try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-    });
+    const doFetch = customFetchFn ?? globalThis.fetch;
+    const response = await doFetch(url);
 
     if (!response.ok) {
       return {
         success: false,
         code: "HTTP_ERROR",
-        message: `FINfo HTTP ${response.status}: ${response.statusText}`,
+        message: `FINfo HTTP ${response.status}: ${response.statusText || ""}`,
         statusCode: response.status,
         url,
       };
@@ -108,21 +111,20 @@ export async function fetchVndirectFinfo<T>(
  * Executes a single same-origin HTTP GET request to the DChart gateway.
  */
 export async function fetchVndirectDchart<T>(
-  pathAndQuery: string
+  pathAndQuery: string,
+  customFetchFn?: TransportFetchFn
 ): Promise<VndirectTransportResult<T>> {
   const url = buildUrl(VNDIRECT_DCHART_BASE_PATH, pathAndQuery);
 
   try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-    });
+    const doFetch = customFetchFn ?? globalThis.fetch;
+    const response = await doFetch(url);
 
     if (!response.ok) {
       return {
         success: false,
         code: "HTTP_ERROR",
-        message: `DChart HTTP ${response.status}: ${response.statusText}`,
+        message: `DChart HTTP ${response.status}: ${response.statusText || ""}`,
         statusCode: response.status,
         url,
       };
@@ -166,11 +168,12 @@ function updateUrlQueryParam(pathAndQuery: string, key: string, value: string | 
  * Fails closed immediately if any page fails or if totalPages exceeds safety guard.
  */
 export async function fetchPaginatedVndirectFinfo<T>(
-  pathAndQuery: string
+  pathAndQuery: string,
+  customFetchFn?: TransportFetchFn
 ): Promise<VndirectTransportResult<T[]>> {
   // Page 1 initial fetch
   const initialUrl = updateUrlQueryParam(pathAndQuery, "page", 1);
-  const firstResult = await fetchVndirectFinfo<FinfoPaginatedResponse<T>>(initialUrl);
+  const firstResult = await fetchVndirectFinfo<FinfoPaginatedResponse<T>>(initialUrl, customFetchFn);
 
   if (!firstResult.success) {
     return firstResult;
@@ -217,7 +220,7 @@ export async function fetchPaginatedVndirectFinfo<T>(
   // Fetch subsequent pages 2..totalPages if multi-page
   for (let page = 2; page <= totalPages; page++) {
     const pageUrl = updateUrlQueryParam(pathAndQuery, "page", page);
-    const pageResult = await fetchVndirectFinfo<FinfoPaginatedResponse<T>>(pageUrl);
+    const pageResult = await fetchVndirectFinfo<FinfoPaginatedResponse<T>>(pageUrl, customFetchFn);
 
     if (!pageResult.success) {
       // Fail closed immediately on any single page failure. NEVER return partial rows.
