@@ -150,13 +150,13 @@ export interface VietnamLiquidityData {
   readonly matchingValueBillion: number;
   readonly ma20ValueBillion: number;
   readonly ratioToMa20: number;
-  readonly status: "EXPANDING" | "CONTRACTING" | "NORMAL";
+  readonly status: "EXPANDING" | "CONTRACTING" | "NORMAL" | null;
 }
 
 export interface VietnamForeignFlowData {
   readonly net1dBillion: number;
   readonly net5dBillion: number;
-  readonly status: "NET_BUYING" | "NET_SELLING" | "NEUTRAL";
+  readonly status: "NET_BUYING" | "NET_SELLING" | "NEUTRAL" | null;
 }
 
 /**

@@ -351,4 +351,25 @@ describe("Macro V2 Data Contract & Provenance Foundation", () => {
     expect(breadthDatum.value.pctAboveMA50).toBeNull();
     expect(breadthDatum.value.pctAboveMA200).toBeNull();
   });
+
+  it("7. VietnamLiquidityData and VietnamForeignFlowData support nullable status fields", () => {
+    const liquidityData: import("../types").VietnamLiquidityData = {
+      matchingValueBillion: 15200,
+      ma20ValueBillion: 16000,
+      ratioToMa20: 0.95,
+      status: null, // Null when status classification is uncalculated/unfrozen
+    };
+
+    const foreignFlowData: import("../types").VietnamForeignFlowData = {
+      net1dBillion: 45.2,
+      net5dBillion: 120.8,
+      status: null, // Null when status classification is uncalculated/unfrozen
+    };
+
+    expect(liquidityData.status).toBeNull();
+    expect(liquidityData.matchingValueBillion).toBe(15200);
+
+    expect(foreignFlowData.status).toBeNull();
+    expect(foreignFlowData.net1dBillion).toBe(45.2);
+  });
 });
