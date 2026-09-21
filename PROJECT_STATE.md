@@ -23,17 +23,18 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Current Verified Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **HEAD Commit**: `49e42dea219069600fb0ba67495cef0598769540`
-- **Commit Message**: `Gate 2A: repair core quant validity`
+- **HEAD Commit**: `e590c4664fabe51846f689017974f448ba87b7dc`
+- **Commit Message**: `Gate M6E-5: validate VNDirect runtime integration`
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
   - **Gate 1** (Forensic Audit): **COMPLETE**
   - **Gate 2A** (Core Quant Validity Repair): **COMPLETE**
+  - **Gate M6** (Vietnam Layer 1 Integration): **COMPLETE**
 - **Latest Verification Results**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (24/24 tests across 3 test files)
+  - `npx vitest run`: **PASS** (152/152 tests across 11 test files)
   - `git diff --check`: **PASS**
-- **Working Tree State**: Clean immediately following Gate 2A commit.
+- **Working Tree State**: Clean immediately following Gate M6E-5 commit. Documenting M6 state (Gate M6F).
 
 ---
 
@@ -154,7 +155,100 @@ Gate 2A addressed and repaired the following core validity issues:
 
 ---
 
-## 6. Preserved Audit Findings (Not Proven Defective)
+## 6. Completed Gate M6 — Vietnam Layer 1 Integration
+
+Gate M6 successfully implemented and verified live Vietnam Layer 1 market data integration using VNDirect public endpoints over same-origin gateway routes.
+
+### 1. Vietnam Layer 1 Provider
+- **Provider**: VNDirect is the active Layer 1 implementation provider.
+- **Gateway Routes**: The browser application connects via development same-origin gateway proxy routes (`/api/vndirect/finfo` and `/api/vndirect/dchart`).
+- **Endpoint Responsibilities**:
+  - `FINfo`: Supplies HOSE security master (`/v4/stocks`), exact-date daily session prices (`/v4/stock_prices`), and foreign trading flow (`/v4/foreigns`).
+  - `DChart`: Supplies daily session price history for VNINDEX (`/dchart/history`).
+- **Redistribution Rights**: Public endpoint availability does NOT imply or establish production redistribution or commercial data licensing rights.
+
+### 2. VNINDEX Telemetry
+- **Semantic Instrument Identifier**: `VNINDEX` (official HOSE benchmark).
+- **Provider**: VNDirect DChart (`/api/vndirect/dchart/history?symbol=VNINDEX&resolution=D`).
+- **Runtime Quality**: Verified **LIVE / USABLE**.
+- **Fallback Invariant**: Strictly fail-closed. No Yahoo `^VNINDEX` fallback, no synthetic data fallback, and no hardcoded price fallback.
+
+### 3. HOSE Authoritative Universe
+- **Boundary**: Strictly HOSE listed common equities (`floor=HOSE`, `type=STOCK`, `status=listed`).
+- **Security Master Reconciliation**: Daily stock price cross-sections are reconciled against the authoritative security master returned by FINfo.
+- **Observed Count**: Runtime verification observed 405 securities during M6 acceptance. This is an empirical observation and MUST NOT be encoded as a permanent hardcoded threshold. Universe completeness is dynamically determined by reconciliation against the authoritative security master.
+
+### 4. Vietnam Market Breadth
+- **Discovery**: Provider-driven latest `stock_prices` session date discovery via single-row HOSE probe (`q=floor:HOSE~type:STOCK&sort=date:desc&size=1`).
+- **Cross-Section**: Exact session cross-section query (`q=floor:HOSE~type:STOCK~date:${D}&size=500`).
+- **Metrics**: Computes advancing, declining, and unchanged counts against official reference prices.
+- **Nullability**: `adRatio` is typed as `number | null` and evaluates to `null` when `declining == 0` (no division by zero or forced substitution). `pctAboveMA20`, `pctAboveMA50`, and `pctAboveMA200` are independently typed as `number | null`.
+- **Per-Security History**: Moving averages require per-security historical daily close series up to 200 sessions. Newly listed securities with fewer than H bars are excluded from both numerator and denominator for horizon H.
+- **Forward Fill Prohibition**: No forward fill, interpolation, or synthetic price history.
+- **Runtime Quality**: Verified **LIVE / USABLE**.
+
+### 5. Vietnam Market Liquidity
+- **Transaction Scope**: HOSE common-equity normal order-matched value only (`nmValue`). Put-through / negotiated transactions (`ptValue`) are strictly excluded.
+- **Session Horizon**: Evaluated across the latest 20 valid completed market sessions.
+- **Session Calendar**: Derived directly from the VNINDEX DChart session history calendar, rather than calendar subtraction or single-stock session proxies.
+- **Categorical Status**: `status` remains `null` because no categorical regime thresholds have been formally validated.
+- **Runtime Quality**: Verified **LIVE / USABLE**.
+
+### 6. Vietnam Foreign Net Flow
+- **Transaction Scope**: HOSE common-equity foreign net trading value (`netVal`).
+- **Session Horizon**: Evaluated across the latest 5 valid completed foreign trading sessions (`net1dBillion` and rolling `net5dBillion`).
+- **Session Calendar**: Candidate dates are derived from the provider market-session calendar. Incomplete or missing candidate sessions are skipped until 5 valid sessions are established.
+- **Categorical Status**: `status` remains `null` because no categorical regime thresholds have been formally validated.
+- **Runtime Quality**: Verified **LIVE / USABLE**.
+
+### 7. Session Date & Provenance Semantics
+- **FINfo Timestamps**: FINfo provides session `DATE` (`YYYY-MM-DD`), not verified intraday observation or market close times.
+- **UTC Midnight Anchor**: `MacroDatum.asOf` for FINfo session data uses deterministic UTC-midnight session-date anchors (`T00:00:00Z`) purely as a structural representation.
+- **UI Formatting**: Macro V2 UI explicitly renders FINfo session dates as `YYYY-MM-DD`. These timestamps MUST NOT be interpreted or presented as provider-reported midnight or 15:00 HOSE market close times.
+- **DChart Timestamps**: DChart provider Unix timestamps are preserved but MUST NOT be relabeled as actual HOSE close times without authoritative empirical evidence.
+
+### 8. Fail-Closed Invariants
+- **Malformed Response**: Malformed transport or provider response -> `UNAVAILABLE`.
+- **Incomplete Universe Reconciliation**: Unreconciled authoritative security master -> `UNAVAILABLE`.
+- **Insufficient Liquidity Sessions**: Fewer than 20 valid market sessions -> `UNAVAILABLE`.
+- **Insufficient Foreign Sessions**: Fewer than 5 valid foreign sessions -> `UNAVAILABLE`.
+- **Insufficient MA History**: Insufficient MA history does NOT invalidate truthful current breadth (advancing/declining); affected MA fields remain `null`.
+- **Synthetic Fallbacks**: No synthetic or hardcoded Vietnam fallbacks are permitted.
+
+### 9. Macro Architecture Invariants
+- **Supplementary Telemetry**: Vietnam market telemetry remains supplementary Layer 1 data.
+- **Core Invariant**: Vietnam metrics MUST NOT alter:
+  - `coreMetricIds`
+  - Global macro regime scoring
+  - Global macro confidence
+  - Global stance
+- **Current Core Metrics**: `coreMetricIds` remain strictly: `["dxy", "us2y", "us10y", "vix", "gold", "btc"]`.
+
+### 10. Runtime Acceptance Evidence (Gate M6E-5)
+- **Verified Metrics**:
+  - VNINDEX: **LIVE / VNDirect / USABLE**
+  - Vietnam Breadth: **LIVE / VNDirect / USABLE**
+  - Vietnam Liquidity: **LIVE / VNDirect / USABLE**
+  - Vietnam Foreign Net Flow: **LIVE / VNDirect / USABLE**
+- **Gateway Health**: All VNDirect DChart + FINfo HTTP requests returned HTTP 200.
+- **DChart HTTP 406 Resolution**:
+  - Removed duplicated `/dchart/dchart/history` path in client/gateway.
+  - Removed incompatible forced `Accept: application/json` header in Vite gateway proxy.
+- **Verification Commands Passed**:
+  - `npm run build`: **PASS**
+  - `npx vitest run`: **PASS** (152/152 tests across 11 test files)
+  - `git diff --check`: **PASS**
+
+### 11. Relevant Gate Checkpoints
+- `b7aad694d9ec16bb1db328e8af929534b73bedd6`: **Gate M6E-1: freeze Vietnam data contracts**
+- `fa1ffac908f8131be1264f5922e42e3440a26a64`: **Gate M6E-2: add VNDirect transport gateway**
+- `a36ba6f57528171665ef07e5326356231b5f408c`: **Gate M6E-3: add deterministic Vietnam data calculations**
+- `ed301dd8bf50e306eb81f9a01c025d691620497f`: **Gate M6E-4: integrate VNDirect Vietnam market data**
+- `e590c4664fabe51846f689017974f448ba87b7dc`: **Gate M6E-5: validate VNDirect runtime integration**
+
+---
+
+## 7. Preserved Audit Findings (Not Proven Defective)
 
 The following Gate 1 claims were audited and determined NOT to be core defects requiring code changes:
 
@@ -165,7 +259,7 @@ The following Gate 1 claims were audited and determined NOT to be core defects r
 
 ---
 
-## 7. Open / Deferred Technical & Macro Risks
+## 8. Open / Deferred Technical & Macro Risks
 
 ### Deferred Quant Engineering
 - Genuine historical point-in-time macro ingestion.
@@ -179,17 +273,17 @@ The following Gate 1 claims were audited and determined NOT to be core defects r
 - Mean Reversion research improvements.
 - `liveRuntime` / execution API production hardening.
 
-### Legacy Macro Risks (To Be Addressed in Macro V2)
+### Legacy Macro Risks (Addressed / Remaining in Macro V2)
 Inspection of legacy Macro code revealed structural risks that require audit and redesign:
 - **Synthetic Fallback Contamination**: Synthetic fallback paths can blend into apparently current macro state.
 - **Misleading Provenance**: Derived or substitute market metrics lack explicit data quality lineage.
-- **Hard-coded Data**: Vietnam market breadth, liquidity, and foreign flow contain hard-coded static arrays.
+- **Hard-coded Data**: Vietnam market breadth, liquidity, and foreign flow contained hard-coded static arrays (*REPAIRED in Gate M6: Replaced with live VNDirect FINfo/DChart telemetry*).
 - **Heuristic Output Presented as Authority**: Macro regime and allocation outputs are heuristic and must be represented as model interpretation rather than objective factual truth.
 - **Coupled Responsibilities**: Chatbot context mixes data retrieval, model evaluation, and UI rendering; `MacroView.tsx` currently owns excessive monolithic logic.
 
 ---
 
-## 8. Required Workflow
+## 9. Required Workflow
 
 For every major engineering gate:
 
@@ -209,16 +303,8 @@ No single AI agent should independently design -> implement -> test -> approve -
 
 ---
 
-## 9. Next Active Engineering Gate
+## 10. Next Active Engineering Gate
 
-### GATE M1 — MACRO V2 DATA INTEGRITY
+### GATE M6 — DOCUMENTATION COMPLETE (Gate M6F)
 
-**Goal**: Establish truthful, typed, inspectable market-data contracts before building new Macro UI or chatbot reasoning.
-
-**Initial M1 Priorities**:
-1. Inventory all legacy macro and Vietnam market data feeds.
-2. Classify data feeds into explicit categories: `LIVE`, `DERIVED`, `SYNTHETIC`, or `UNAVAILABLE`.
-3. Establish unified metadata contract: `source`, `asOf`, `freshness`, and `quality`.
-4. Prevent synthetic or hard-coded fallbacks from masquerading as current market facts.
-5. Define the data-side schema for `CurrentMarketSnapshot`.
-6. Maintain strict scope: **No broad UI redesign, no chatbot rewrite, no quant parameter tuning** during M1.
+**Status**: Gate M6 Vietnam Layer 1 Integration (M6E-1 through M6E-5 & M6F documentation) is fully complete and verified.
