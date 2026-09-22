@@ -376,7 +376,7 @@ export function runBacktest(
   };
 }
 
-function calculateMetrics(
+export function calculateMetrics(
   history: readonly DecisionState[],
   initialCapital: number,
   allExecutions: readonly ExecutionRecord[]

@@ -22,8 +22,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Current Verified Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **HEAD Commit**: `add0045ac06af0f95df2b2df94ab7014bc8ef4f8`
-- **Commit Message**: `Gate M8: validate canonical portfolio accounting`
+- **HEAD Commit**: `88d1d97edae16893a46f71ac5dab9f80d9ac44bf`
+- **Commit Message**: `Gate M9: enforce point-in-time replay validity`
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
   - **Gate 1** (Forensic Audit): **COMPLETE**
@@ -32,11 +32,12 @@ Do not rely only on AI memory or previous agent reports.
   - **Gate M7** (Paper Decision Persistence Across Reloads): **COMPLETE**
   - **Gate M8** (Canonical Portfolio Accounting & Deterministic Validation): **COMPLETE**
   - **Gate M9** (No-Lookahead / Point-in-Time Validation): **COMPLETE**
+  - **Gate M10** (Rolling OOS Methodology & Validation): **COMPLETE**
 - **Latest Verification Results**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (207/207 tests across 15 test files)
+  - `npx vitest run`: **PASS** (222/222 tests across 16 test files)
   - `git diff --check`: **PASS**
-- **Working Tree State**: Uncommitted M9 implementation files prior to Gate M9 commit.
+- **Working Tree State**: Uncommitted M10 implementation files prior to Gate M10 commit.
 
 ---
 
@@ -186,7 +187,41 @@ Gate M9 audited, enforced, and validated Point-in-Time (PIT) integrity and anti-
 
 ---
 
-## 8. Open / Deferred Technical & Macro Risks
+## 8. Completed Gate M10 — Rolling OOS Methodology & Validation
+
+Gate M10 audited, repaired, and validated the rolling out-of-sample (OOS) evaluation engine:
+
+1. **Truthful Methodology Classification**:
+   - Classified as **Rolling Fixed-Parameter OOS Evaluation**.
+   - Training/pre-test bars serve strictly as pre-roll indicator context (no parameter fitting, grid search, or model selection).
+2. **Strict Fold Methodology & Non-Overlapping Windows**:
+   - Enforced `stepBars === testWindowBars` fail-closed so OOS test windows are contiguous and non-overlapping.
+   - Evaluates complete folds only; trailing partial folds shorter than `trainWindowBars + testWindowBars` are excluded explicitly.
+3. **Fold Independence & State Reset**:
+   - Each fold starts clean with initial capital ($10,000$), fresh risk state, clean strategy states, and empty execution ledger. No cash, positions, or risk flags are carried between folds.
+4. **Canonical Chained OOS Aggregation Semantics**:
+   - Per-bar OOS returns are chained synthetically into a continuous chained OOS equity curve (`stitchedOosTimeline`) used exclusively for aggregate performance measurement.
+   - Raw fold NAVs are not concatenated as a single portfolio ledger.
+   - Aggregate metrics are recomputed directly from the full stitched OOS series (eliminating the Fold-0-as-aggregate bug).
+5. **Verified Aggregate Performance Metrics**:
+   - Total return and global max drawdown recomputed from chained OOS equity.
+   - Sharpe and Sortino ratios recomputed from the complete stitched 1H per-bar OOS return series using standard time-domain constants (`BARS_PER_YEAR = 8760`, `ANNUALIZATION_FACTOR = sqrt(8760)`).
+   - OOS timestamps are unique and strictly chronological without double counting.
+6. **Execution Statistic Semantics**:
+   - Execution fill count (`totalTrades`), fees, and slippage are aggregated across independent fold runs for telemetry reporting and are not subtracted again from chained NAV.
+7. **Terminal Pending-Order Behavior**:
+   - Target generated on the final OOS bar of fold $k$ remains unexecuted outside fold $k$, is not carried into fold $k+1$, and is not counted as an OOS fill.
+8. **Deterministic Validation Suite**:
+   - Created [`src/lib/quant/__tests__/walkForwardValidation.test.ts`](file:///c:/Users/acer/Documents/QuantProjects/QuantFund-OS/src/lib/quant/__tests__/walkForwardValidation.test.ts) covering 26 deterministic methodology tests (T1–T26) plus explicit regression test — **26/26 PASS**.
+9. **Runtime Acceptance (Gate M10C)**:
+   - Methodology label: **PASS** (`Rolling Fixed-Parameter OOS Evaluation`).
+   - Boundary math & metadata: **PASS**.
+   - Aggregate return & max drawdown reconciliation: **PASS**.
+   - F5 hydration & regression checks: **PASS**.
+
+---
+
+## 9. Open / Deferred Technical & Macro Risks
 
 ### Accounting & Execution Limitations
 - **Authoritative Round-Trip Trade Reconstruction**: Connecting BUY and SELL fills into completed round-trip trades remains explicitly deferred (`DEC-002`).
@@ -201,7 +236,8 @@ Gate M9 audited, enforced, and validated Point-in-Time (PIT) integrity and anti-
 - Genuine historical point-in-time event/news ingestion.
 - Multi-timeframe quant engine support.
 - Short-selling support and margin semantics.
-- Broader walk-forward methodology and aggregate metric updates.
+- Train-set hyperparameter optimization & grid search engine.
+- Parallel DCA control benchmark evaluation in walk-forward reports.
 - Further Adaptive Trend persistence research.
 - Mean Reversion research improvements.
 - Provider-specific bar timestamp validation when new external market feeds are added.
@@ -209,7 +245,7 @@ Gate M9 audited, enforced, and validated Point-in-Time (PIT) integrity and anti-
 
 ---
 
-## 9. Required Workflow
+## 10. Required Workflow
 
 For every major engineering gate:
 
@@ -227,16 +263,16 @@ For every major engineering gate:
 
 ---
 
-## 10. Next Active Engineering Gate
+## 11. Next Active Engineering Gate
 
-### GATE M10 — Walk-Forward Methodology & Validation
+### GATE M11 — Trade Attribution & Round-Trip Reconstruction
 
-**Status**: Gate M9 is complete. Gate M10 is the next active engineering gate.
+**Status**: Gate M10 is complete. Gate M11 is the next active engineering gate.
 
 **High-Level Scope**:
-- Audit walk-forward train/test split boundaries.
-- Verify zero training/test data leakage across folds.
-- Define explicit methodology for fold construction and stitching.
-- Validate aggregate metrics across stitched out-of-sample timelines.
-- Preserve no-lookahead guarantees throughout fold evaluation.
-- **Explicit Non-Goals**: No strategy parameter or formula tuning merely to improve returns or Sharpe ratio.
+- Canonical round-trip matching from `ExecutionRecord` fills.
+- Realized PnL attribution for closed trades.
+- Fee-inclusive closed-trade PnL accounting.
+- Wins, losses, and authoritative trade win rate (`winRatePct`).
+- Preserve Single Canonical Ledger (no rogue strategy sub-ledgers).
+- **Explicit Non-Goals**: No strategy parameter or formula tuning to improve returns or Sharpe ratio.
