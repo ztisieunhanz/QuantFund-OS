@@ -23,7 +23,7 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Current Verified Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **HEAD Commit**: `a127cc04a57472b9e38919b001cb0f92fb015da4`
+- **HEAD Commit**: `f289f4f4b128be2fa2be52d919e2c1e3859a03ce`
 - **Commit Message**: `Gate M11: add canonical trade attribution`
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
