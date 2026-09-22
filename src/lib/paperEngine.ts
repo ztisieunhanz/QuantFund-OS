@@ -122,9 +122,79 @@ function createSubBot(
   };
 }
 
-function toBotMetrics(tracker: SubBotTracker, markPrice: number): BotMetrics {
+function toBotMetrics(
+  tracker: SubBotTracker,
+  markPrice: number,
+  latestDecision?: DecisionState | null
+): BotMetrics {
+  const isOmega = tracker.id === "omega";
+  const isAlpha = tracker.id === "trend" || tracker.id === "event" || tracker.id === "meanrev";
+
+  if (isAlpha) {
+    return {
+      botId: tracker.id,
+      name: tracker.name,
+      cash: STARTING_EQUITY,
+      qty: 0,
+      lastPrice: markPrice,
+      equity: STARTING_EQUITY,
+      pnl: 0,
+      pnlPct: 0,
+      winRate: null,
+      maxDrawdown: tracker.maxDrawdown,
+      totalTrades: 0,
+      wins: 0,
+      losses: 0,
+      position: "FLAT",
+      lastSignal: tracker.lastSignalDescription,
+      trades: [],
+      equityCurve: tracker.equityCurve,
+      status: "UNAVAILABLE",
+    };
+  }
+
+  if (isOmega && latestDecision) {
+    const btcPos = latestDecision.positions["BTC"];
+    const qty = btcPos?.quantity ?? 0;
+    const entryPrice = btcPos?.entryPrice ?? 0;
+    const pnl = Math.round((latestDecision.nav - STARTING_EQUITY) * 100) / 100;
+    const pnlPct = (latestDecision.nav - STARTING_EQUITY) / STARTING_EQUITY;
+
+    const trades: TradeFill[] = (latestDecision.executions ?? []).map((e) => ({
+      id: e.executionId,
+      botId: "omega",
+      time: Math.floor(e.executionTimestamp / 1000),
+      side: e.side,
+      price: e.executionPrice,
+      qty: e.quantity,
+      fee: e.fees,
+      slippage: e.slippage,
+      notional: e.notionalUsd,
+    }));
+
+    return {
+      botId: "omega",
+      name: tracker.name,
+      cash: Math.round(latestDecision.cash * 100) / 100,
+      qty: Math.round(qty * 100000) / 100000,
+      lastPrice: entryPrice > 0 ? entryPrice : markPrice,
+      equity: Math.round(latestDecision.nav * 100) / 100,
+      pnl,
+      pnlPct,
+      winRate: null,
+      maxDrawdown: latestDecision.currentDrawdown,
+      totalTrades: trades.length,
+      wins: null,
+      losses: null,
+      position: qty > 0.00001 ? "LONG" : "FLAT",
+      lastSignal: tracker.lastSignalDescription,
+      trades,
+      equityCurve: tracker.equityCurve,
+      status: "AVAILABLE",
+    };
+  }
+
   const currentEquity = tracker.cash + tracker.qty * markPrice;
-  const closedTradesCount = tracker.wins + tracker.losses;
   const pnl = currentEquity - STARTING_EQUITY;
   const position: PositionSide = tracker.qty > 0.00001 ? "LONG" : "FLAT";
 
@@ -137,11 +207,11 @@ function toBotMetrics(tracker: SubBotTracker, markPrice: number): BotMetrics {
     equity: Math.round(currentEquity * 100) / 100,
     pnl: Math.round(pnl * 100) / 100,
     pnlPct: pnl / STARTING_EQUITY,
-    winRate: closedTradesCount === 0 ? 0 : tracker.wins / closedTradesCount,
+    winRate: isOmega ? null : tracker.wins / Math.max(1, tracker.wins + tracker.losses),
     maxDrawdown: tracker.maxDrawdown,
     totalTrades: tracker.trades.length,
-    wins: tracker.wins,
-    losses: tracker.losses,
+    wins: isOmega ? null : tracker.wins,
+    losses: isOmega ? null : tracker.losses,
     position,
     lastSignal: tracker.lastSignalDescription,
     trades: tracker.trades,
@@ -275,11 +345,11 @@ export class PaperEngine {
     }
 
     return {
-      trend: toBotMetrics(this.trend, lastClosePrice),
-      event: toBotMetrics(this.event, lastClosePrice),
-      mean: toBotMetrics(this.mean, lastClosePrice),
-      omega: toBotMetrics(this.omega, lastClosePrice),
-      benchmarkDca: toBotMetrics(this.benchmarkDca, lastClosePrice),
+      trend: toBotMetrics(this.trend, lastClosePrice, this.latestDecision),
+      event: toBotMetrics(this.event, lastClosePrice, this.latestDecision),
+      mean: toBotMetrics(this.mean, lastClosePrice, this.latestDecision),
+      omega: toBotMetrics(this.omega, lastClosePrice, this.latestDecision),
+      benchmarkDca: toBotMetrics(this.benchmarkDca, lastClosePrice, this.latestDecision),
       latestDecision: this.latestDecision,
     };
   }

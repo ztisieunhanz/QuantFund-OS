@@ -19,22 +19,23 @@ Before any major architecture decision, forensic repair plan, or coding-agent pr
 Do not rely only on AI memory or previous agent reports.
 
 ---
-
 ## 2. Current Verified Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **HEAD Commit**: `e590c4664fabe51846f689017974f448ba87b7dc`
-- **Commit Message**: `Gate M6E-5: validate VNDirect runtime integration`
+- **HEAD Commit**: `c1bf65416d650f598d055521d53f20d1cfd20159`
+- **Commit Message**: `Gate M7: persist paper decision across reloads`
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
   - **Gate 1** (Forensic Audit): **COMPLETE**
   - **Gate 2A** (Core Quant Validity Repair): **COMPLETE**
   - **Gate M6** (Vietnam Layer 1 Integration): **COMPLETE**
+  - **Gate M7** (Paper Decision Persistence Across Reloads): **COMPLETE**
+  - **Gate M8** (Canonical Portfolio Accounting & Deterministic Validation): **COMPLETE**
 - **Latest Verification Results**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (152/152 tests across 11 test files)
+  - `npx vitest run`: **PASS** (187/187 tests across 14 test files)
   - `git diff --check`: **PASS**
-- **Working Tree State**: Clean immediately following Gate M6E-5 commit. Documenting M6 state (Gate M6F).
+- **Working Tree State**: Clean baseline prior to Gate M8 commit.
 
 ---
 
@@ -104,168 +105,62 @@ SINGLE CANONICAL LEDGER / AUDIT / PnL
 
 ---
 
-## 5. Gate 2A Completed Repairs
+## 5. Completed Gate M7 — Paper Decision Persistence Across Reloads
 
-Gate 2A addressed and repaired the following core validity issues:
+Gate M7 implemented fail-closed persistence and rehydration for canonical Paper Engine decision state (`latestDecision`):
 
-1. **Canonical 1H Time Domain**:
-   - Explicitly defined constants: `QUANT_BAR_INTERVAL = "1h"`, `BAR_DURATION_MS = 3,600,000`, `BARS_PER_YEAR = 8,760`.
-   - Annualization aligned to hourly BTC/24x7 trading domain.
-
-2. **Explicit Replay Market Context**:
-   - Market context (interval + data source) is explicitly propagated through quant pipeline.
-   - Unsupported bar intervals block canonical quant execution.
-   - Stale 1H quant state is cleared when switching to unsupported bar intervals.
-
-3. **Macro/Event PIT Contamination Seam**:
-   - `PaperEngine` adapter no longer projects current/live macro values into historical replay.
-   - `macroTimeline` and `eventTimeline` remain empty until genuine historical point-in-time ingestion exists.
-
-4. **Truthful Market Provenance**:
-   - Live data sources map strictly to `LIVE`.
-   - Synthetic sources map strictly to `SYNTHETIC`.
-   - Hidden default-to-LIVE replay paths eliminated.
-
-5. **Rogue Alpha Sub-Ledger Removed**:
-   - Removed rogue sub-simulation authority from strategy layer.
-   - Alpha engines restricted to signal/research telemetry.
-   - Per-strategy round-trip trade reconstruction deferred until canonical attribution exists.
-
-6. **Fabricated Strategy-PnL Correlation Removed**:
-   - Eliminated synthetic `alphaScore × portfolio-PnL` proxies fed into Omega allocator.
-   - Strategy correlation remains null/unavailable until genuine PnL attribution is built.
-
-7. **Long-Only Semantic Repair**:
-   - Preserved upstream negative alpha signals as research telemetry.
-   - Guaranteed executable Omega target weights remain non-negative in the long-only execution context.
-
-8. **Deterministic Validation Fixtures**:
-   - Replaced unseeded `Math.random()` fixtures with seeded, deterministic test datasets and hourly timestamps.
-
-9. **Targeted Invariant Tests Added (24/24 PASS)**:
-   - Event expiry in hourly bar domain.
-   - `NEXT_BAR_OPEN` execution timing.
-   - Long-only target weight clamping.
-   - Rogue Alpha ledger absence.
-   - Fabricated correlation absence.
-   - Provenance mapping accuracy.
-   - `PaperEngine` empty macro/event dataset seam.
-   - Stale-state clearing on unsupported interval.
-   - Multi-run test determinism.
+1. **Single Persisted Decision Artifact**: `latestDecision` is the sole decision artifact persisted in `localStorage` under key `quant_paper_engine_state`.
+2. **Fail-Closed Structural Validation**: `isValidDecisionState()` validates structure and critical numeric fields before rehydration. Malformed state resets to neutral.
+3. **Derived UI Telemetry Rehydration**: `deriveMetricsFromDecision()` reconstructs UI telemetry (`omega`, `trend`, `event`, `mean`, `benchmarkDca`) from canonical `latestDecision` without re-running simulation or creating duplicate accounting state.
+4. **Hydration Parity**: Hydrated UI state matches fresh replay UI state on canonical equity, cash, positions, and drawdown.
 
 ---
 
-## 6. Completed Gate M6 — Vietnam Layer 1 Integration
+## 6. Completed Gate M8 — Canonical Portfolio Accounting & Deterministic Validation
 
-Gate M6 successfully implemented and verified live Vietnam Layer 1 market data integration using VNDirect public endpoints over same-origin gateway routes.
+Gate M8 audited, repaired, and validated the canonical execution and portfolio accounting pipeline across `backtestEngine`, `executionEngine`, `paperEngine`, and `tradingStore`:
 
-### 1. Vietnam Layer 1 Provider
-- **Provider**: VNDirect is the active Layer 1 implementation provider.
-- **Gateway Routes**: The browser application connects via development same-origin gateway proxy routes (`/api/vndirect/finfo` and `/api/vndirect/dchart`).
-- **Endpoint Responsibilities**:
-  - `FINfo`: Supplies HOSE security master (`/v4/stocks`), exact-date daily session prices (`/v4/stock_prices`), and foreign trading flow (`/v4/foreigns`).
-  - `DChart`: Supplies daily session price history for VNINDEX (`/dchart/history`).
-- **Redistribution Rights**: Public endpoint availability does NOT imply or establish production redistribution or commercial data licensing rights.
-
-### 2. VNINDEX Telemetry
-- **Semantic Instrument Identifier**: `VNINDEX` (official HOSE benchmark).
-- **Provider**: VNDirect DChart (`/api/vndirect/dchart/history?symbol=VNINDEX&resolution=D`).
-- **Runtime Quality**: Verified **LIVE / USABLE**.
-- **Fallback Invariant**: Strictly fail-closed. No Yahoo `^VNINDEX` fallback, no synthetic data fallback, and no hardcoded price fallback.
-
-### 3. HOSE Authoritative Universe
-- **Boundary**: Strictly HOSE listed common equities (`floor=HOSE`, `type=STOCK`, `status=listed`).
-- **Security Master Reconciliation**: Daily stock price cross-sections are reconciled against the authoritative security master returned by FINfo.
-- **Observed Count**: Runtime verification observed 405 securities during M6 acceptance. This is an empirical observation and MUST NOT be encoded as a permanent hardcoded threshold. Universe completeness is dynamically determined by reconciliation against the authoritative security master.
-
-### 4. Vietnam Market Breadth
-- **Discovery**: Provider-driven latest `stock_prices` session date discovery via single-row HOSE probe (`q=floor:HOSE~type:STOCK&sort=date:desc&size=1`).
-- **Cross-Section**: Exact session cross-section query (`q=floor:HOSE~type:STOCK~date:${D}&size=500`).
-- **Metrics**: Computes advancing, declining, and unchanged counts against official reference prices.
-- **Nullability**: `adRatio` is typed as `number | null` and evaluates to `null` when `declining == 0` (no division by zero or forced substitution). `pctAboveMA20`, `pctAboveMA50`, and `pctAboveMA200` are independently typed as `number | null`.
-- **Per-Security History**: Moving averages require per-security historical daily close series up to 200 sessions. Newly listed securities with fewer than H bars are excluded from both numerator and denominator for horizon H.
-- **Forward Fill Prohibition**: No forward fill, interpolation, or synthetic price history.
-- **Runtime Quality**: Verified **LIVE / USABLE**.
-
-### 5. Vietnam Market Liquidity
-- **Transaction Scope**: HOSE common-equity normal order-matched value only (`nmValue`). Put-through / negotiated transactions (`ptValue`) are strictly excluded.
-- **Session Horizon**: Evaluated across the latest 20 valid completed market sessions.
-- **Session Calendar**: Derived directly from the VNINDEX DChart session history calendar, rather than calendar subtraction or single-stock session proxies.
-- **Categorical Status**: `status` remains `null` because no categorical regime thresholds have been formally validated.
-- **Runtime Quality**: Verified **LIVE / USABLE**.
-
-### 6. Vietnam Foreign Net Flow
-- **Transaction Scope**: HOSE common-equity foreign net trading value (`netVal`).
-- **Session Horizon**: Evaluated across the latest 5 valid completed foreign trading sessions (`net1dBillion` and rolling `net5dBillion`).
-- **Session Calendar**: Candidate dates are derived from the provider market-session calendar. Incomplete or missing candidate sessions are skipped until 5 valid sessions are established.
-- **Categorical Status**: `status` remains `null` because no categorical regime thresholds have been formally validated.
-- **Runtime Quality**: Verified **LIVE / USABLE**.
-
-### 7. Session Date & Provenance Semantics
-- **FINfo Timestamps**: FINfo provides session `DATE` (`YYYY-MM-DD`), not verified intraday observation or market close times.
-- **UTC Midnight Anchor**: `MacroDatum.asOf` for FINfo session data uses deterministic UTC-midnight session-date anchors (`T00:00:00Z`) purely as a structural representation.
-- **UI Formatting**: Macro V2 UI explicitly renders FINfo session dates as `YYYY-MM-DD`. These timestamps MUST NOT be interpreted or presented as provider-reported midnight or 15:00 HOSE market close times.
-- **DChart Timestamps**: DChart provider Unix timestamps are preserved but MUST NOT be relabeled as actual HOSE close times without authoritative empirical evidence.
-
-### 8. Fail-Closed Invariants
-- **Malformed Response**: Malformed transport or provider response -> `UNAVAILABLE`.
-- **Incomplete Universe Reconciliation**: Unreconciled authoritative security master -> `UNAVAILABLE`.
-- **Insufficient Liquidity Sessions**: Fewer than 20 valid market sessions -> `UNAVAILABLE`.
-- **Insufficient Foreign Sessions**: Fewer than 5 valid foreign sessions -> `UNAVAILABLE`.
-- **Insufficient MA History**: Insufficient MA history does NOT invalidate truthful current breadth (advancing/declining); affected MA fields remain `null`.
-- **Synthetic Fallbacks**: No synthetic or hardcoded Vietnam fallbacks are permitted.
-
-### 9. Macro Architecture Invariants
-- **Supplementary Telemetry**: Vietnam market telemetry remains supplementary Layer 1 data.
-- **Core Invariant**: Vietnam metrics MUST NOT alter:
-  - `coreMetricIds`
-  - Global macro regime scoring
-  - Global macro confidence
-  - Global stance
-- **Current Core Metrics**: `coreMetricIds` remain strictly: `["dxy", "us2y", "us10y", "vix", "gold", "btc"]`.
-
-### 10. Runtime Acceptance Evidence (Gate M6E-5)
-- **Verified Metrics**:
-  - VNINDEX: **LIVE / VNDirect / USABLE**
-  - Vietnam Breadth: **LIVE / VNDirect / USABLE**
-  - Vietnam Liquidity: **LIVE / VNDirect / USABLE**
-  - Vietnam Foreign Net Flow: **LIVE / VNDirect / USABLE**
-- **Gateway Health**: All VNDirect DChart + FINfo HTTP requests returned HTTP 200.
-- **DChart HTTP 406 Resolution**:
-  - Removed duplicated `/dchart/dchart/history` path in client/gateway.
-  - Removed incompatible forced `Accept: application/json` header in Vite gateway proxy.
-- **Verification Commands Passed**:
-  - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (152/152 tests across 11 test files)
-  - `git diff --check`: **PASS**
-
-### 11. Relevant Gate Checkpoints
-- `b7aad694d9ec16bb1db328e8af929534b73bedd6`: **Gate M6E-1: freeze Vietnam data contracts**
-- `fa1ffac908f8131be1264f5922e42e3440a26a64`: **Gate M6E-2: add VNDirect transport gateway**
-- `a36ba6f57528171665ef07e5326356231b5f408c`: **Gate M6E-3: add deterministic Vietnam data calculations**
-- `ed301dd8bf50e306eb81f9a01c025d691620497f`: **Gate M6E-4: integrate VNDirect Vietnam market data**
-- `e590c4664fabe51846f689017974f448ba87b7dc`: **Gate M6E-5: validate VNDirect runtime integration**
+1. **Canonical Omega NAV & Cash Parity**:
+   - `PaperEngine.replay()` derives Omega BotMetrics directly from `latestDecision.nav` and `latestDecision.cash`.
+   - Fresh replay UI state and hydrated UI state agree 100% on canonical portfolio NAV.
+2. **Position Unrealized PnL Bar-Close Mark Alignment**:
+   - `backtestEngine.ts` updates `account.positions[id].unrealizedPnl` at `bar.close` prior to emitting `DecisionState`, matching the exact closing mark price used by `DecisionState.nav`.
+3. **Exact Accounting Equations**:
+   - `NAV_t = cash_t + sum(qty_i,t * markPrice_i,t)` marked at `bar.close`.
+   - BUY: `cash_after = cash_before - (executedQty * execPrice) - fees`.
+   - SELL: `cash_after = cash_before + (executedQty * execPrice) - fees`.
+   - Fees affect cash once during execution; slippage adjusts `executionPrice` once during execution. Summary metrics (`totalFeesUsd`, `totalSlippageCostUsd`) are strictly read-only.
+4. **Long-Only & Affordability Safety**:
+   - Position quantity remains non-negative ($\ge 0$).
+   - BUY affordability clamp prevents cash from becoming negative (`maxAffordableValue = cash / (1 + commissionRate)`).
+   - Weighted-average cost basis updated on BUY and preserved on partial SELL.
+5. **Fill / Trade Semantic Truthfulness**:
+   - `ExecutionRecord` count represents fill count (`totalTrades`).
+   - Closed round-trip trade statistics (`winRate`, `wins`, `losses`) evaluate to `null` where actual trade statistics are expected.
+6. **Deterministic Accounting Validation Suite**:
+   - Created [`src/lib/quant/__tests__/accountingValidation.test.ts`](file:///c:/Users/acer/Documents/QuantProjects/QuantFund-OS/src/lib/quant/__tests__/accountingValidation.test.ts) covering 24 deterministic accounting tests (T1–T24) — **24/24 PASS**.
+7. **Runtime Acceptance (Gate M8C)**:
+   - Fresh replay NAV parity: **PASS**.
+   - Fresh cash parity: **PASS**.
+   - NAV reconciliation (`cash + qty * close`): **PASS**.
+   - Position `unrealizedPnl` reconciliation: **PASS**.
+   - F5 hydration parity: **PASS**.
+   - Post-return automatic replay parity: **PASS**.
 
 ---
 
-## 7. Preserved Audit Findings (Not Proven Defective)
+## 7. Open / Deferred Technical & Macro Risks
 
-The following Gate 1 claims were audited and determined NOT to be core defects requiring code changes:
-
-- **Slippage `baseBps` Conversion**: Slippage `baseBps` conversion was not proven defective (`0.0005 × 10000 = 5 bps` is mathematically consistent).
-- **NEXT_BAR_OPEN Close Marking**: Executing at T+1 open and marking the resulting position at T+1 close is not by itself evidence of look-ahead.
-- **End-of-Bar NAV Close Marking**: End-of-bar NAV marked at close is not inherently invalid.
-- **Slippage Metric Reporting**: A separately reported slippage-cost metric is not automatically accounting double-counting.
-
----
-
-## 8. Open / Deferred Technical & Macro Risks
+### Accounting & Execution Limitations
+- **Authoritative Round-Trip Trade Reconstruction**: Connecting BUY and SELL fills into completed round-trip trades remains explicitly deferred (`DEC-002`).
+- **Fee-Inclusive Trade Realized PnL Attribution**: Allocating historical BUY commission to trade-level realized PnL remains deferred.
+- **Trade Statistics Nullability**: Trade win rate, wins, and losses evaluate to `null` until canonical round-trip reconstruction exists.
+- **Internal Naming Debt**: `TradingLabView.tsx` KPI grid label still displays `"TRADES"` for execution fill count (`bot.totalTrades`).
+- **Control Benchmark Scope**: DCA remains strictly benchmark/control only (`DEC-001`).
 
 ### Deferred Quant Engineering
 - Genuine historical point-in-time macro ingestion.
 - Genuine historical point-in-time event/news ingestion.
-- Genuine per-strategy PnL attribution.
-- Round-trip trade reconstruction and authoritative trade win-rate.
 - Multi-timeframe quant engine support.
 - Short-selling support and margin semantics.
 - Broader walk-forward methodology and aggregate metric updates.
@@ -273,17 +168,9 @@ The following Gate 1 claims were audited and determined NOT to be core defects r
 - Mean Reversion research improvements.
 - `liveRuntime` / execution API production hardening.
 
-### Legacy Macro Risks (Addressed / Remaining in Macro V2)
-Inspection of legacy Macro code revealed structural risks that require audit and redesign:
-- **Synthetic Fallback Contamination**: Synthetic fallback paths can blend into apparently current macro state.
-- **Misleading Provenance**: Derived or substitute market metrics lack explicit data quality lineage.
-- **Hard-coded Data**: Vietnam market breadth, liquidity, and foreign flow contained hard-coded static arrays (*REPAIRED in Gate M6: Replaced with live VNDirect FINfo/DChart telemetry*).
-- **Heuristic Output Presented as Authority**: Macro regime and allocation outputs are heuristic and must be represented as model interpretation rather than objective factual truth.
-- **Coupled Responsibilities**: Chatbot context mixes data retrieval, model evaluation, and UI rendering; `MacroView.tsx` currently owns excessive monolithic logic.
-
 ---
 
-## 9. Required Workflow
+## 8. Required Workflow
 
 For every major engineering gate:
 
@@ -299,12 +186,17 @@ For every major engineering gate:
 10. Push reviewed checkpoint.
 11. Update source-of-truth documentation when project state changes.
 
-No single AI agent should independently design -> implement -> test -> approve -> commit the same architectural change without independent review.
-
 ---
 
-## 10. Next Active Engineering Gate
+## 9. Next Active Engineering Gate
 
-### GATE M6 — DOCUMENTATION COMPLETE (Gate M6F)
+### GATE M9 — No-Lookahead / Point-in-Time Validation
 
-**Status**: Gate M6 Vietnam Layer 1 Integration (M6E-1 through M6E-5 & M6F documentation) is fully complete and verified.
+**Status**: Gate M8 is complete. Gate M9 is the next active engineering gate.
+
+**High-Level Scope**:
+- Comprehensive audit of all signal, permission, risk, and omega inputs for future-information leakage.
+- Verification of bar timestamp alignment and decision vs execution timing (`NEXT_BAR_OPEN` vs `SAME_BAR_CLOSE`).
+- Verification of macro and event Point-in-Time (PIT) publication timestamp handling.
+- Addition of deterministic anti-lookahead test suite.
+- **Explicit Non-Goals**: No strategy formula or parameter tuning.

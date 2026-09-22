@@ -11,6 +11,7 @@ import type {
   PointInTimeBar,
   PointInTimeEvent,
   PointInTimeMacro,
+  PositionRecord,
   SignalOutput,
   StrategyContext,
   StrategyId,
@@ -287,10 +288,30 @@ export function runBacktest(
 
     // H. ĐÓNG BĂNG AUDIT TRAIL VÀ TRÁNH TRÔI SỐ THỰC PNL
     let closingNav = account.cash;
+    const closingPositions: Record<AssetId, PositionRecord> = {};
     for (const [id, pos] of Object.entries(account.positions)) {
       const p = currentAssetBars[id]?.close ?? 0;
       closingNav += pos.quantity * p;
+      if (pos.quantity > 1e-8 && pos.side !== "FLAT") {
+        closingPositions[id] = {
+          ...pos,
+          unrealizedPnl: Math.round((p - pos.entryPrice) * pos.quantity * 100) / 100,
+        };
+      } else {
+        closingPositions[id] = {
+          ...pos,
+          quantity: 0,
+          entryPrice: 0,
+          unrealizedPnl: 0,
+          side: "FLAT",
+          status: "CLOSED",
+        };
+      }
     }
+    account = {
+      ...account,
+      positions: closingPositions,
+    };
     if (closingNav > peakNav) peakNav = closingNav;
 
     const previousNav = decisionHistory.length > 0 ? decisionHistory[decisionHistory.length - 1].nav : config.initialCapital;

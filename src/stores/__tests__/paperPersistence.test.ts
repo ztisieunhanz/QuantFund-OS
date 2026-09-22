@@ -334,7 +334,7 @@ describe("Gate M7B Paper Engine Persistence & Hydration Safety", () => {
     expect(typeof state.omega.equity).toBe("number");
     expect(typeof state.omega.cash).toBe("number");
     expect(typeof state.omega.pnl).toBe("number");
-    expect(typeof state.omega.winRate).toBe("number");
+    expect(state.omega.winRate).toBeNull();
     expect(typeof state.trend.equity).toBe("number");
     expect(typeof state.benchmarkDca.equity).toBe("number");
     expect(state.isRestored).toBe(false);
