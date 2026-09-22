@@ -28,12 +28,21 @@ import { evaluateOmegaAllocation, type OmegaAllocatorConfig } from "@/lib/quant/
 import { executeRebalance, type PortfolioAccountState } from "@/lib/quant/executionEngine";
 import { reconstructTradeAttribution } from "@/lib/quant/tradeAttribution";
 import { BARS_PER_YEAR, ANNUALIZATION_FACTOR } from "@/lib/quant/timeDomain";
+import {
+  validateHistoricalDataset,
+  normalizeHistoricalDataset,
+  buildHistoricalContextAtTime,
+  historicalEventToPointInTimeEvent,
+  type HistoricalDataset,
+  type HistoricalContextAtTime,
+} from "@/lib/quant/historicalPit";
 
 export interface BacktestDataset {
   readonly assetBars: Readonly<Record<AssetId, readonly PointInTimeBar[]>>;
   readonly macroTimeline?: readonly PointInTimeMacro[];
   readonly eventTimeline?: readonly PointInTimeEvent[];
   readonly benchmarkAssetId?: AssetId;
+  readonly historicalDataset?: HistoricalDataset;
 }
 
 export interface BacktestStrategyConfigs {
@@ -114,6 +123,13 @@ export function runBacktest(
     throw new Error(
       "BacktestEngine Error: SAME_BAR_CLOSE is a theoretical benchmark mode and is NOT PIT-safe executable logic. Use NEXT_BAR_OPEN for PIT-safe execution."
     );
+  }
+
+  // Fail-closed validation and deterministic normalization of HistoricalDataset (Gate M12E)
+  let normalizedHistorical: HistoricalDataset | undefined;
+  if (dataset.historicalDataset) {
+    validateHistoricalDataset(dataset.historicalDataset);
+    normalizedHistorical = normalizeHistoricalDataset(dataset.historicalDataset);
   }
 
   const assetIds = Object.keys(dataset.assetBars) as AssetId[];
@@ -214,8 +230,16 @@ export function runBacktest(
     }
 
     // B. POINT-IN-TIME SLICE (Tuyệt đối không chứa dữ liệu > t)
+    let historicalContext: HistoricalContextAtTime | undefined;
+    if (normalizedHistorical) {
+      historicalContext = buildHistoricalContextAtTime(normalizedHistorical, timestamp);
+    }
+
     const macroState = getLatestMacroAsOf(dataset.macroTimeline, timestamp);
-    const eventState = getLatestEventAsOf(dataset.eventTimeline, timestamp);
+    let eventState = getLatestEventAsOf(dataset.eventTimeline, timestamp);
+    if (!eventState && historicalContext?.latestEvent) {
+      eventState = historicalEventToPointInTimeEvent(historicalContext.latestEvent);
+    }
     const benchmarkSlice = primaryBars.slice(0, t + 1);
 
     // C. ĐÁNH GIÁ 3 CHIẾN LƯỢC
@@ -368,6 +392,7 @@ export function runBacktest(
       dailyPnl: Math.round(barPnl * 100) / 100,
       cumulativePnl: Math.round(cumulativePnl * 100) / 100,
       currentDrawdown: Math.round(currentDrawdown * 10000) / 10000,
+      historicalContext,
     });
   }
 

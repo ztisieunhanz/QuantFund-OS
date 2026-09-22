@@ -32,6 +32,7 @@ import type {
   DecisionState,
   PointInTimeBar,
   StrategyId,
+  HistoricalDataset,
 } from "@/lib/quant/types";
 import { QUANT_BAR_INTERVAL, type QuantReplayMarketContext } from "@/lib/quant/timeDomain";
 
@@ -63,7 +64,8 @@ export function mapSourceToDataQuality(
  * Exported so tests inspect the exact production dataset construction seam.
  */
 export function buildPaperEngineDataset(
-  bars: Array<{ time: number; open: number; high: number; low: number; close: number; volume: number }>
+  bars: Array<{ time: number; open: number; high: number; low: number; close: number; volume: number }>,
+  historicalDataset?: HistoricalDataset
 ): BacktestDataset {
   const pitBars: PointInTimeBar[] = bars.map((b) => ({
     timestamp: b.time < 1e11 ? b.time * 1000 : b.time,
@@ -79,6 +81,7 @@ export function buildPaperEngineDataset(
     macroTimeline: [],
     eventTimeline: [],
     benchmarkAssetId: "BTC",
+    historicalDataset,
   };
 }
 
@@ -265,7 +268,8 @@ export class PaperEngine {
    */
   replay(
     bars: Array<{ time: number; open: number; high: number; low: number; close: number; volume: number }>,
-    ctx: QuantReplayMarketContext
+    ctx: QuantReplayMarketContext,
+    historicalDataset?: HistoricalDataset
   ): {
     trend: BotMetrics;
     event: BotMetrics;
@@ -302,7 +306,7 @@ export class PaperEngine {
     try {
       // CORE-02/03: Production dataset constructed via exported pure helper.
       // macroTimeline and eventTimeline are intentionally empty.
-      const dataset = buildPaperEngineDataset(bars);
+      const dataset = buildPaperEngineDataset(bars, historicalDataset);
 
       // CORE-04: Map data source truthfully to dataQuality.
       // Uses the exported production helper — no inline ternary, no default.

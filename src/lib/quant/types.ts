@@ -4,6 +4,15 @@
 // CORE PRINCIPLE: SIGNAL â‰  PERMISSION â‰  RISK â‰  ALLOCATION â‰  EXECUTION
 // ============================================================================
 
+import type {
+  HistoricalMarketObservation,
+  HistoricalMacroRelease,
+  HistoricalEventRecord,
+  HistoricalDataset,
+  HistoricalDatasetMetadata,
+  HistoricalContextAtTime,
+} from "./historicalPit";
+
 // ----------------------------------------------------------------------------
 // 0. FUNDAMENTAL DOMAIN LITERALS & ENUMS
 // ----------------------------------------------------------------------------
@@ -244,6 +253,7 @@ export interface DecisionState {
   readonly dailyPnl: number;
   readonly cumulativePnl: number;
   readonly currentDrawdown: number;
+  readonly historicalContext?: HistoricalContextAtTime;
 }
 
 // ----------------------------------------------------------------------------
@@ -330,4 +340,5 @@ export type {
   HistoricalEventRecord,
   HistoricalDataset,
   HistoricalDatasetMetadata,
-} from "./historicalPit";
+  HistoricalContextAtTime,
+};

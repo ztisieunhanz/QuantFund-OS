@@ -4,6 +4,8 @@
 // PRINCIPLE: Truthful Historical Availability Without Lookahead Bias (DEC-001, DEC-005)
 // ============================================================================
 
+import type { AssetId, PointInTimeBar, PointInTimeEvent } from "./types";
+
 // ----------------------------------------------------------------------------
 // 1. DISCRIMINATED HISTORICAL DATA CONTRACTS
 // ----------------------------------------------------------------------------
@@ -73,10 +75,22 @@ export interface HistoricalDatasetMetadata {
 }
 
 export interface HistoricalDataset {
+  readonly marketBars?: Readonly<Record<AssetId, readonly PointInTimeBar[]>>;
   readonly marketObservations: readonly HistoricalMarketObservation[];
   readonly macroReleases: readonly HistoricalMacroRelease[];
   readonly eventRecords: readonly HistoricalEventRecord[];
   readonly metadata?: HistoricalDatasetMetadata;
+}
+
+/**
+ * Point-in-Time Historical Context Snapshot At Decision Time T (Gate M12E).
+ * Contains only records knowable at or before T (availableAt <= decisionTime).
+ */
+export interface HistoricalContextAtTime {
+  readonly decisionTime: number;
+  readonly market: Readonly<Record<string, HistoricalMarketObservation>>;
+  readonly macro: Readonly<Record<string, HistoricalMacroRelease>>;
+  readonly latestEvent: HistoricalEventRecord | null;
 }
 
 // ----------------------------------------------------------------------------
@@ -253,6 +267,93 @@ export function validateHistoricalEvent(ev: HistoricalEventRecord): void {
  * conflicting duplicate canonical records.
  */
 export function validateHistoricalDataset(dataset: HistoricalDataset): { valid: true } {
+  if (!dataset || typeof dataset !== "object") {
+    throw new HistoricalDatasetValidationError("HistoricalDataset must be a defined object.");
+  }
+  if (!Array.isArray(dataset.marketObservations)) {
+    throw new HistoricalDatasetValidationError("HistoricalDataset marketObservations must be an array.");
+  }
+  if (!Array.isArray(dataset.macroReleases)) {
+    throw new HistoricalDatasetValidationError("HistoricalDataset macroReleases must be an array.");
+  }
+  if (!Array.isArray(dataset.eventRecords)) {
+    throw new HistoricalDatasetValidationError("HistoricalDataset eventRecords must be an array.");
+  }
+
+  // 0. Validate Metadata
+  if (dataset.metadata) {
+    if (dataset.metadata.interval && dataset.metadata.interval !== "1h") {
+      throw new HistoricalDatasetValidationError(
+        `Unsupported interval "${dataset.metadata.interval}". Historical replay only supports "1h".`
+      );
+    }
+    if (dataset.metadata.startTime != null && (!Number.isFinite(dataset.metadata.startTime) || dataset.metadata.startTime < 0)) {
+      throw new HistoricalDatasetValidationError(
+        `Invalid metadata startTime (${dataset.metadata.startTime}). Must be a non-negative finite number.`
+      );
+    }
+    if (dataset.metadata.endTime != null && (!Number.isFinite(dataset.metadata.endTime) || dataset.metadata.endTime < 0)) {
+      throw new HistoricalDatasetValidationError(
+        `Invalid metadata endTime (${dataset.metadata.endTime}). Must be a non-negative finite number.`
+      );
+    }
+    if (
+      dataset.metadata.startTime != null &&
+      dataset.metadata.endTime != null &&
+      dataset.metadata.startTime > dataset.metadata.endTime
+    ) {
+      throw new HistoricalDatasetValidationError(
+        `Metadata startTime (${dataset.metadata.startTime}) > endTime (${dataset.metadata.endTime}).`
+      );
+    }
+  }
+
+  // 0b. Validate Market Bars if present
+  if (dataset.marketBars) {
+    for (const [assetId, bars] of Object.entries(dataset.marketBars)) {
+      if (!Array.isArray(bars)) {
+        throw new HistoricalDatasetValidationError(`Market bars for "${assetId}" must be an array.`);
+      }
+      for (let i = 0; i < bars.length; i++) {
+        const bar = bars[i];
+        if (!Number.isFinite(bar.timestamp) || bar.timestamp < 0) {
+          throw new HistoricalDatasetValidationError(
+            `Invalid bar timestamp at index ${i} for "${assetId}".`
+          );
+        }
+        if (
+          !Number.isFinite(bar.open) ||
+          !Number.isFinite(bar.high) ||
+          !Number.isFinite(bar.low) ||
+          !Number.isFinite(bar.close) ||
+          !Number.isFinite(bar.volume)
+        ) {
+          throw new HistoricalDatasetValidationError(
+            `Non-finite bar price/volume at index ${i} for "${assetId}".`
+          );
+        }
+        if (bar.open <= 0 || bar.high <= 0 || bar.low <= 0 || bar.close <= 0) {
+          throw new HistoricalDatasetValidationError(
+            `Non-positive bar price at index ${i} for "${assetId}".`
+          );
+        }
+        if (bar.volume < 0) {
+          throw new HistoricalDatasetValidationError(
+            `Negative volume at index ${i} for "${assetId}".`
+          );
+        }
+        if (i > 0) {
+          const prev = bars[i - 1];
+          if (bar.timestamp <= prev.timestamp) {
+            throw new HistoricalDatasetValidationError(
+              `Unsorted or duplicate bar timestamp (${prev.timestamp} -> ${bar.timestamp}) at index ${i} for "${assetId}".`
+            );
+          }
+        }
+      }
+    }
+  }
+
   // 1. Validate Market Observations
   const marketSeen = new Map<string, HistoricalMarketObservation>();
   for (const obs of dataset.marketObservations) {
@@ -372,6 +473,7 @@ export function normalizeHistoricalDataset(dataset: HistoricalDataset): Historic
   });
 
   return {
+    marketBars: dataset.marketBars,
     marketObservations: sortedMarket,
     macroReleases: sortedMacro,
     eventRecords: sortedEvents,
@@ -632,4 +734,127 @@ export function latestEligibleEvent(
   }
 
   return best;
+}
+
+// ----------------------------------------------------------------------------
+// 5. POINT-IN-TIME HISTORICAL CONTEXT BUILDER (GATE M12E)
+// ----------------------------------------------------------------------------
+
+/**
+ * Deterministically constructs the point-in-time historical context knowable at decisionTime T.
+ *
+ * Invariant (Gate M12E):
+ * - Every market observation satisfies availableAt <= decisionTime.
+ * - Every macro release satisfies availableAt <= decisionTime (latest eligible vintage for latest eligible period).
+ * - Every event record satisfies availableAt <= decisionTime.
+ * - No future records (> decisionTime) are ever included or inspected.
+ */
+export function buildHistoricalContextAtTime(
+  dataset: HistoricalDataset,
+  decisionTime: number
+): HistoricalContextAtTime {
+  if (!Number.isFinite(decisionTime) || decisionTime < 0) {
+    throw new HistoricalDatasetValidationError(
+      `Invalid decisionTime (${decisionTime}). Must be a non-negative finite number.`
+    );
+  }
+
+  // 1. Market: latest eligible observation for each unique seriesId in marketObservations
+  const marketMap: Record<string, HistoricalMarketObservation> = {};
+  if (dataset.marketObservations && dataset.marketObservations.length > 0) {
+    const seriesIds = new Set<string>();
+    for (const obs of dataset.marketObservations) {
+      seriesIds.add(obs.seriesId);
+    }
+    for (const sId of seriesIds) {
+      const latest = latestEligibleMarketObservation(dataset.marketObservations, sId, decisionTime);
+      if (latest) {
+        marketMap[sId] = latest;
+      }
+    }
+  }
+
+  // 2. Macro: latest eligible release for each unique seriesId in macroReleases
+  const macroMap: Record<string, HistoricalMacroRelease> = {};
+  if (dataset.macroReleases && dataset.macroReleases.length > 0) {
+    const macroSeriesIds = new Set<string>();
+    for (const rel of dataset.macroReleases) {
+      macroSeriesIds.add(rel.seriesId);
+    }
+    for (const sId of macroSeriesIds) {
+      const latest = latestEligibleMacroRelease(dataset.macroReleases, sId, decisionTime);
+      if (latest) {
+        macroMap[sId] = latest;
+      }
+    }
+  }
+
+  // 3. Latest Event: single latest eligible historical event at decisionTime
+  const latestEv = latestEligibleEvent(dataset.eventRecords, decisionTime);
+
+  return {
+    decisionTime,
+    market: Object.freeze(marketMap),
+    macro: Object.freeze(macroMap),
+    latestEvent: latestEv,
+  };
+}
+
+/**
+ * Converts a canonical HistoricalEventRecord into PointInTimeEvent for strategy consumption.
+ * Preserves actual, consensus, and surprise truthfully without fabrication.
+ */
+export function historicalEventToPointInTimeEvent(ev: HistoricalEventRecord): PointInTimeEvent {
+  return {
+    eventId: ev.eventId,
+    eventType: ev.eventType,
+    eventTimestamp: ev.observationTime,
+    publicationTimestamp: ev.publishedAt,
+    consensusSnapshotTimestamp: ev.consensusFrozenAt ?? ev.publishedAt,
+    actual: ev.actual,
+    consensus: ev.consensus,
+    previous: ev.previous,
+    surprise: ev.surprise,
+    sourceQuality: ev.sourceQuality,
+    noveltyScore: null,
+  };
+}
+
+/**
+ * Slices a HistoricalDataset to an explicit time window [startTime, endTime].
+ * Preserves PIT integrity by filtering on availableAt for observations/releases/events,
+ * and timestamp for marketBars.
+ */
+export function sliceHistoricalDataset(
+  dataset: HistoricalDataset,
+  startTime: number,
+  endTime: number
+): HistoricalDataset {
+  validateHistoricalDataset(dataset);
+  return {
+    marketObservations: dataset.marketObservations.filter(
+      (m) => m.availableAt >= startTime && m.availableAt <= endTime
+    ),
+    macroReleases: dataset.macroReleases.filter(
+      (m) => m.availableAt >= startTime && m.availableAt <= endTime
+    ),
+    eventRecords: dataset.eventRecords.filter(
+      (e) => e.availableAt >= startTime && e.availableAt <= endTime
+    ),
+    marketBars: dataset.marketBars
+      ? Object.fromEntries(
+          Object.entries(dataset.marketBars).map(([assetId, bars]) => [
+            assetId,
+            bars.filter((b) => b.timestamp >= startTime && b.timestamp <= endTime),
+          ])
+        )
+      : undefined,
+    metadata: dataset.metadata
+      ? {
+          ...dataset.metadata,
+          startTime: Math.max(dataset.metadata.startTime ?? -Infinity, startTime),
+          endTime: Math.min(dataset.metadata.endTime ?? Infinity, endTime),
+        }
+      : undefined,
+  };
 }
