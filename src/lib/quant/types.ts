@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // FILE: src/lib/quant/types.ts
 // MODULE: MODULAR INSTITUTIONAL QUANT ENGINE TYPE CONTRACT
 // CORE PRINCIPLE: SIGNAL â‰  PERMISSION â‰  RISK â‰  ALLOCATION â‰  EXECUTION
@@ -319,3 +319,15 @@ export interface TradeAttributionSummary {
   readonly unallocatedEntryFees: number;
   readonly openQuantity: number;
 }
+
+// ----------------------------------------------------------------------------
+// 11. HISTORICAL POINT-IN-TIME CONTRACTS (GATE M12B)
+// ----------------------------------------------------------------------------
+
+export type {
+  HistoricalMarketObservation,
+  HistoricalMacroRelease,
+  HistoricalEventRecord,
+  HistoricalDataset,
+  HistoricalDatasetMetadata,
+} from "./historicalPit";
