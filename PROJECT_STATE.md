@@ -22,8 +22,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Current Verified Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **HEAD Commit**: `88d1d97edae16893a46f71ac5dab9f80d9ac44bf`
-- **Commit Message**: `Gate M9: enforce point-in-time replay validity`
+- **HEAD Commit**: `ad003dd45b5173a8d1a98299d033cda2880ed82a`
+- **Commit Message**: `Gate M10: validate rolling OOS methodology`
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
   - **Gate 1** (Forensic Audit): **COMPLETE**
@@ -37,7 +37,7 @@ Do not rely only on AI memory or previous agent reports.
   - `npm run build`: **PASS**
   - `npx vitest run`: **PASS** (222/222 tests across 16 test files)
   - `git diff --check`: **PASS**
-- **Working Tree State**: Uncommitted M10 implementation files prior to Gate M10 commit.
+- **Working Tree State**: Clean baseline following Gate M10 commit.
 
 ---
 
