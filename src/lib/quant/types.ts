@@ -27,6 +27,11 @@ export type PositionStatus = "OPEN" | "CLOSED" | "PENDING";
 
 export type OrderType = "MARKET" | "LIMIT";
 
+/**
+ * ExecutionRule defines when target rebalances are filled:
+ * - "NEXT_BAR_OPEN": Signal at bar t close, executed at bar t+1 open. CANONICAL PIT-SAFE EXECUTABLE TIMING.
+ * - "SAME_BAR_CLOSE": Theoretical benchmark mode only. NOT PIT-SAFE EXECUTABLE TIMING.
+ */
 export type ExecutionRule = "NEXT_BAR_OPEN" | "SAME_BAR_CLOSE";
 
 export type CircuitBreakerStatus = "NORMAL" | "WARNING" | "TRIPPED";
@@ -259,6 +264,7 @@ export interface BacktestConfig {
   readonly commissionRate: number;
   readonly slippageModel: SlippageModelConfig;
   readonly executionRule: ExecutionRule;
+  readonly requirePitExecution?: boolean;
   readonly deterministicSeed: number;
   readonly dataQuality: DataQualityStatus;
 }

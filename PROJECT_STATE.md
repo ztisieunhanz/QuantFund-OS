@@ -22,8 +22,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Current Verified Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **HEAD Commit**: `c1bf65416d650f598d055521d53f20d1cfd20159`
-- **Commit Message**: `Gate M7: persist paper decision across reloads`
+- **HEAD Commit**: `add0045ac06af0f95df2b2df94ab7014bc8ef4f8`
+- **Commit Message**: `Gate M8: validate canonical portfolio accounting`
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
   - **Gate 1** (Forensic Audit): **COMPLETE**
@@ -31,11 +31,12 @@ Do not rely only on AI memory or previous agent reports.
   - **Gate M6** (Vietnam Layer 1 Integration): **COMPLETE**
   - **Gate M7** (Paper Decision Persistence Across Reloads): **COMPLETE**
   - **Gate M8** (Canonical Portfolio Accounting & Deterministic Validation): **COMPLETE**
+  - **Gate M9** (No-Lookahead / Point-in-Time Validation): **COMPLETE**
 - **Latest Verification Results**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (187/187 tests across 14 test files)
+  - `npx vitest run`: **PASS** (207/207 tests across 15 test files)
   - `git diff --check`: **PASS**
-- **Working Tree State**: Clean baseline prior to Gate M8 commit.
+- **Working Tree State**: Uncommitted M9 implementation files prior to Gate M9 commit.
 
 ---
 
@@ -149,7 +150,43 @@ Gate M8 audited, repaired, and validated the canonical execution and portfolio a
 
 ---
 
-## 7. Open / Deferred Technical & Macro Risks
+## 7. Completed Gate M9 — No-Lookahead / Point-in-Time Validation
+
+Gate M9 audited, enforced, and validated Point-in-Time (PIT) integrity and anti-lookahead execution rules across all engine components:
+
+1. **NEXT_BAR_OPEN Canonical PIT Mode**:
+   - `NEXT_BAR_OPEN` is the canonical PIT-safe executable mode across the platform.
+   - Canonical `PaperEngine` sets `requirePitExecution = true`.
+2. **SAME_BAR_CLOSE Rejection**:
+   - `SAME_BAR_CLOSE` is preserved only as a theoretical research/benchmark timing mode.
+   - Any path claiming executable/PIT-safe replay rejects `SAME_BAR_CLOSE` fail-closed with a deterministic error.
+3. **Execution Timing Integrity**:
+   - Decisions at bar $t$ use data strictly $\le t$ close.
+   - Target rebalance weights execute at bar $t+1$ open.
+   - Bar $t+1$ High, Low, and Close do not influence $t+1$ open execution price.
+4. **Prefix-Only Indicator & Risk Inputs**:
+   - Alpha indicator windows (SMAs, ATR, Chandelier, Z-Scores) operate exclusively on prefix slices (`0..t`).
+   - Risk Engine inputs (realized volatility, peak drawdown) use prefix benchmark slices (`0..t`).
+   - Omega Allocator targets depend strictly on point-in-time signals, permissions, and risk state.
+5. **Macro / Event PIT Integrity**:
+   - Active `PaperEngine` macro and event timelines remain empty until truthful historical PIT ingestion exists (`CORE-02/03` invariant preserved).
+   - Future macro observations (`asOfTimestamp > timestamp`) and event releases (`publicationTimestamp > timestamp`) are ignored before publication.
+6. **Strict Bar Timestamp Validation**:
+   - `runBacktest` validates every asset bar series before replay, rejecting duplicate, descending/out-of-order, or non-finite timestamps fail-closed without silent data repair.
+7. **Deterministic Anti-Lookahead Validation Suite**:
+   - Created [`src/lib/quant/__tests__/lookaheadValidation.test.ts`](file:///c:/Users/acer/Documents/QuantProjects/QuantFund-OS/src/lib/quant/__tests__/lookaheadValidation.test.ts) covering 20 deterministic anti-lookahead tests (T1–T20) — **20/20 PASS**.
+8. **DecisionState Timing Semantics**:
+   - `DecisionState` remains a coherent end-of-bar audit snapshot containing executions from bar $t$ open, decisions from bar $t$ close, and NAV/positions marked at bar $t$ close.
+9. **Runtime Acceptance (Gate M9C)**:
+   - Replay execution rule: **PASS** (`NEXT_BAR_OPEN`).
+   - `requirePitExecution`: **PASS** (`true`).
+   - `SAME_BAR_CLOSE` rejection: **PASS**.
+   - Timestamp validation rejections (duplicate, unsorted, non-finite): **PASS**.
+   - F5 hydration & Paper Lab automatic replay: **PASS**.
+
+---
+
+## 8. Open / Deferred Technical & Macro Risks
 
 ### Accounting & Execution Limitations
 - **Authoritative Round-Trip Trade Reconstruction**: Connecting BUY and SELL fills into completed round-trip trades remains explicitly deferred (`DEC-002`).
@@ -157,20 +194,22 @@ Gate M8 audited, repaired, and validated the canonical execution and portfolio a
 - **Trade Statistics Nullability**: Trade win rate, wins, and losses evaluate to `null` until canonical round-trip reconstruction exists.
 - **Internal Naming Debt**: `TradingLabView.tsx` KPI grid label still displays `"TRADES"` for execution fill count (`bot.totalTrades`).
 - **Control Benchmark Scope**: DCA remains strictly benchmark/control only (`DEC-001`).
+- **SAME_BAR_CLOSE Mode**: Not executable/PIT-safe (theoretical research benchmark mode only).
 
 ### Deferred Quant Engineering
-- Genuine historical point-in-time macro ingestion.
+- Genuine historical point-in-time macro data ingestion.
 - Genuine historical point-in-time event/news ingestion.
 - Multi-timeframe quant engine support.
 - Short-selling support and margin semantics.
 - Broader walk-forward methodology and aggregate metric updates.
 - Further Adaptive Trend persistence research.
 - Mean Reversion research improvements.
+- Provider-specific bar timestamp validation when new external market feeds are added.
 - `liveRuntime` / execution API production hardening.
 
 ---
 
-## 8. Required Workflow
+## 9. Required Workflow
 
 For every major engineering gate:
 
@@ -188,15 +227,16 @@ For every major engineering gate:
 
 ---
 
-## 9. Next Active Engineering Gate
+## 10. Next Active Engineering Gate
 
-### GATE M9 — No-Lookahead / Point-in-Time Validation
+### GATE M10 — Walk-Forward Methodology & Validation
 
-**Status**: Gate M8 is complete. Gate M9 is the next active engineering gate.
+**Status**: Gate M9 is complete. Gate M10 is the next active engineering gate.
 
 **High-Level Scope**:
-- Comprehensive audit of all signal, permission, risk, and omega inputs for future-information leakage.
-- Verification of bar timestamp alignment and decision vs execution timing (`NEXT_BAR_OPEN` vs `SAME_BAR_CLOSE`).
-- Verification of macro and event Point-in-Time (PIT) publication timestamp handling.
-- Addition of deterministic anti-lookahead test suite.
-- **Explicit Non-Goals**: No strategy formula or parameter tuning.
+- Audit walk-forward train/test split boundaries.
+- Verify zero training/test data leakage across folds.
+- Define explicit methodology for fold construction and stitching.
+- Validate aggregate metrics across stitched out-of-sample timelines.
+- Preserve no-lookahead guarantees throughout fold evaluation.
+- **Explicit Non-Goals**: No strategy parameter or formula tuning merely to improve returns or Sharpe ratio.

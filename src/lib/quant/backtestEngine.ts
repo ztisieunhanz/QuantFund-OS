@@ -104,9 +104,36 @@ export function runBacktest(
   dataset: BacktestDataset,
   strategyConfigs: BacktestStrategyConfigs = {}
 ): BacktestResult {
+  if (config.requirePitExecution && config.executionRule === "SAME_BAR_CLOSE") {
+    throw new Error(
+      "BacktestEngine Error: SAME_BAR_CLOSE is a theoretical benchmark mode and is NOT PIT-safe executable logic. Use NEXT_BAR_OPEN for PIT-safe execution."
+    );
+  }
+
   const assetIds = Object.keys(dataset.assetBars) as AssetId[];
   if (assetIds.length === 0) {
     throw new Error("BacktestEngine Error: Dataset contains no asset bars.");
+  }
+
+  for (const id of assetIds) {
+    const bars = dataset.assetBars[id];
+    if (!bars) continue;
+    for (let i = 0; i < bars.length; i++) {
+      const ts = bars[i].timestamp;
+      if (!Number.isFinite(ts)) {
+        throw new Error(`BacktestEngine Error: Non-finite timestamp found for asset "${id}" at index ${i}.`);
+      }
+      if (i > 0) {
+        const prevTs = bars[i - 1].timestamp;
+        if (ts <= prevTs) {
+          if (ts === prevTs) {
+            throw new Error(`BacktestEngine Error: Duplicate timestamp ${ts} found for asset "${id}" at index ${i}.`);
+          } else {
+            throw new Error(`BacktestEngine Error: Unsorted/descending timestamp (${prevTs} -> ${ts}) found for asset "${id}" at index ${i}.`);
+          }
+        }
+      }
+    }
   }
 
   const benchmarkId = dataset.benchmarkAssetId ?? assetIds[0];

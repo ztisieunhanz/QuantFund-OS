@@ -305,6 +305,7 @@ export class PaperEngine {
         commissionRate: FEE_BPS,
         slippageModel: { type: "FIXED_BPS", baseBps: SLIPPAGE_BPS * 10000 },
         executionRule: "NEXT_BAR_OPEN",
+        requirePitExecution: true,
         deterministicSeed: 20260915,
         dataQuality,
       };
