@@ -213,3 +213,51 @@ All decisions in this log follow a compact, standard format:
 - **Scope / Consequences**: All Vietnam Layer 1 provider adapters, parsers, and type contracts must strictly implement these rules.
 - **Explicit Non-Goals**: Does not alter global core macro regime scoring or implement provider transport/parsers in this sub-gate.
 - **Supersedes / Superseded by**: None
+
+---
+
+### DEC-015: Historical PIT Data Boundary
+- **ID**: `DEC-015`
+- **Date**: 2026-09-22
+- **Status**: `ACCEPTED`
+- **Decision**: Historical replay consumes only market observations, macro release vintages, and event records strictly available at or before decision time (`availableAt <= decisionTime`). Future revisions, subsequent publication updates, and future events never leak backward into past decision states.
+- **Rationale**: Preserves strict point-in-time anti-lookahead integrity across backtest and paper replay.
+- **Scope / Consequences**: All historical market and macro data must carry verified availability timestamps (`availableAt`). Deterministic lookup functions (`getLatestMarketObservationAt`, `getLatestMacroReleaseAt`, `getLatestEventAt`) filter by decision timestamp. Replay states are future-suffix invariant.
+- **Explicit Non-Goals**: Does not synthesize or backfill missing historical data timestamps with synthetic heuristics.
+- **Supersedes / Superseded by**: None
+
+---
+
+### DEC-016: Canonical Historical Price Authority
+- **ID**: `DEC-016`
+- **Date**: 2026-09-22
+- **Status**: `ACCEPTED`
+- **Decision**: `BacktestDataset.assetBars` is the sole canonical source for executable asset prices, replay bar iteration, execution fills, NAV marking, and benchmark/risk price history. `HistoricalDataset` factor observations (`observations`) are purely explanatory/audit signals and cannot override or substitute executable price series.
+- **Rationale**: Dual price series in replay engines create conflicting accounting authorities, fill price divergence, and hidden execution look-ahead.
+- **Scope / Consequences**: `HistoricalDataset.marketBars` is permanently removed. Backtest engine bar loops iterate strictly on `BacktestDataset.assetBars`.
+- **Explicit Non-Goals**: Does not eliminate macro factor observations (e.g. DXY, VIX, yields) from `HistoricalDataset.observations`.
+- **Supersedes / Superseded by**: None
+
+---
+
+### DEC-017: Historical Context Is Audit-First
+- **ID**: `DEC-017`
+- **Date**: 2026-09-22
+- **Status**: `ACCEPTED`
+- **Decision**: Point-in-time historical macro and factor context attached to `DecisionState` (`historicalContext`) serves strictly as audit and telemetry context unless a separately approved, validated quantitative model explicitly consumes it.
+- **Rationale**: Prevents unverified ad-hoc macro heuristic models from mutating baseline strategy signals or permission gates without formal research gates.
+- **Scope / Consequences**: Baseline Alpha strategies (Adaptive Trend, Mean Reversion) and PermissionGate continue operating on their verified core inputs. Historical CPI/NFP/FOMC events lacking verified consensus remain EventReaction-ineligible (0 event alpha).
+- **Explicit Non-Goals**: Does not prohibit future approved research gates from developing validated historical macro alpha models.
+- **Supersedes / Superseded by**: None
+
+---
+
+### DEC-018: Walk-Forward Historical Carry-Forward
+- **ID**: `DEC-018`
+- **Date**: 2026-09-22
+- **Status**: `ACCEPTED`
+- **Decision**: Walk-forward rolling OOS evaluation fold boundaries are evaluation boundaries, not public knowledge or macroeconomic publication reset boundaries. Sliced fold historical datasets carry forward the latest already-known pre-fold observations and vintages (`availableAt <= foldStart`) to seed fold context, while strictly excluding all records published after fold end (`availableAt > foldEnd`).
+- **Rationale**: Macroeconomic state (e.g. GDP, CPI, Fed Funds rate) known prior to fold start does not cease to exist when an evaluation window opens. Resetting to null would create artificial historical blindness.
+- **Scope / Consequences**: `sliceHistoricalDataset()` preserves latest pre-fold observation per series, latest pre-fold release per series, and at most one latest pre-fold event, plus all in-fold records.
+- **Explicit Non-Goals**: Does not carry forward financial execution state (cash, positions, PnL, open orders) between folds; execution state remains strictly fold-isolated.
+- **Supersedes / Superseded by**: None

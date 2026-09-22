@@ -23,8 +23,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Current Verified Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **HEAD Commit**: `f289f4f4b128be2fa2be52d919e2c1e3859a03ce`
-- **Commit Message**: `Gate M11: add canonical trade attribution`
+- **HEAD Commit**: `baabeaa945533a4cb711350b373e575ab46de781`
+- **Commit Message**: `Gate M12F-B: close historical replay boundaries`
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
   - **Gate 1** (Forensic Audit): **COMPLETE**
@@ -35,11 +35,12 @@ Do not rely only on AI memory or previous agent reports.
   - **Gate M9** (No-Lookahead / Point-in-Time Validation): **COMPLETE**
   - **Gate M10** (Rolling OOS Methodology & Validation): **COMPLETE**
   - **Gate M11** (Trade Attribution & Round-Trip Reconstruction): **COMPLETE**
+  - **Gate M12** (Historical Point-in-Time Data Infrastructure): **COMPLETE**
 - **Latest Verification Results**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (259/259 tests across 17 test files)
+  - `npx vitest run`: **PASS** (459/459 tests across 22 test files)
   - `git diff --check`: **PASS**
-- **Working Tree State**: Clean baseline following Gate M11 implementation and validation.
+- **Working Tree State**: Clean baseline following Gate M12 implementation and validation.
 
 ---
 
@@ -266,15 +267,106 @@ Gate M11 designed, implemented, and validated a pure derived trade reconstructio
 
 ---
 
-## 10. Open / Deferred Technical & Macro Risks
+## 10. Completed Gate M12 — Historical Point-in-Time Data Infrastructure
+
+**Status**: **COMPLETE**
+
+Gate M12 designed, ingested, normalized, verified, and connected point-in-time (PIT) historical market factor observations, macroeconomic releases with revision vintages, and official central bank/economic events into the deterministic QuantFund OS backtest and walk-forward evaluation engines:
+
+### Subphases Summary
+- **M12A — Forensic Audit & Source Semantics**: Audited historical source semantics, publication timings, revision mechanics, and data contracts.
+- **M12B — Canonical Contracts & Anti-Lookahead Lookups**: Established canonical interfaces (`HistoricalMarketObservation`, `HistoricalMacroRelease`, `HistoricalEventRecord`, `HistoricalDataset`, `HistoricalContextAtTime`), deterministic PIT lookup functions (`getLatestMarketObservationAt`, `getLatestMacroReleaseAt`, `getLatestEventAt`), vintage/revision semantics, and strict event eligibility rules.
+- **M12C — Historical Market Data Ingestion**: Offline-ingested BTC/PAXG Binance 1H bars, DXY/VIX daily observations via Yahoo, and US2Y/US10Y daily yields via Federal Reserve H.15. Implemented verified availability timestamps with DST handling and strict offline determinism (no replay-time network requests).
+- **M12D — Historical Macro Releases & Events Ingestion**: Ingested BLS CPI, BLS Employment Situation (Nonfarm Payrolls with initial and subsequent revision vintages), and FOMC rate decision events. Guaranteed official release timing integrity; historical consensus remains `null` when unavailable to prevent fabricated event surprise.
+- **M12E — Historical Replay Integration**: Connected `HistoricalDataset` to `runBacktest`, attaching a compact, point-in-time `HistoricalContextAtTime` audit snapshot to each `DecisionState` (`availableAt <= decisionTime`). Ensured future-suffix invariance and full backwards compatibility for replays without historical datasets.
+- **M12F & M12F-B — Consumption Audit & Replay Boundary Closure**: Removed `HistoricalDataset.marketBars` to cement `BacktestDataset.assetBars` as the sole canonical price authority. Implemented carry-forward-safe `sliceHistoricalDataset()` for walk-forward OOS validation folds. Verified zero mutation of baseline strategy behavior.
+
+### Current Validation
+- **Unit & Integration Suite**: **459/459 PASS** across 22 test files.
+- **Production Build (`npm run build`)**: **PASS**.
+- **Working Tree & Linter**: `git diff --check` clean.
+- **Current HEAD**: `baabeaa945533a4cb711350b373e575ab46de781`.
+
+### Canonical Historical Architecture
+The platform enforces a unidirectional historical data flow:
+```
+Historical Provider Ingestion / Offline Preparation
+  ↓
+HistoricalDataset (observations, macroReleases, events)
+  ↓
+Validation & Deterministic Normalization (sorted, finite, verified availableAt)
+  ↓
+buildHistoricalContextAtTime(decisionTime)
+  ↓
+DecisionState.historicalContext (audit-only snapshot)
+  ↓
+Alpha / Permission / Risk / Omega Pipeline
+```
+
+**Key Contract Properties**:
+- `HistoricalContextAtTime` contains:
+  1. `decisionTime`: Timestamp of the decision bar.
+  2. `market`: Latest eligible observation per series (`Record<HistoricalMarketSeriesId, HistoricalMarketObservation>`).
+  3. `macro`: Latest eligible release/vintage per series (`Record<HistoricalMacroSeriesId, HistoricalMacroRelease>`).
+  4. `latestEvent`: Most recent published eligible event (`HistoricalEventRecord | null`).
+- `HistoricalContextAtTime` does **NOT** contain full historical time series or future knowledge.
+- Canonical visibility constraint: `availableAt <= decisionTime`.
+
+### Single Price Source of Truth
+`BacktestDataset.assetBars` is the **sole canonical source** for:
+- Executable asset prices
+- Replay bar iteration
+- Order execution and fill pricing
+- NAV marking and portfolio valuation
+- Benchmark and risk price history
+
+`HistoricalDataset` contains strictly:
+- Market factor observations (`observations`)
+- Macroeconomic releases with revision vintages (`macroReleases`)
+- Economic calendar / central bank events (`events`)
+
+`HistoricalDataset` no longer contains executable `marketBars`.
+
+### Walk-Forward PIT Semantics
+Each rolling OOS fold receives a sliced `HistoricalDataset` via `sliceHistoricalDataset(dataset, foldStart, foldEnd)`.
+The slice semantics preserve:
+- Exactly **one latest pre-fold observation** per market series (`availableAt <= foldStart`).
+- The **appropriate latest pre-fold macro release/vintage** per series (`availableAt <= foldStart`).
+- At most **one latest pre-fold event** (`availableAt <= foldStart`).
+- **All records inside the fold range** (`foldStart < availableAt <= foldEnd`).
+- **Zero records after fold end** (`availableAt > foldEnd`).
+
+Fold boundaries are **evaluation boundaries**, NOT data-publication reset boundaries. Macroeconomic knowledge published before fold start carries forward safely without execution state contamination.
+
+### What Gate M12 Does NOT Do
+Gate M12 is strictly a historical point-in-time data infrastructure gate. It does **NOT**:
+- Create a historical macro trading strategy or alpha model.
+- Map VIX, yield, or DXY observations into `PermissionGate` or `RiskEngine`.
+- Reuse live `CurrentMarketSnapshot` heuristics historically.
+- Change `RiskEngine` or `OmegaAllocator` macro behavior.
+- Alter `AdaptiveTrend` or `MeanReversion` signals or parameters.
+- Fabricate economic event consensus or surprise values.
+
+Official CPI, NFP, and FOMC events lacking verified historical consensus remain `EventReaction`-ineligible and generate zero event alpha.
+
+### Explicit Open Design Debts
+- **Debt A — PermissionGate Null Macro Default**: `macro === null -> Transitional Mixed`. This is preserved legacy baseline behavior. Changing it requires a dedicated future model-methodology gate.
+- **Debt B — Historical Macro Strategy Model**: No approved model currently maps PIT historical macro factors into `PointInTimeMacro`, `MacroRegime`, or `PermissionGate`. This requires a separate quantitative research gate.
+- **Debt C — Historical Event Consensus**: Official BLS and Federal Reserve sources do not publish verified pre-release market consensus. Integrating a consensus provider requires its own PIT source-validation gate.
+- **Debt D — Historical Freshness / Regime Semantics**: Current Macro V2 live 24h/72h freshness thresholds must not automatically be reused historically across weekends, market holidays, or daily/monthly series publication cadences.
+
+---
+
+## 11. Open / Deferred Technical & Macro Risks
 
 ### Accounting & Execution Limitations
 - **Control Benchmark Scope**: DCA remains strictly benchmark/control only (`DEC-001`).
 - **SAME_BAR_CLOSE Mode**: Not executable/PIT-safe (theoretical research benchmark mode only).
 
-### Deferred Quant Engineering
-- Genuine historical point-in-time macro data ingestion.
-- Genuine historical point-in-time event/news ingestion.
+### Deferred Quant Engineering & Research
+- Historical macro alpha & regime strategy models (mapping PIT macro context to quant signals).
+- Historical event consensus provider integration & verified surprise calculation.
+- Historical factor freshness thresholds calibrated for daily/monthly series.
 - Multi-timeframe quant engine support.
 - Short-selling support and margin semantics.
 - Train-set hyperparameter optimization & grid search engine.
@@ -286,7 +378,7 @@ Gate M11 designed, implemented, and validated a pure derived trade reconstructio
 
 ---
 
-## 11. Required Workflow
+## 12. Required Workflow
 
 For every major engineering gate:
 
@@ -304,14 +396,14 @@ For every major engineering gate:
 
 ---
 
-## 12. Next Active Engineering Gate
+## 13. Next Active Engineering Gate
 
-### GATE M12 — Point-in-Time Macro & Event History Ingestion & Dynamic Synthesis
+### Next Phase Planning — Macro Model Research / Production Hardening
 
-**Status**: Gate M11 is complete. Gate M12 is the next active engineering gate.
+**Status**: Gate M12 (Historical Point-in-Time Data Infrastructure) is complete.
 
-**High-Level Scope**:
-- Ingest truthful historical Point-in-Time macro and event timelines.
-- Connect historical PIT macro/event data to Layer 2 Macro Interpretation & Layer 3 Synthesis.
-- Integrate PIT macro/event timelines into `runBacktest` and `PaperEngine` replay without look-ahead leakage.
-- **Explicit Non-Goals**: No strategy parameter or formula tuning to artificially boost returns or Sharpe ratio.
+**Candidate Next Gate Areas**:
+- Formal quantitative research gate for historical macro regime & factor alpha models.
+- Verified historical event consensus ingestion gate.
+- Production live runtime execution API hardening.
+- Multi-timeframe quant engine support.
