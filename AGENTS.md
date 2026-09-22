@@ -43,9 +43,12 @@ PRECHECK
 ```
 
 - Do not commit before review unless explicitly instructed.
+- A reviewed push becomes a verified checkpoint only after the required CI run passes; local validation remains mandatory.
+- If CI fails, do not rewrite history. Identify the root cause, make a same-gate refinement, validate locally, and push a follow-up commit for CI.
 - Never force push.
 - Never destructively reset, checkout, clean, or discard uncommitted user work.
 - Do not install packages or change dependencies without explicit need and approval.
 - Never place secrets in review bundles.
-- On agent/provider/quota failure, hand off using filesystem and Git evidence; never reconstruct uncommitted work from memory.
+- Handoffs must be product-independent and include the current HEAD, status, diff or patch, validation evidence, and an inventory or safe copies of relevant untracked files.
+- Never infer repository state from chat memory. On any agent, provider, or quota failure, preserve and hand off filesystem and Git evidence; never discard work in progress.
 - Store handoffs outside the repository in an environment-specific location; never assume a username or fixed absolute path.

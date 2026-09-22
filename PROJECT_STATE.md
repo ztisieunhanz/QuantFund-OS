@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `2ba18230bfb263e8d8ca60009787d7157ad8044f`
-- **Checkpoint Message**: `Gate M13B-1: establish historical research data protocol`
+- **Last Verified Code Checkpoint**: `2f5de0124df67f38b626bae0077537848f6696ee`
+- **Checkpoint Message**: `Docs: freeze v1 architecture roadmap and recovery policy`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -39,11 +39,15 @@ Do not rely only on AI memory or previous agent reports.
   - **Gate M11** (Trade Attribution & Round-Trip Reconstruction): **COMPLETE**
   - **Gate M12** (Historical Point-in-Time Data Infrastructure): **COMPLETE**
   - **Gate M13B-1** (Historical Research Data Protocol, Manifest & Coverage Contract): **COMPLETE**
+  - **SYNC-01** (v1 Architecture, Roadmap & Recovery Source-of-Truth Sync): **COMPLETE** at `2f5de0124df67f38b626bae0077537848f6696ee`
+  - **SYNC-02** (CI, Portability & Agent-Handoff Enforcement): **IN PROGRESS — NOT CHECKPOINTED**
 - **Validation Baseline**:
   - `npm run build`: **PASS**
   - `npx vitest run`: **PASS** (481/481 tests across 23 test files)
   - `git diff --check`: **PASS**
-- **Current Documented Phase**: M13B-2 historical research-data acquisition and coverage expansion — **NOT STARTED**.
+  - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
+  - **CI status**: SYNC-02 proposes the workflow in the current uncommitted tree; it is not active or passing until committed, pushed, and observed.
+- **Current Documented Phase**: SYNC-02 CI, portability, and handoff enforcement — **IN PROGRESS / NOT CHECKPOINTED**. M13B-2 remains **NOT STARTED**.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -419,6 +423,12 @@ For every major engineering gate:
 ---
 
 ## 14. Current Documented Phase
+
+### SYNC-02 — CI, Portability & Agent-Handoff Enforcement
+
+**Status**: **IN PROGRESS — NOT CHECKPOINTED**
+
+SYNC-02 adds the proposed repository CI contract and product-independent handoff rules. The workflow must not be described as active or passing until it is committed, pushed, and observed on the remote CI provider.
 
 ### M13B-2 — Historical Research-Data Acquisition / Coverage Expansion
 

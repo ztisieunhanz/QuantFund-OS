@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          # The repository has no explicit Node contract; Node 22 is the
+          # conservative LTS line supported by the current Vite toolchain.
+          node-version: 22
+          cache: npm
+
+      - name: Validate submitted diff whitespace
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CURRENT_SHA: ${{ github.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+
+          require_commit() {
+            local sha="$1"
+            local label="$2"
+            [[ "$sha" =~ ^[0-9a-fA-F]{40}$ ]] || fail "$label is not a full commit SHA"
+            git cat-file -e "${sha}^{commit}" 2>/dev/null || fail "$label is unavailable in checkout history"
+          }
+
+          actual_head="$(git rev-parse HEAD)"
+          require_commit "$CURRENT_SHA" "Current event SHA"
+          [[ "$actual_head" == "$CURRENT_SHA" ]] || fail "Checked-out HEAD does not match the current event SHA"
+
+          case "$EVENT_NAME" in
+            pull_request)
+              require_commit "$PR_BASE_SHA" "Pull request base SHA"
+              git merge-base --is-ancestor "$PR_BASE_SHA" "$CURRENT_SHA" || fail "Pull request base is not an ancestor of the tested HEAD"
+              git diff --check "$PR_BASE_SHA" "$CURRENT_SHA"
+              ;;
+            push)
+              zero_sha="0000000000000000000000000000000000000000"
+              [[ "$PUSH_BEFORE_SHA" != "$zero_sha" ]] || fail "Push event has no valid previous commit"
+              require_commit "$PUSH_BEFORE_SHA" "Push previous SHA"
+              git diff --check "$PUSH_BEFORE_SHA" "$CURRENT_SHA"
+              ;;
+            *)
+              fail "Unsupported event for submitted-diff validation: $EVENT_NAME"
+              ;;
+          esac
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run full test suite
+        run: npx vitest run
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Verify post-validation working tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --exit-code
+
+          status="$(git status --porcelain --untracked-files=all)"
+          if [[ -n "$status" ]]; then
+            printf '%s\n' "$status"
+            echo "::error::Validation commands left the working tree dirty"
+            exit 1
+          fi

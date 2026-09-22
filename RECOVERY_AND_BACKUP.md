@@ -2,9 +2,10 @@
 
 ## Code recovery
 
-- Create reviewed checkpoint commits and push each accepted gate.
+- Create reviewed commits and push each accepted gate. A push is a verified checkpoint only after its required CI run passes.
 - Planned major-gate tags: `m13-complete`, `m14-complete`, `m15-complete`, `m16-complete`, `m17-rc`, and `v1.0`.
-- Git history, validation evidence, source-of-truth documents, and CI are authoritative.
+- Git history, local validation evidence, source-of-truth documents, and CI are authoritative. Local validation remains required; CI is the independent checkpoint authority after push.
+- If CI fails, do not amend, reset, rebase, or force push. Record the root cause, correct it as a same-gate refinement, rerun local validation, and push a follow-up commit for CI.
 
 ## Uncommitted work handoff
 
@@ -20,13 +21,14 @@ On another machine or environment, use an equivalent external directory.
 
 A handoff should contain, as applicable:
 
+- The current branch and exact `HEAD`
 - `status.txt`
 - `diff.patch`
 - An inventory and safe copies of relevant untracked files
 - `validation.txt`
 - `review-bundle.txt`
 
-Never include secrets. If an agent, provider, or quota fails: do not reset, checkout, stash, or clean; inspect status and diff, preserve handoff evidence, and continue the same gate with another agent.
+Handoffs must remain product-independent: repository state is reconstructed from filesystem and Git evidence, never from chat memory or a provider-specific session. Never include secrets. If any agent, provider, or quota fails: do not reset, checkout, stash, clean, or discard work in progress; inspect status and diff, preserve the handoff evidence, and continue the same gate with another agent or environment.
 
 ## Research data recovery
 
