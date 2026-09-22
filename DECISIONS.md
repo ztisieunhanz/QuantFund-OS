@@ -261,3 +261,99 @@ All decisions in this log follow a compact, standard format:
 - **Scope / Consequences**: `sliceHistoricalDataset()` preserves latest pre-fold observation per series, latest pre-fold release per series, and at most one latest pre-fold event, plus all in-fold records.
 - **Explicit Non-Goals**: Does not carry forward financial execution state (cash, positions, PnL, open orders) between folds; execution state remains strictly fold-isolated.
 - **Supersedes / Superseded by**: None
+
+---
+
+### DEC-019: Finite v1 Release Roadmap
+- **ID**: `DEC-019`
+- **Date**: 2026-09-22
+- **Status**: `ACCEPTED`
+- **Decision**: M17 is the final pre-release major gate. Validity fixes, data/provider issues, UI defects, and reliability refinements remain inside M13–M17 as `Mxx-Rn`. New feature scope moves to the post-v1 backlog unless the user explicitly approves a roadmap change.
+- **Rationale**: A finite roadmap prevents autonomous milestone expansion and preserves a testable definition of v1.0.
+- **Scope / Consequences**: Agents must follow `ROADMAP_V1.md` and may propose a roadmap change only for a fundamental blocker that changes the definition of v1.0.
+- **Explicit Non-Goals**: Does not prohibit explicitly approved post-v1 planning.
+- **Supersedes / Superseded by**: None
+
+---
+
+### DEC-020: Action-First Product Direction
+- **ID**: `DEC-020`
+- **Date**: 2026-09-22
+- **Status**: `ACCEPTED`
+- **Decision**: Research exists to inform deterministic paper actions; the product goal is grounded actionable state rather than unbounded analytics. `WAIT` is a first-class valid action. All v1.0 actions remain research/paper actions.
+- **Rationale**: Users need a coherent decision state while preserving research discipline and avoiding claims of live investment execution.
+- **Scope / Consequences**: Research outputs require explicit evidence and policy integration before they may affect paper actions.
+- **Explicit Non-Goals**: Does not authorize real-money execution or guarantee actionable edge.
+- **Supersedes / Superseded by**: None
+
+---
+
+### DEC-021: Canonical 1H Execution with Derived Multi-Timeframe Context
+- **ID**: `DEC-021`
+- **Date**: 2026-09-22
+- **Status**: `ACCEPTED`
+- **Decision**: The executable domain remains 1H. Future 4H and 1D context must be derived solely from fully closed eligible 1H bars available at decision time. Unfinished derived bars are invisible and derived context cannot become an alternative executable-price authority.
+- **Rationale**: Derived context can enrich research without fragmenting timestamp semantics, fills, accounting, or price authority.
+- **Scope / Consequences**: `BacktestDataset.assetBars` remains authoritative; additional execution domains require separate approval and are post-v1 by default.
+- **Explicit Non-Goals**: Does not implement derived bars or authorize 15m/multi-domain execution.
+- **Supersedes / Superseded by**: None
+
+---
+
+### DEC-022: Extensible Research Rule Architecture
+- **ID**: `DEC-022`
+- **Date**: 2026-09-22
+- **Status**: `ACCEPTED`
+- **Decision**: Research rules and hypotheses will be modular and capable of expressing multi-indicator, parameterized, sequential/stateful, derived-timeframe, and macro-conditioned technical logic without changing canonical execution or accounting architecture.
+- **Rationale**: Research extensibility must not create strategy-specific bypasses or force repeated changes to financial infrastructure.
+- **Scope / Consequences**: Rules produce research evidence or candidate intent; they do not decide final position size, and candidate status does not imply action eligibility.
+- **Explicit Non-Goals**: Does not implement the rule engine or approve any particular rule.
+- **Supersedes / Superseded by**: None
+
+---
+
+### DEC-023: Evidence-Gated Action Policy
+- **ID**: `DEC-023`
+- **Date**: 2026-09-22
+- **Status**: `ACCEPTED`
+- **Decision**: Research must pass declared OOS and robustness evaluation before action eligibility. Evidence states are `CANDIDATE`, `APPROVED_FOR_PAPER`, `REJECTED`, and `INSUFFICIENT_EVIDENCE`. `ActionDecision` must never consume unapproved research evidence.
+- **Rationale**: Separating hypothesis generation from action eligibility prevents in-sample findings or weak evidence from silently becoming policy.
+- **Scope / Consequences**: Approval applies only to paper use and remains subject to StrategyEligibility, Permission, Risk, and Omega.
+- **Explicit Non-Goals**: Does not define thresholds, approve current macro evidence, or implement action policy.
+- **Supersedes / Superseded by**: None
+
+---
+
+### DEC-024: ActionDecision as Product-Facing Single Source of Truth
+- **ID**: `DEC-024`
+- **Date**: 2026-09-22
+- **Status**: `ACCEPTED`
+- **Decision**: `ActionDecision` is the target single source of truth for describing product-facing action state. A pure, deterministic `ActionDecision Builder` derives it from canonical target weight and current canonical portfolio state for UI/chatbot consumption. It cannot modify target weight, bypass Permission/Risk/Omega/Execution, or become a second allocation, execution, accounting, or financial authority. The chatbot must not independently manufacture an action.
+- **Rationale**: One typed action contract prevents contradictory UI, chatbot, and execution-facing narratives.
+- **Scope / Consequences**: `WAIT`, `ENTER`, `ADD`, `HOLD`, `REDUCE`, and `EXIT` are derived action semantics. If no approved actionable evidence exists, `WAIT` / no action is valid. Existing `CurrentMarketSnapshot` grounding requirements remain applicable.
+- **Explicit Non-Goals**: Does not claim `ActionDecision` is implemented or authorize chatbot-driven trading.
+- **Supersedes / Superseded by**: None
+
+---
+
+### DEC-025: v1 Release Does Not Require Macro Alpha
+- **ID**: `DEC-025`
+- **Date**: 2026-09-22
+- **Status**: `ACCEPTED`
+- **Decision**: v1.0 does not require a macro model to demonstrate actionable alpha. If evidence is insufficient or rejected, macro data remains explanatory/context-only and release may proceed.
+- **Rationale**: Product validity depends on truthful evidence and safe behavior, not on forcing a positive research result.
+- **Scope / Consequences**: Macro research cannot be promoted without evidence, and lack of promotion is not a release blocker.
+- **Explicit Non-Goals**: Does not prevent future approved macro research.
+- **Supersedes / Superseded by**: None
+
+---
+
+### DEC-026: Recovery and Portability Principle
+- **ID**: `DEC-026`
+- **Date**: 2026-09-22
+- **Status**: `ACCEPTED`
+- **Decision**: Git history, tests, source-of-truth documents, and CI evidence define recoverable project state. Coding agents are replaceable workers. Uncommitted work must never be destructively discarded because an agent, provider, or quota fails.
+- **Rationale**: Durable evidence and non-destructive handoff keep the project portable across tools and failures.
+- **Scope / Consequences**: Follow `RECOVERY_AND_BACKUP.md`; inspect and preserve status/diff/untracked evidence before continuing the same gate with another agent.
+- **Explicit Non-Goals**: Does not treat chat memory as recovery evidence or authorize secrets in handoff bundles.
+- **Supersedes / Superseded by**: None

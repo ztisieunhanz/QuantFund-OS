@@ -14,17 +14,19 @@ Before any major architecture decision, forensic repair plan, or coding-agent pr
 2. verify working-tree status;
 3. read this file;
 4. read `DECISIONS.md`;
-5. inspect the relevant current source files.
+5. read `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`;
+6. inspect the relevant current source files.
 
 Do not rely only on AI memory or previous agent reports.
 
 ---
 
-## 2. Current Verified Checkpoint
+## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **HEAD Commit**: `baabeaa945533a4cb711350b373e575ab46de781`
-- **Commit Message**: `Gate M12F-B: close historical replay boundaries`
+- **Last Verified Code Checkpoint**: `2ba18230bfb263e8d8ca60009787d7157ad8044f`
+- **Checkpoint Message**: `Gate M13B-1: establish historical research data protocol`
+- **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
   - **Gate 1** (Forensic Audit): **COMPLETE**
@@ -36,11 +38,13 @@ Do not rely only on AI memory or previous agent reports.
   - **Gate M10** (Rolling OOS Methodology & Validation): **COMPLETE**
   - **Gate M11** (Trade Attribution & Round-Trip Reconstruction): **COMPLETE**
   - **Gate M12** (Historical Point-in-Time Data Infrastructure): **COMPLETE**
-- **Latest Verification Results**:
+  - **Gate M13B-1** (Historical Research Data Protocol, Manifest & Coverage Contract): **COMPLETE**
+- **Validation Baseline**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (459/459 tests across 22 test files)
+  - `npx vitest run`: **PASS** (481/481 tests across 23 test files)
   - `git diff --check`: **PASS**
-- **Working Tree State**: Clean baseline following Gate M12 implementation and validation.
+- **Current Documented Phase**: M13B-2 historical research-data acquisition and coverage expansion — **NOT STARTED**.
+- **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
 
@@ -281,11 +285,11 @@ Gate M12 designed, ingested, normalized, verified, and connected point-in-time (
 - **M12E — Historical Replay Integration**: Connected `HistoricalDataset` to `runBacktest`, attaching a compact, point-in-time `HistoricalContextAtTime` audit snapshot to each `DecisionState` (`availableAt <= decisionTime`). Ensured future-suffix invariance and full backwards compatibility for replays without historical datasets.
 - **M12F & M12F-B — Consumption Audit & Replay Boundary Closure**: Removed `HistoricalDataset.marketBars` to cement `BacktestDataset.assetBars` as the sole canonical price authority. Implemented carry-forward-safe `sliceHistoricalDataset()` for walk-forward OOS validation folds. Verified zero mutation of baseline strategy behavior.
 
-### Current Validation
+### M12 Completion Validation
 - **Unit & Integration Suite**: **459/459 PASS** across 22 test files.
 - **Production Build (`npm run build`)**: **PASS**.
 - **Working Tree & Linter**: `git diff --check` clean.
-- **Current HEAD**: `baabeaa945533a4cb711350b373e575ab46de781`.
+- **Verified M12 checkpoint at completion**: `baabeaa945533a4cb711350b373e575ab46de781`.
 
 ### Canonical Historical Architecture
 The platform enforces a unidirectional historical data flow:
@@ -357,7 +361,24 @@ Official CPI, NFP, and FOMC events lacking verified historical consensus remain 
 
 ---
 
-## 11. Open / Deferred Technical & Macro Risks
+## 11. Completed Gate M13B-1 — Research Data Protocol
+
+**Status**: **COMPLETE**
+
+M13B-1 established a machine-checkable, research-only manifest, canonical per-series cadence/kind/revision semantics, deterministic snapshot serialization with an injectable hashing boundary, and a fail-closed coverage-readiness assessment. Compact fixtures remain `FIXTURE_ONLY`; no research-grade dataset or macro model was introduced.
+
+### Explicit Current Debts
+
+- A real research-grade historical dataset has not been acquired.
+- A production cryptographic snapshot hasher has not been wired.
+- Provider-specific missingness denominator rules remain pending.
+- No historical macro model or macro action evidence is approved.
+- No action layer or `ActionDecision` is implemented.
+- No derived 4H/1D research context is implemented.
+
+---
+
+## 12. Open / Deferred Technical & Macro Risks
 
 ### Accounting & Execution Limitations
 - **Control Benchmark Scope**: DCA remains strictly benchmark/control only (`DEC-001`).
@@ -367,7 +388,8 @@ Official CPI, NFP, and FOMC events lacking verified historical consensus remain 
 - Historical macro alpha & regime strategy models (mapping PIT macro context to quant signals).
 - Historical event consensus provider integration & verified surprise calculation.
 - Historical factor freshness thresholds calibrated for daily/monthly series.
-- Multi-timeframe quant engine support.
+- **M13C**: Derived 4H/1D research context from fully closed eligible canonical 1H bars.
+- **Post-v1 unless explicitly approved**: Additional executable time domains or a true multi-timeframe execution engine.
 - Short-selling support and margin semantics.
 - Train-set hyperparameter optimization & grid search engine.
 - Parallel DCA control benchmark evaluation in walk-forward reports.
@@ -378,7 +400,7 @@ Official CPI, NFP, and FOMC events lacking verified historical consensus remain 
 
 ---
 
-## 12. Required Workflow
+## 13. Required Workflow
 
 For every major engineering gate:
 
@@ -396,14 +418,10 @@ For every major engineering gate:
 
 ---
 
-## 13. Next Active Engineering Gate
+## 14. Current Documented Phase
 
-### Next Phase Planning — Macro Model Research / Production Hardening
+### M13B-2 — Historical Research-Data Acquisition / Coverage Expansion
 
-**Status**: Gate M12 (Historical Point-in-Time Data Infrastructure) is complete.
+**Status**: **NOT STARTED**
 
-**Candidate Next Gate Areas**:
-- Formal quantitative research gate for historical macro regime & factor alpha models.
-- Verified historical event consensus ingestion gate.
-- Production live runtime execution API hardening.
-- Multi-timeframe quant engine support.
+M13B-2 is the next planned gate. It must acquire and validate immutable, provenance-backed PIT research snapshots under `RESEARCH_DATA_PROTOCOL.md`. It must not silently start M13C research rules, M14 action integration, or production execution work. See `ROADMAP_V1.md` for the finite path through M17 and `ARCHITECTURE_V1.md` for target boundaries.
