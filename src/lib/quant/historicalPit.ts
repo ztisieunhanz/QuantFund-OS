@@ -4,7 +4,7 @@
 // PRINCIPLE: Truthful Historical Availability Without Lookahead Bias (DEC-001, DEC-005)
 // ============================================================================
 
-import type { AssetId, PointInTimeBar, PointInTimeEvent } from "./types";
+import type { PointInTimeEvent } from "./types";
 
 // ----------------------------------------------------------------------------
 // 1. DISCRIMINATED HISTORICAL DATA CONTRACTS
@@ -65,7 +65,8 @@ export interface HistoricalEventRecord {
 }
 
 /**
- * Lightweight Historical Dataset Container.
+ * Lightweight Historical Dataset Container (Gate M12F-B: market factors, macro releases, events only).
+ * Traded asset price history is exclusively canonical in BacktestDataset.assetBars.
  */
 export interface HistoricalDatasetMetadata {
   readonly interval: "1h";
@@ -75,7 +76,6 @@ export interface HistoricalDatasetMetadata {
 }
 
 export interface HistoricalDataset {
-  readonly marketBars?: Readonly<Record<AssetId, readonly PointInTimeBar[]>>;
   readonly marketObservations: readonly HistoricalMarketObservation[];
   readonly macroReleases: readonly HistoricalMacroRelease[];
   readonly eventRecords: readonly HistoricalEventRecord[];
@@ -308,52 +308,6 @@ export function validateHistoricalDataset(dataset: HistoricalDataset): { valid: 
     }
   }
 
-  // 0b. Validate Market Bars if present
-  if (dataset.marketBars) {
-    for (const [assetId, bars] of Object.entries(dataset.marketBars)) {
-      if (!Array.isArray(bars)) {
-        throw new HistoricalDatasetValidationError(`Market bars for "${assetId}" must be an array.`);
-      }
-      for (let i = 0; i < bars.length; i++) {
-        const bar = bars[i];
-        if (!Number.isFinite(bar.timestamp) || bar.timestamp < 0) {
-          throw new HistoricalDatasetValidationError(
-            `Invalid bar timestamp at index ${i} for "${assetId}".`
-          );
-        }
-        if (
-          !Number.isFinite(bar.open) ||
-          !Number.isFinite(bar.high) ||
-          !Number.isFinite(bar.low) ||
-          !Number.isFinite(bar.close) ||
-          !Number.isFinite(bar.volume)
-        ) {
-          throw new HistoricalDatasetValidationError(
-            `Non-finite bar price/volume at index ${i} for "${assetId}".`
-          );
-        }
-        if (bar.open <= 0 || bar.high <= 0 || bar.low <= 0 || bar.close <= 0) {
-          throw new HistoricalDatasetValidationError(
-            `Non-positive bar price at index ${i} for "${assetId}".`
-          );
-        }
-        if (bar.volume < 0) {
-          throw new HistoricalDatasetValidationError(
-            `Negative volume at index ${i} for "${assetId}".`
-          );
-        }
-        if (i > 0) {
-          const prev = bars[i - 1];
-          if (bar.timestamp <= prev.timestamp) {
-            throw new HistoricalDatasetValidationError(
-              `Unsorted or duplicate bar timestamp (${prev.timestamp} -> ${bar.timestamp}) at index ${i} for "${assetId}".`
-            );
-          }
-        }
-      }
-    }
-  }
-
   // 1. Validate Market Observations
   const marketSeen = new Map<string, HistoricalMarketObservation>();
   for (const obs of dataset.marketObservations) {
@@ -473,7 +427,6 @@ export function normalizeHistoricalDataset(dataset: HistoricalDataset): Historic
   });
 
   return {
-    marketBars: dataset.marketBars,
     marketObservations: sortedMarket,
     macroReleases: sortedMacro,
     eventRecords: sortedEvents,
@@ -821,9 +774,21 @@ export function historicalEventToPointInTimeEvent(ev: HistoricalEventRecord): Po
 }
 
 /**
- * Slices a HistoricalDataset to an explicit time window [startTime, endTime].
- * Preserves PIT integrity by filtering on availableAt for observations/releases/events,
- * and timestamp for marketBars.
+ * Slices a HistoricalDataset to an explicit time window [startTime, endTime]
+ * while preserving point-in-time carry-forward state at the lower boundary (Gate M12F-B).
+ *
+ * Lower-Bound Seeding Invariant:
+ * 1. Market Observations: for each seriesId, includes the single latest eligible observation
+ *    with availableAt < startTime (if one exists), PLUS all observations with
+ *    startTime <= availableAt <= endTime.
+ * 2. Macro Releases: for each seriesId, includes the latest eligible macro release known
+ *    immediately before startTime (availableAt < startTime), PLUS all releases/revisions with
+ *    startTime <= availableAt <= endTime. If an observation period has a revision inside
+ *    [startTime, endTime], its pre-start vintage is also preserved.
+ * 3. Events: includes at most the single latest eligible event before startTime
+ *    (availableAt < startTime) as a seed, PLUS all events with
+ *    startTime <= availableAt <= endTime.
+ * 4. Upper Bound: records with availableAt > endTime are strictly excluded.
  */
 export function sliceHistoricalDataset(
   dataset: HistoricalDataset,
@@ -831,24 +796,134 @@ export function sliceHistoricalDataset(
   endTime: number
 ): HistoricalDataset {
   validateHistoricalDataset(dataset);
-  return {
-    marketObservations: dataset.marketObservations.filter(
-      (m) => m.availableAt >= startTime && m.availableAt <= endTime
-    ),
-    macroReleases: dataset.macroReleases.filter(
-      (m) => m.availableAt >= startTime && m.availableAt <= endTime
-    ),
-    eventRecords: dataset.eventRecords.filter(
-      (e) => e.availableAt >= startTime && e.availableAt <= endTime
-    ),
-    marketBars: dataset.marketBars
-      ? Object.fromEntries(
-          Object.entries(dataset.marketBars).map(([assetId, bars]) => [
-            assetId,
-            bars.filter((b) => b.timestamp >= startTime && b.timestamp <= endTime),
-          ])
-        )
-      : undefined,
+
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || startTime > endTime) {
+    throw new HistoricalDatasetValidationError(
+      `Invalid slice window: [${startTime}, ${endTime}]. startTime must be finite and <= endTime.`
+    );
+  }
+
+  // 1. Market Observations
+  const marketMap = new Map<string, HistoricalMarketObservation>();
+
+  // A. Pre-start seed: for each unique seriesId, select the single latest eligible observation with availableAt < startTime
+  const allMarketSeries = new Set<string>();
+  for (const obs of dataset.marketObservations) {
+    allMarketSeries.add(obs.seriesId);
+  }
+
+  for (const sId of allMarketSeries) {
+    let bestPreStart: HistoricalMarketObservation | null = null;
+    for (const obs of dataset.marketObservations) {
+      if (obs.seriesId !== sId) continue;
+      if (obs.availableAt >= startTime) continue;
+
+      if (!bestPreStart) {
+        bestPreStart = obs;
+        continue;
+      }
+      if (obs.availableAt > bestPreStart.availableAt) {
+        bestPreStart = obs;
+      } else if (obs.availableAt === bestPreStart.availableAt) {
+        if (obs.observationTime > bestPreStart.observationTime) {
+          bestPreStart = obs;
+        } else if (obs.observationTime === bestPreStart.observationTime) {
+          if (obs.provider.localeCompare(bestPreStart.provider) > 0) {
+            bestPreStart = obs;
+          }
+        }
+      }
+    }
+    if (bestPreStart) {
+      const key = `${bestPreStart.seriesId}#${bestPreStart.observationTime}#${bestPreStart.availableAt}#${bestPreStart.provider}`;
+      marketMap.set(key, bestPreStart);
+    }
+  }
+
+  // B. In-window observations: startTime <= availableAt <= endTime
+  for (const obs of dataset.marketObservations) {
+    if (obs.availableAt >= startTime && obs.availableAt <= endTime) {
+      const key = `${obs.seriesId}#${obs.observationTime}#${obs.availableAt}#${obs.provider}`;
+      marketMap.set(key, obs);
+    }
+  }
+
+  const slicedMarket = Array.from(marketMap.values()).sort((a, b) => {
+    if (a.availableAt !== b.availableAt) return a.availableAt - b.availableAt;
+    if (a.observationTime !== b.observationTime) return a.observationTime - b.observationTime;
+    if (a.seriesId !== b.seriesId) return a.seriesId.localeCompare(b.seriesId);
+    return a.provider.localeCompare(b.provider);
+  });
+
+  // 2. Macro Releases
+  const macroMap = new Map<string, HistoricalMacroRelease>();
+
+  // A. Pre-start seed: for each unique seriesId, select the latest eligible macro state/vintage immediately before startTime
+  const allMacroSeries = new Set<string>();
+  for (const rel of dataset.macroReleases) {
+    allMacroSeries.add(rel.seriesId);
+  }
+
+  for (const sId of allMacroSeries) {
+    const preStartRel = latestEligibleMacroRelease(dataset.macroReleases, sId, startTime - 1);
+    if (preStartRel) {
+      const key = `${preStartRel.seriesId}#${preStartRel.observationTime}#${preStartRel.revisionIndex}`;
+      macroMap.set(key, preStartRel);
+    }
+  }
+
+  // Also preserve pre-start vintage for any observation period that receives a revision inside [startTime, endTime]
+  for (const rel of dataset.macroReleases) {
+    if (rel.availableAt >= startTime && rel.availableAt <= endTime && rel.revisionIndex > 0) {
+      const preVintage = latestEligibleVintage(dataset.macroReleases, rel.seriesId, rel.observationTime, startTime - 1);
+      if (preVintage) {
+        const key = `${preVintage.seriesId}#${preVintage.observationTime}#${preVintage.revisionIndex}`;
+        macroMap.set(key, preVintage);
+      }
+    }
+  }
+
+  // B. In-window releases: startTime <= availableAt <= endTime
+  for (const rel of dataset.macroReleases) {
+    if (rel.availableAt >= startTime && rel.availableAt <= endTime) {
+      const key = `${rel.seriesId}#${rel.observationTime}#${rel.revisionIndex}`;
+      macroMap.set(key, rel);
+    }
+  }
+
+  const slicedMacro = Array.from(macroMap.values()).sort((a, b) => {
+    if (a.availableAt !== b.availableAt) return a.availableAt - b.availableAt;
+    if (a.publishedAt !== b.publishedAt) return a.publishedAt - b.publishedAt;
+    if (a.seriesId !== b.seriesId) return a.seriesId.localeCompare(b.seriesId);
+    return a.revisionIndex - b.revisionIndex;
+  });
+
+  // 3. Events
+  const eventMap = new Map<string, HistoricalEventRecord>();
+
+  // A. Pre-start seed: at most the single latest eligible event before startTime
+  const preStartEvent = latestEligibleEvent(dataset.eventRecords, startTime - 1);
+  if (preStartEvent) {
+    eventMap.set(preStartEvent.eventId, preStartEvent);
+  }
+
+  // B. In-window events: startTime <= availableAt <= endTime
+  for (const ev of dataset.eventRecords) {
+    if (ev.availableAt >= startTime && ev.availableAt <= endTime) {
+      eventMap.set(ev.eventId, ev);
+    }
+  }
+
+  const slicedEvents = Array.from(eventMap.values()).sort((a, b) => {
+    if (a.availableAt !== b.availableAt) return a.availableAt - b.availableAt;
+    if (a.publishedAt !== b.publishedAt) return a.publishedAt - b.publishedAt;
+    return a.eventId.localeCompare(b.eventId);
+  });
+
+  const sliced: HistoricalDataset = {
+    marketObservations: slicedMarket,
+    macroReleases: slicedMacro,
+    eventRecords: slicedEvents,
     metadata: dataset.metadata
       ? {
           ...dataset.metadata,
@@ -857,4 +932,7 @@ export function sliceHistoricalDataset(
         }
       : undefined,
   };
+
+  validateHistoricalDataset(sliced);
+  return sliced;
 }

@@ -937,7 +937,7 @@ describe("Gate M12E — Canonical Historical Dataset -> Replay PIT Integration",
   // SLICE & PAPER ENGINE SMOKE TESTS
   // ==========================================================================
   describe("Slice & PaperEngine Integration Smoke", () => {
-    it("sliceHistoricalDataset preserves PIT bounds", () => {
+    it("sliceHistoricalDataset preserves PIT bounds with lower-bound seeding", () => {
       const obs1: HistoricalMarketObservation = {
         seriesId: "BTC",
         value: 40000,
@@ -952,16 +952,26 @@ describe("Gate M12E — Canonical Historical Dataset -> Replay PIT Integration",
         availableAt: 2000,
         provider: "BINANCE",
       };
+      const obs3: HistoricalMarketObservation = {
+        seriesId: "BTC",
+        value: 60000,
+        observationTime: 3000,
+        availableAt: 3000, // Beyond endTime (2500)
+        provider: "BINANCE",
+      };
 
       const dataset: HistoricalDataset = {
-        marketObservations: [obs1, obs2],
+        marketObservations: [obs1, obs2, obs3],
         macroReleases: [],
         eventRecords: [],
       };
 
       const sliced = sliceHistoricalDataset(dataset, 1500, 2500);
-      expect(sliced.marketObservations.length).toBe(1);
-      expect(sliced.marketObservations[0].value).toBe(50000);
+      // M12F-B: obs1 is preserved as pre-start seed, obs2 is in-window, obs3 is excluded
+      expect(sliced.marketObservations.length).toBe(2);
+      expect(sliced.marketObservations[0].value).toBe(40000);
+      expect(sliced.marketObservations[1].value).toBe(50000);
+      expect(sliced.marketObservations.some((m) => m.availableAt > 2500)).toBe(false);
     });
 
     it("PaperEngine.replay forwards optional historicalDataset cleanly", () => {

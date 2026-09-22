@@ -13,6 +13,7 @@ import {
   type BacktestStrategyConfigs,
   type BacktestPerformanceMetrics,
 } from "./backtestEngine";
+import { sliceHistoricalDataset, type HistoricalDataset } from "./historicalPit";
 
 export interface WalkForwardFoldResult {
   readonly foldIndex: number;
@@ -92,11 +93,21 @@ export function runWalkForwardValidation(
       foldAssetBars[assetId] = bars.slice(startIndex, testEndIndex);
     }
 
+    let foldHistoricalDataset: HistoricalDataset | undefined;
+    if (dataset.historicalDataset) {
+      foldHistoricalDataset = sliceHistoricalDataset(
+        dataset.historicalDataset,
+        trainStartTimestamp,
+        testEndTimestamp
+      );
+    }
+
     const foldDataset: BacktestDataset = {
       assetBars: foldAssetBars,
       macroTimeline: dataset.macroTimeline,
       eventTimeline: dataset.eventTimeline,
       benchmarkAssetId: benchmarkId,
+      historicalDataset: foldHistoricalDataset,
     };
 
     const foldConfig: BacktestConfig = {
