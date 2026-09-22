@@ -3,7 +3,11 @@
 // MODULE: HISTORICAL MARKET-OBSERVED SOURCE DEFINITIONS & PARSER CONTRACTS (GATE M12C-R)
 // ============================================================================
 
-import type { HistoricalMarketObservation } from "../historicalPit";
+import type {
+  HistoricalMarketObservation,
+  HistoricalMacroRelease,
+  HistoricalEventRecord,
+} from "../historicalPit";
 
 /**
  * Supported market-observed series in Gate M12C & M12C-R.
@@ -111,5 +115,110 @@ export type MarketSeriesParserResult =
   | {
       readonly success: false;
       readonly seriesId: MarketSeriesId;
+      readonly error: string;
+    };
+
+// ============================================================================
+// MACROECONOMIC RELEASES & EVENT CONTRACTS (GATE M12D)
+// ============================================================================
+
+/**
+ * Supported macroeconomic series identifiers in Gate M12D.
+ */
+export type MacroSeriesId =
+  | "US_CPI_YOY"
+  | "US_CPI_MOM"
+  | "US_CPI_INDEX"
+  | "US_NFP_NET_CHANGE"
+  | "US_UNEMPLOYMENT_RATE"
+  | "US_FED_FUNDS_TARGET_UPPER";
+
+/**
+ * Explicit release witness for Bureau of Labor Statistics (BLS) reports.
+ * Fail closed: releaseDate is required. releaseTime defaults to official 08:30 ET.
+ */
+export interface BlsReleaseWitness {
+  readonly observationPeriod: string; // YYYY-MM e.g. "2024-01"
+  readonly releaseDate: string;        // YYYY-MM-DD e.g. "2024-02-13"
+  readonly releaseTime?: string;       // "HH:mm" e.g. "08:30" (default)
+  readonly timeZone?: string;          // IANA timeZone, default "America/New_York"
+  readonly vintageDate?: string;       // Date-level vintage string from ALFRED (NOT timestamp)
+  readonly revisionIndex?: number;     // 0 = initial release, 1 = first revision, etc.
+}
+
+/**
+ * Explicit release witness for Federal Reserve FOMC decisions and statements.
+ * Fail closed: BOTH releaseDate AND explicit releaseTime are REQUIRED (no blind 14:00 default).
+ */
+export interface FomcReleaseWitness {
+  readonly meetingDate: string;        // YYYY-MM-DD e.g. "2024-01-31"
+  readonly releaseDate: string;        // YYYY-MM-DD e.g. "2024-01-31"
+  readonly releaseTime: string;        // "HH:mm" e.g. "14:00" (REQUIRED witness)
+  readonly timeZone?: string;          // default "America/New_York"
+}
+
+/**
+ * Raw input payload for BLS CPI releases.
+ */
+export interface RawBlsCpiObservation {
+  readonly observationPeriod: string;           // "YYYY-MM"
+  readonly releaseId?: string;                  // Official BLS USDL release identifier e.g. "USDL-24-0265"
+  readonly cpiYoY?: number | string | null;     // Headline YoY % change (Table A published change)
+  readonly cpiMoM?: number | string | null;     // Monthly % change (Table A published change)
+  readonly cpiIndex?: number | string | null;   // Level index (CUUR0000SA0 / CUSR0000SA0 index level)
+  readonly underlyingLevelSeriesId?: string;    // e.g. "CUUR0000SA0" (Unadjusted) or "CUSR0000SA0" (Adjusted)
+  readonly releaseDate: string;                 // YYYY-MM-DD
+  readonly releaseTime?: string;                // "HH:mm" (default 08:30)
+  readonly revisionIndex?: number;              // default 0
+  readonly vintageDate?: string;                // Date-level vintage
+}
+
+/**
+ * Raw input payload for BLS Employment Situation releases.
+ */
+export interface RawBlsEmploymentObservation {
+  readonly observationPeriod: string;           // "YYYY-MM"
+  readonly releaseId?: string;                  // Official BLS USDL release identifier e.g. "USDL-24-0148"
+  readonly nfpNetChangeThousands: number | string;// Net change in thousands (e.g. 353 for +353k)
+  readonly underlyingLevelSeriesId?: string;    // "CES0000000001" (Employment LEVEL, NOT net monthly change)
+  readonly unemploymentRate?: number | string | null;// % e.g. 3.7 (Household Survey LNS14000000 - distinct!)
+  readonly releaseDate: string;                 // YYYY-MM-DD
+  readonly releaseTime?: string;                // "HH:mm" (default 08:30)
+  readonly revisionIndex?: number;              // default 0
+  readonly vintageDate?: string;                // Date-level vintage
+}
+
+/**
+ * Raw input payload for FOMC meeting statement / rate decision.
+ */
+export interface RawFomcStatementObservation {
+  readonly eventId?: string;
+  readonly meetingDate: string;                 // YYYY-MM-DD
+  readonly releaseDate: string;                 // YYYY-MM-DD
+  readonly releaseTime: string;                 // "HH:mm" REQUIRED
+  readonly eventType?: "FED_RATE_DECISION" | "FOMC_STATEMENT";
+  readonly targetRateUpper?: number | string | null;// % e.g. 5.50
+  readonly targetRateLower?: number | string | null;// % e.g. 5.25
+  readonly previousTargetRateUpper?: number | string | null;
+  readonly statementText?: string;
+  readonly isQualitativeOnly?: boolean;
+}
+
+/**
+ * Result returned by macroeconomic parser functions.
+ */
+export type MacroReleaseParserResult =
+  | {
+      readonly success: true;
+      readonly macroReleases: readonly HistoricalMacroRelease[];
+      readonly eventRecords: readonly HistoricalEventRecord[];
+      readonly metadata: {
+        readonly count: number;
+        readonly seriesIds: readonly string[];
+        readonly provider: string;
+      };
+    }
+  | {
+      readonly success: false;
       readonly error: string;
     };

@@ -9,3 +9,6 @@ export * from "./binanceKlines";
 export * from "./treasuryYields";
 export * from "./yahooMarketSeries";
 export * from "./sampleMarketData";
+export * from "./blsReleases";
+export * from "./fomcEvents";
+export * from "./sampleMacroData";
