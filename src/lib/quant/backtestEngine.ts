@@ -26,6 +26,7 @@ import { evaluatePermission, type PermissionGateConfig } from "@/lib/quant/permi
 import { evaluatePortfolioRisk, createInitialRiskState, type RiskEngineConfig, type RiskEngineState } from "@/lib/quant/riskEngine";
 import { evaluateOmegaAllocation, type OmegaAllocatorConfig } from "@/lib/quant/omegaAllocator";
 import { executeRebalance, type PortfolioAccountState } from "@/lib/quant/executionEngine";
+import { reconstructTradeAttribution } from "@/lib/quant/tradeAttribution";
 import { BARS_PER_YEAR, ANNUALIZATION_FACTOR } from "@/lib/quant/timeDomain";
 
 export interface BacktestDataset {
@@ -54,7 +55,12 @@ export interface BacktestPerformanceMetrics {
   readonly maxDrawdownPct: number;
   readonly calmarRatio: number;
   readonly totalTrades: number;
-  readonly winRatePct: number;
+  readonly closedTradeCount: number;
+  readonly roundTripCount: number;
+  readonly wins: number;
+  readonly losses: number;
+  readonly breakEven: number;
+  readonly winRatePct: number | null;
   readonly profitFactor: number;
   readonly totalFeesUsd: number;
   readonly totalSlippageCostUsd: number;
@@ -392,7 +398,12 @@ export function calculateMetrics(
       maxDrawdownPct: 0,
       calmarRatio: 0,
       totalTrades: 0,
-      winRatePct: 0,
+      closedTradeCount: 0,
+      roundTripCount: 0,
+      wins: 0,
+      losses: 0,
+      breakEven: 0,
+      winRatePct: null,
       profitFactor: 0,
       totalFeesUsd: 0,
       totalSlippageCostUsd: 0,
@@ -450,10 +461,13 @@ export function calculateMetrics(
   const annualTurnoverRatio = years > 0 && initialCapital > 0 ? grossTradedVolumeUsd / initialCapital / years : 0;
   const winBars = barReturns.filter((r) => r > 0);
   const loseBars = barReturns.filter((r) => r < 0);
-  const winRatePct = barReturns.length > 0 ? (winBars.length / barReturns.length) * 100 : 0;
   const sumGains = winBars.reduce((a, b) => a + b, 0);
   const sumLosses = Math.abs(loseBars.reduce((a, b) => a + b, 0));
   const profitFactor = sumLosses > 0 ? sumGains / sumLosses : 1.0;
+
+  // Reconstruct canonical trade attribution from execution fills
+  const attribution = reconstructTradeAttribution(allExecutions, initialCapital);
+  const { summary } = attribution;
 
   return {
     initialNav: Math.round(initialCapital * 100) / 100,
@@ -464,8 +478,13 @@ export function calculateMetrics(
     annualizedSortinoRatio: Math.round(annualizedSortinoRatio * 100) / 100,
     maxDrawdownPct: Math.round(maxDrawdownPct * 10000) / 10000,
     calmarRatio: Math.round(calmarRatio * 100) / 100,
-    totalTrades: allExecutions.length,
-    winRatePct: Math.round(winRatePct * 100) / 100,
+    totalTrades: summary.totalExecutions,
+    closedTradeCount: summary.closedTradeCount,
+    roundTripCount: summary.roundTripCount,
+    wins: summary.wins,
+    losses: summary.losses,
+    breakEven: summary.breakEven,
+    winRatePct: summary.winRatePct,
     profitFactor: Math.round(profitFactor * 100) / 100,
     totalFeesUsd: Math.round(totalFeesUsd * 100) / 100,
     totalSlippageCostUsd: Math.round(totalSlippageCostUsd * 100) / 100,

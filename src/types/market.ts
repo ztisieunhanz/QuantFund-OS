@@ -96,8 +96,11 @@ export interface BotMetrics {
   readonly winRate: number | null;
   readonly maxDrawdown: number | null;
   readonly totalTrades: number | null;
+  readonly closedTradeCount?: number | null;
+  readonly roundTripCount?: number | null;
   readonly wins: number | null;
   readonly losses: number | null;
+  readonly breakEven?: number | null;
   readonly position: PositionSide; // LONG | SHORT | FLAT
   readonly lastSignal: string;
   readonly trades: readonly TradeFill[];

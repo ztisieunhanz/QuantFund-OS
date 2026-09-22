@@ -26,7 +26,7 @@ import type {
   TradeFill,
 } from "@/types/market";
 
-import { runBacktest, type BacktestDataset } from "@/lib/quant/backtestEngine";
+import { runBacktest, type BacktestDataset, type BacktestPerformanceMetrics } from "@/lib/quant/backtestEngine";
 import type {
   BacktestConfig,
   DecisionState,
@@ -125,7 +125,8 @@ function createSubBot(
 function toBotMetrics(
   tracker: SubBotTracker,
   markPrice: number,
-  latestDecision?: DecisionState | null
+  latestDecision?: DecisionState | null,
+  perfMetrics?: BacktestPerformanceMetrics | null
 ): BotMetrics {
   const isOmega = tracker.id === "omega";
   const isAlpha = tracker.id === "trend" || tracker.id === "event" || tracker.id === "meanrev";
@@ -143,8 +144,11 @@ function toBotMetrics(
       winRate: null,
       maxDrawdown: tracker.maxDrawdown,
       totalTrades: 0,
+      closedTradeCount: null,
+      roundTripCount: null,
       wins: 0,
       losses: 0,
+      breakEven: null,
       position: "FLAT",
       lastSignal: tracker.lastSignalDescription,
       trades: [],
@@ -172,6 +176,8 @@ function toBotMetrics(
       notional: e.notionalUsd,
     }));
 
+    const winRate = perfMetrics?.winRatePct != null ? perfMetrics.winRatePct / 100 : null;
+
     return {
       botId: "omega",
       name: tracker.name,
@@ -181,11 +187,14 @@ function toBotMetrics(
       equity: Math.round(latestDecision.nav * 100) / 100,
       pnl,
       pnlPct,
-      winRate: null,
+      winRate,
       maxDrawdown: latestDecision.currentDrawdown,
-      totalTrades: trades.length,
-      wins: null,
-      losses: null,
+      totalTrades: perfMetrics?.totalTrades ?? trades.length,
+      closedTradeCount: perfMetrics?.closedTradeCount ?? null,
+      roundTripCount: perfMetrics?.roundTripCount ?? null,
+      wins: perfMetrics?.wins ?? null,
+      losses: perfMetrics?.losses ?? null,
+      breakEven: perfMetrics?.breakEven ?? null,
       position: qty > 0.00001 ? "LONG" : "FLAT",
       lastSignal: tracker.lastSignalDescription,
       trades,
@@ -210,8 +219,11 @@ function toBotMetrics(
     winRate: isOmega ? null : tracker.wins / Math.max(1, tracker.wins + tracker.losses),
     maxDrawdown: tracker.maxDrawdown,
     totalTrades: tracker.trades.length,
+    closedTradeCount: null,
+    roundTripCount: null,
     wins: isOmega ? null : tracker.wins,
     losses: isOmega ? null : tracker.losses,
+    breakEven: null,
     position,
     lastSignal: tracker.lastSignalDescription,
     trades: tracker.trades,
@@ -312,6 +324,7 @@ export class PaperEngine {
 
       const backtestResult = runBacktest(config, dataset);
       this.latestDecision = backtestResult.timeline.at(-1) ?? null;
+      const perfMetrics = backtestResult.metrics;
 
       // Replay chi tiết từng bước nến sau warmup
       for (const step of backtestResult.timeline) {
@@ -341,6 +354,15 @@ export class PaperEngine {
         // 3. Cập nhật Benchmark Đối chứng DCA (Tích sản 5% vốn mỗi 7 phiên)
         this.simulateBenchmarkDca(barPrice, barTimestampSec, step.barIndex);
       }
+
+      return {
+        trend: toBotMetrics(this.trend, lastClosePrice, this.latestDecision, perfMetrics),
+        event: toBotMetrics(this.event, lastClosePrice, this.latestDecision, perfMetrics),
+        mean: toBotMetrics(this.mean, lastClosePrice, this.latestDecision, perfMetrics),
+        omega: toBotMetrics(this.omega, lastClosePrice, this.latestDecision, perfMetrics),
+        benchmarkDca: toBotMetrics(this.benchmarkDca, lastClosePrice, this.latestDecision, perfMetrics),
+        latestDecision: this.latestDecision,
+      };
     } catch (err) {
       console.error("[QuantEngine Live Sync] Replay execution error:", err);
     }

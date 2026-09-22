@@ -365,8 +365,8 @@ function BotCard({ bot, rule, isBenchmark }: { bot: BotMetrics; rule: string; is
         <div className="grid grid-cols-4 gap-2 font-mono text-[11px]">
           <Kpi label="WIN RATE" value={formatPct(bot.winRate, 1)} />
           <Kpi label="MAX DD" value={bot.maxDrawdown != null ? formatPct(-bot.maxDrawdown, 1) : "N/A"} down={Boolean(bot.maxDrawdown && bot.maxDrawdown > 0)} />
-          <Kpi label="TRADES" value={bot.totalTrades != null ? String(bot.totalTrades) : "N/A"} />
-          <Kpi label="CASH" value={formatUsd(bot.cash, 0)} />
+          <Kpi label="ROUND TRIPS" value={bot.roundTripCount != null ? String(bot.roundTripCount) : "N/A"} />
+          <Kpi label="FILLS" value={bot.totalTrades != null ? String(bot.totalTrades) : "N/A"} />
         </div>
         <div className="text-[10px] text-muted font-mono truncate border-t border-line/40 pt-1.5">
           Signal: <strong className="text-white">{bot.lastSignal}</strong>

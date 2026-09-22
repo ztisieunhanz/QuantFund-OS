@@ -1,26 +1,26 @@
-// ============================================================================
+﻿// ============================================================================
 // FILE: src/lib/quant/types.ts
 // MODULE: MODULAR INSTITUTIONAL QUANT ENGINE TYPE CONTRACT
-// CORE PRINCIPLE: SIGNAL ≠ PERMISSION ≠ RISK ≠ ALLOCATION ≠ EXECUTION
+// CORE PRINCIPLE: SIGNAL â‰  PERMISSION â‰  RISK â‰  ALLOCATION â‰  EXECUTION
 // ============================================================================
 
 // ----------------------------------------------------------------------------
 // 0. FUNDAMENTAL DOMAIN LITERALS & ENUMS
 // ----------------------------------------------------------------------------
 
-export type StrategyId = 
-  | "ADAPTIVE_TREND" 
-  | "EVENT_REACTION" 
+export type StrategyId =
+  | "ADAPTIVE_TREND"
+  | "EVENT_REACTION"
   | "MEAN_REVERSION";
 
-// Tách biệt hoàn toàn Benchmark kiểm chứng khỏi danh sách Alpha Engine
+// TÃ¡ch biá»‡t hoÃ n toÃ n Benchmark kiá»ƒm chá»©ng khá»i danh sÃ¡ch Alpha Engine
 export type BenchmarkId = "BUY_AND_HOLD" | "DCA_SCHEDULE";
 
 export type AssetId = string;
 
 export type OrderSide = "BUY" | "SELL";
 
-// Hệ thống vị thế hai chiều hỗ trợ Long / Short / Flat
+// Há»‡ thá»‘ng vá»‹ tháº¿ hai chiá»u há»— trá»£ Long / Short / Flat
 export type PositionSide = "LONG" | "SHORT" | "FLAT";
 
 export type PositionStatus = "OPEN" | "CLOSED" | "PENDING";
@@ -38,18 +38,18 @@ export type CircuitBreakerStatus = "NORMAL" | "WARNING" | "TRIPPED";
 
 export type DataQualityStatus = "LIVE" | "SYNTHETIC" | "DELAYED" | "DEGRADED";
 
-export type LiquidityStatus = 
-  | "EXPANDING" 
-  | "CONTRACTING" 
-  | "NORMAL" 
+export type LiquidityStatus =
+  | "EXPANDING"
+  | "CONTRACTING"
+  | "NORMAL"
   | "STRESS_DRAIN";
 
-export type MacroRegime = 
-  | "Risk-On Expansion" 
-  | "Liquidity Drain" 
-  | "Flight to Dollar" 
-  | "Stagflation Hedge" 
-  | "Goldilocks" 
+export type MacroRegime =
+  | "Risk-On Expansion"
+  | "Liquidity Drain"
+  | "Flight to Dollar"
+  | "Stagflation Hedge"
+  | "Goldilocks"
   | "Transitional Mixed";
 
 // ----------------------------------------------------------------------------
@@ -68,9 +68,9 @@ export interface PointInTimeBar {
 export interface PointInTimeEvent {
   readonly eventId: string;
   readonly eventType: string;
-  readonly eventTimestamp: number;            // Thời điểm sự kiện thực tế diễn ra
-  readonly publicationTimestamp: number;      // Thời điểm số liệu công bố ra thị trường
-  readonly consensusSnapshotTimestamp: number;// Mốc chốt số liệu dự báo trước giờ ra tin (ngăn Look-Ahead)
+  readonly eventTimestamp: number;            // Thá»i Ä‘iá»ƒm sá»± kiá»‡n thá»±c táº¿ diá»…n ra
+  readonly publicationTimestamp: number;      // Thá»i Ä‘iá»ƒm sá»‘ liá»‡u cÃ´ng bá»‘ ra thá»‹ trÆ°á»ng
+  readonly consensusSnapshotTimestamp: number;// Má»‘c chá»‘t sá»‘ liá»‡u dá»± bÃ¡o trÆ°á»›c giá» ra tin (ngÄƒn Look-Ahead)
   readonly actual: number | null;
   readonly consensus: number | null;
   readonly previous: number | null;
@@ -116,9 +116,9 @@ export interface SignalOutput {
   readonly alphaScore: number;                 // [-1.0 .. +1.0]
   readonly heuristicExpectedReturn: number;    // Heuristic Forecast (Linear mapping: Alpha * Vol * Scaling)
   readonly confidence: number;                 // [0.0 .. 1.0]
-  readonly forecastVol: number;                // Biến động năm hóa dự báo của riêng Alpha
-  readonly holdingPeriod: number;              // Số phiên kỳ vọng
-  readonly decayRate?: number | null;          // Tỷ lệ suy giảm tín hiệu
+  readonly forecastVol: number;                // Biáº¿n Ä‘á»™ng nÄƒm hÃ³a dá»± bÃ¡o cá»§a riÃªng Alpha
+  readonly holdingPeriod: number;              // Sá»‘ phiÃªn ká»³ vá»ng
+  readonly decayRate?: number | null;          // Tá»· lá»‡ suy giáº£m tÃ­n hiá»‡u
   readonly validUntil?: number | null;
   readonly rationale: string;
   readonly metadata?: Readonly<Record<string, number | string | boolean | null>> | null;
@@ -154,11 +154,11 @@ export interface PermissionOutput {
 
 export interface RiskOutput {
   readonly scope: StrategyId | "PORTFOLIO_AGGREGATE";
-  readonly targetExposure: number;          // Hạn mức phơi nhiễm gộp tối đa
-  readonly grossExposure: number;           // Đòn bẩy gộp hiện tại
-  readonly targetVolatility: number;        // Target Vol policy assumption (ví dụ 0.12)
-  readonly realizedVol: number;             // Biến động thực tế đo lường
-  readonly forecastVol: number;             // Biến động dự báo toàn danh mục
+  readonly targetExposure: number;          // Háº¡n má»©c phÆ¡i nhiá»…m gá»™p tá»‘i Ä‘a
+  readonly grossExposure: number;           // ÄÃ²n báº©y gá»™p hiá»‡n táº¡i
+  readonly targetVolatility: number;        // Target Vol policy assumption (vÃ­ dá»¥ 0.12)
+  readonly realizedVol: number;             // Biáº¿n Ä‘á»™ng thá»±c táº¿ Ä‘o lÆ°á»ng
+  readonly forecastVol: number;             // Biáº¿n Ä‘á»™ng dá»± bÃ¡o toÃ n danh má»¥c
   readonly riskFlags: readonly string[];
   readonly circuitBreakerStatus: CircuitBreakerStatus;
   readonly circuitBreakerReason?: string | null;
@@ -173,7 +173,7 @@ export interface TargetPosition {
   readonly assetId: AssetId;
   readonly targetUnits: number;
   readonly targetNotionalUsd: number;
-  readonly targetExposureFraction: number;  // [-1.0 .. +1.0], âm biểu thị Short
+  readonly targetExposureFraction: number;  // [-1.0 .. +1.0], Ã¢m biá»ƒu thá»‹ Short
   readonly timestamp: number;
 }
 
@@ -185,9 +185,9 @@ export interface TargetPortfolioWeight {
   // executable weights in the current long-only engine.
   // (Type kept as number for future compatibility if short-selling is ever implemented.)
   readonly assetWeights: Readonly<Record<AssetId, number>>;
-  readonly cashWeight: number;                             // Tiền mặt phòng vệ
-  readonly grossExposure: number;                          // Tổng tuyệt đối |Weights|
-  readonly netExposure: number;                            // Tổng đại số Weights
+  readonly cashWeight: number;                             // Tiá»n máº·t phÃ²ng vá»‡
+  readonly grossExposure: number;                          // Tá»•ng tuyá»‡t Ä‘á»‘i |Weights|
+  readonly netExposure: number;                            // Tá»•ng Ä‘áº¡i sá»‘ Weights
   readonly strategyAllocations: Readonly<Record<StrategyId, number>>;
   readonly riskAdjustmentRatio: number;
   readonly rationale: string;
@@ -216,6 +216,7 @@ export interface ExecutionRecord {
   readonly netCashImpact: number;
 }
 
+// ----------------------------------------------------------------------------
 // ----------------------------------------------------------------------------
 // 8. DECISION STATE AUDIT SNAPSHOT
 // ----------------------------------------------------------------------------
@@ -259,7 +260,7 @@ export interface BacktestConfig {
   readonly runId: string;
   readonly startDate: number;
   readonly endDate: number;
-  readonly warmupPeriod: number; // Phải >= 125 để đáp ứng lookback của Adaptive Trend
+  readonly warmupPeriod: number; // Pháº£i >= 125 Ä‘á»ƒ Ä‘Ã¡p á»©ng lookback cá»§a Adaptive Trend
   readonly initialCapital: number;
   readonly commissionRate: number;
   readonly slippageModel: SlippageModelConfig;
@@ -267,4 +268,54 @@ export interface BacktestConfig {
   readonly requirePitExecution?: boolean;
   readonly deterministicSeed: number;
   readonly dataQuality: DataQualityStatus;
+}
+
+// ----------------------------------------------------------------------------
+// 10. CLOSED TRADE & ROUND-TRIP ATTRIBUTION CONTRACT
+// ----------------------------------------------------------------------------
+
+export interface ClosedTradeRecord {
+  readonly tradeId: string;
+  readonly episodeId: string;
+  readonly assetId: AssetId;
+  readonly exitTimestamp: number;
+  readonly quantity: number;
+  readonly averageEntryPrice: number;
+  readonly exitPrice: number;
+  readonly allocatedEntryCost: number;
+  readonly allocatedEntryFees: number;
+  readonly exitFees: number;
+  readonly grossPnl: number;
+  readonly netPnl: number;
+}
+
+export interface RoundTripEpisode {
+  readonly episodeId: string;
+  readonly assetId: AssetId;
+  readonly entryTimestamp: number;
+  readonly exitTimestamp: number;
+  readonly totalEntryQuantity: number;
+  readonly totalExitQuantity: number;
+  readonly closedLotCount: number;
+  readonly totalEntryFees: number;
+  readonly totalExitFees: number;
+  readonly grossPnl: number;
+  readonly netPnl: number;
+  readonly result: "WIN" | "LOSS" | "BREAK_EVEN";
+}
+
+export interface TradeAttributionSummary {
+  readonly totalExecutions: number;
+  readonly closedTradeCount: number;
+  readonly roundTripCount: number;
+  readonly wins: number;
+  readonly losses: number;
+  readonly breakEven: number;
+  readonly winRatePct: number | null;
+  readonly totalGrossPnl: number;
+  readonly totalNetPnl: number;
+  readonly totalEntryFees: number;
+  readonly totalExitFees: number;
+  readonly unallocatedEntryFees: number;
+  readonly openQuantity: number;
 }

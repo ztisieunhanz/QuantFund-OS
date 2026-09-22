@@ -19,11 +19,12 @@ Before any major architecture decision, forensic repair plan, or coding-agent pr
 Do not rely only on AI memory or previous agent reports.
 
 ---
+
 ## 2. Current Verified Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **HEAD Commit**: `ad003dd45b5173a8d1a98299d033cda2880ed82a`
-- **Commit Message**: `Gate M10: validate rolling OOS methodology`
+- **HEAD Commit**: `a127cc04a57472b9e38919b001cb0f92fb015da4`
+- **Commit Message**: `Gate M11: add canonical trade attribution`
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
   - **Gate 1** (Forensic Audit): **COMPLETE**
@@ -33,11 +34,12 @@ Do not rely only on AI memory or previous agent reports.
   - **Gate M8** (Canonical Portfolio Accounting & Deterministic Validation): **COMPLETE**
   - **Gate M9** (No-Lookahead / Point-in-Time Validation): **COMPLETE**
   - **Gate M10** (Rolling OOS Methodology & Validation): **COMPLETE**
+  - **Gate M11** (Trade Attribution & Round-Trip Reconstruction): **COMPLETE**
 - **Latest Verification Results**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (222/222 tests across 16 test files)
+  - `npx vitest run`: **PASS** (259/259 tests across 17 test files)
   - `git diff --check`: **PASS**
-- **Working Tree State**: Clean baseline following Gate M10 commit.
+- **Working Tree State**: Clean baseline following Gate M11 implementation and validation.
 
 ---
 
@@ -52,7 +54,7 @@ ALPHA ENGINES (Adaptive Trend, Event Reaction, Mean Reversion)
   ↓
 SIGNAL NORMALIZATION
   ↓
-PERMISSION GATE
+PERMISSON GATE
   ↓
 RISK ENGINE
   ↓
@@ -221,13 +223,52 @@ Gate M10 audited, repaired, and validated the rolling out-of-sample (OOS) evalua
 
 ---
 
-## 9. Open / Deferred Technical & Macro Risks
+## 9. Completed Gate M11 — Canonical Trade Attribution & Round-Trip Reconstruction
+
+Gate M11 designed, implemented, and validated a pure derived trade reconstruction layer over canonical `ExecutionRecord[]` fills:
+
+1. **Three Distinct Concepts**:
+   - **Execution / Fill** (`ExecutionRecord`): Individual fill record. Legacy `totalTrades` field remains execution fill count.
+   - **Closed Realized Lot** (`ClosedTradeRecord`): Realized SELL fill closing quantity against current average-cost inventory. Accounting attribution unit (`closedTradeCount`).
+   - **Round-Trip Episode** (`RoundTripEpisode`): Position lifecycle (`FLAT -> OPEN -> [scale-ins / partial exits] -> FLAT`). Authoritative performance trade unit (`roundTripCount`).
+2. **Authoritative Win Rate & Win/Loss Semantics**:
+   - Performance trade statistics (`wins`, `losses`, `breakEven`, `winRatePct`) are strictly derived from completed `RoundTripEpisode` net PnL.
+   - Numerical tolerance $\epsilon = 10^{-4}$ USD (`WIN`: $> +1e-4$, `LOSS`: $< -1e-4$, `BREAK_EVEN`: $|\text{PnL}| \le 1e-4$).
+   - Win Rate equation: $\text{winRatePct} = \frac{\text{wins}}{\text{wins} + \text{losses}} \times 100$. Break-even episodes are excluded from the denominator. If $\text{wins} + \text{losses} = 0$, $\text{winRatePct} = \text{null}$.
+   - Partial SELL lots do not independently count as performance trades.
+3. **Average-Cost Inventory & Fee Attribution Math**:
+   - Weighted-average cost basis $\bar{P}_{\text{entry}}$ updated on scale-ins.
+   - BUY fees accumulated as remaining entry-fee basis $F_{\text{entry}}$ and allocated proportionally on SELL ($F_{\text{alloc}} = F_{\text{entry}} \cdot \frac{q}{Q}$).
+   - Exit fee $f_{\text{sell}}$ deducted once on exit.
+   - Slippage is embedded directly in `executionPrice` and is not deducted twice.
+   - Full exit resets attribution inventory; re-entry creates a new independent episode ID (`ep-BTC-2`).
+4. **Single Canonical Ledger Preservation**:
+   - Implemented as a pure derived view (`reconstructTradeAttribution`) over canonical `ExecutionRecord[]` fills in [`src/lib/quant/tradeAttribution.ts`](file:///c:/Users/acer/Documents/QuantProjects/QuantFund-OS/src/lib/quant/tradeAttribution.ts).
+   - Does NOT create a second cash/NAV accounting ledger.
+5. **Exact Ledger Reconciliation Identities**:
+   - **Flat Ending**: $\text{EndingNAV} - \text{InitialCapital} = \sum \text{ClosedTrade.netPnl} = \sum \text{RoundTripEpisode.netPnl}$.
+   - **Open Ending**: $\text{PortfolioPnL}_t = \sum \text{CompletedEpisode.netPnl} + \sum \text{ActiveEpisodeClosedLots.netPnl} + \text{GrossUnrealizedPnL}_{\text{open}} - \text{RemainingEntryFees}_{\text{open}}$ reconciles to portfolio PnL.
+6. **Hydration Truthfulness**:
+   - `latestDecision` persistence does not contain full historical execution history.
+   - Hydrated trade statistics remain `null` / unavailable until a legitimate fresh replay reconstructs full attribution.
+7. **Walk-Forward Fold Isolation**:
+   - Trade attribution is fold-local; no episode crosses fold boundaries.
+   - Aggregate OOS trade statistics sum fold-local completed episodes (`roundTripCount`, `wins`, `losses`, `breakEven`); win rate is recomputed from aggregate wins/losses.
+   - Stitched OOS return curve is NOT treated as a continuous execution/inventory ledger.
+8. **Exclusions**:
+   - DCA benchmark fills and Alpha telemetry are excluded from Omega canonical trade attribution.
+   - Current scope remains long-only spot portfolio.
+9. **Deterministic Validation & Acceptance**:
+   - Created [`src/lib/quant/__tests__/tradeAttributionValidation.test.ts`](file:///c:/Users/acer/Documents/QuantProjects/QuantFund-OS/src/lib/quant/__tests__/tradeAttributionValidation.test.ts) covering 37 deterministic tests (T1–T37) — **37/37 PASS**.
+   - Full Test Suite: **259/259 PASS** across 17 test files.
+   - Production Build (`npm run build`): **PASS**.
+   - `git diff --check`: **PASS**.
+
+---
+
+## 10. Open / Deferred Technical & Macro Risks
 
 ### Accounting & Execution Limitations
-- **Authoritative Round-Trip Trade Reconstruction**: Connecting BUY and SELL fills into completed round-trip trades remains explicitly deferred (`DEC-002`).
-- **Fee-Inclusive Trade Realized PnL Attribution**: Allocating historical BUY commission to trade-level realized PnL remains deferred.
-- **Trade Statistics Nullability**: Trade win rate, wins, and losses evaluate to `null` until canonical round-trip reconstruction exists.
-- **Internal Naming Debt**: `TradingLabView.tsx` KPI grid label still displays `"TRADES"` for execution fill count (`bot.totalTrades`).
 - **Control Benchmark Scope**: DCA remains strictly benchmark/control only (`DEC-001`).
 - **SAME_BAR_CLOSE Mode**: Not executable/PIT-safe (theoretical research benchmark mode only).
 
@@ -245,7 +286,7 @@ Gate M10 audited, repaired, and validated the rolling out-of-sample (OOS) evalua
 
 ---
 
-## 10. Required Workflow
+## 11. Required Workflow
 
 For every major engineering gate:
 
@@ -263,16 +304,14 @@ For every major engineering gate:
 
 ---
 
-## 11. Next Active Engineering Gate
+## 12. Next Active Engineering Gate
 
-### GATE M11 — Trade Attribution & Round-Trip Reconstruction
+### GATE M12 — Point-in-Time Macro & Event History Ingestion & Dynamic Synthesis
 
-**Status**: Gate M10 is complete. Gate M11 is the next active engineering gate.
+**Status**: Gate M11 is complete. Gate M12 is the next active engineering gate.
 
 **High-Level Scope**:
-- Canonical round-trip matching from `ExecutionRecord` fills.
-- Realized PnL attribution for closed trades.
-- Fee-inclusive closed-trade PnL accounting.
-- Wins, losses, and authoritative trade win rate (`winRatePct`).
-- Preserve Single Canonical Ledger (no rogue strategy sub-ledgers).
-- **Explicit Non-Goals**: No strategy parameter or formula tuning to improve returns or Sharpe ratio.
+- Ingest truthful historical Point-in-Time macro and event timelines.
+- Connect historical PIT macro/event data to Layer 2 Macro Interpretation & Layer 3 Synthesis.
+- Integrate PIT macro/event timelines into `runBacktest` and `PaperEngine` replay without look-ahead leakage.
+- **Explicit Non-Goals**: No strategy parameter or formula tuning to artificially boost returns or Sharpe ratio.

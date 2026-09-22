@@ -161,11 +161,41 @@ export function runWalkForwardValidation(
   const robustnessScore = foldReports.length > 0 ? positiveFolds / foldReports.length : 0;
 
   // Recompute aggregate metrics from the canonical chained OOS return series
-  const aggregateOosMetrics = calculateMetrics(
+  const rawAggregateMetrics = calculateMetrics(
     stitchedTimeline,
     baseConfig.initialCapital,
     allOosExecutions
   );
+
+  // Aggregate trade statistics must sum fold-local trade stats to preserve fold isolation
+  let aggTotalTrades = 0;
+  let aggClosedTradeCount = 0;
+  let aggRoundTripCount = 0;
+  let aggWins = 0;
+  let aggLosses = 0;
+  let aggBreakEven = 0;
+
+  for (const f of foldReports) {
+    aggTotalTrades += f.oosMetrics.totalTrades;
+    aggClosedTradeCount += f.oosMetrics.closedTradeCount;
+    aggRoundTripCount += f.oosMetrics.roundTripCount;
+    aggWins += f.oosMetrics.wins;
+    aggLosses += f.oosMetrics.losses;
+    aggBreakEven += f.oosMetrics.breakEven;
+  }
+
+  const aggWinRatePct = aggWins + aggLosses > 0 ? Math.round(((aggWins / (aggWins + aggLosses)) * 100) * 100) / 100 : null;
+
+  const aggregateOosMetrics: BacktestPerformanceMetrics = {
+    ...rawAggregateMetrics,
+    totalTrades: aggTotalTrades,
+    closedTradeCount: aggClosedTradeCount,
+    roundTripCount: aggRoundTripCount,
+    wins: aggWins,
+    losses: aggLosses,
+    breakEven: aggBreakEven,
+    winRatePct: aggWinRatePct,
+  };
 
   return {
     methodology: "Rolling Fixed-Parameter OOS Evaluation",
