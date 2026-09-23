@@ -26,8 +26,8 @@ No source in this audit changes the execution-price boundary. Every acquired ser
 | `PAXG` | `MARKET_FACTOR` | `1H` | `NOT_APPLICABLE` | Binance Spot `PAXGUSDT`, interval `1h` | Same Binance Public Data contract | RESOLVED |
 | `DXY` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | ICE U.S. Dollar Index, `DXY` / ICE identifier `NYICDX` | Licensed ICE Data API, Data Files, or Consolidated History | **BLOCKED** pending licensed access and exact EOD field contract |
 | `VIX` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | Cboe VIX Index, `VIX` | Official free Cboe `VIX_History.csv` daily closing-value download; timestamped Cboe Global Indices/EOD history is a possible future source subject to access and licensing | **BLOCKED** pending a defensible per-row PIT availability contract |
-| `US2Y` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | Federal Reserve H.15 / FRED `DGS2` | Board H.15 download plus release witness, or FRED/ALFRED observations API | RESOLVED; FRED API key if API route used |
-| `US10Y` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | Federal Reserve H.15 / FRED `DGS10` | Same H.15/FRED contract | RESOLVED; FRED API key if API route used |
+| `US2Y` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | Federal Reserve H.15 / FRED `DGS2` | FRED/ALFRED observations API `output_type=4` initial-release rows plus the Board's H.15 calendar/time contract | RESOLVED for the bounded 2021-01-01 through 2026-09-21 observation regime; FRED API key required |
+| `US10Y` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | Federal Reserve H.15 / FRED `DGS10` | Same H.15/FRED initial-release contract | RESOLVED for the same bounded regime; FRED API key required |
 | `US_CPI_YOY` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPI-U All Items 12-month percent change, NSA; Table A; underlying `CUUR0000SA0` | BLS archived CPI releases and archived supplemental files | RESOLVED |
 | `US_CPI_MOM` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPI-U All Items 1-month percent change, SA; Table A; underlying `CUSR0000SA0` | BLS archived releases, monthly supplemental files, and annual seasonal-adjustment archives | **CONDITIONAL** |
 | `US_CPI_INDEX` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPI-U All Items index, NSA, `CUUR0000SA0` | BLS archived CPI supplemental files / archived releases | RESOLVED |
@@ -119,16 +119,19 @@ No source in this audit changes the execution-price boundary. Every acquired ser
 **Timestamp contract**
 
 - Raw observation date: the Treasury constant-maturity market date.
-- Raw release witness: the H.15 release date or the value's recoverable initial ALFRED/FRED vintage date. Observation date alone is insufficient.
+- Raw release witness: `realtime_start` from FRED/ALFRED `fred/series/observations` with `output_type=4` (Observations, Initial Release Only). Observation date, current-value CSV retrieval time, and generic FRED release-calendar dates are insufficient by themselves.
 - Canonical `observationTime`: UTC midnight for the market observation date.
-- Canonical `availableAt`: 16:15 `America/New_York` on the verified H.15 release date. The Board states H.15 is posted Monday-Friday at 4:15 p.m.; holidays/Board closures are excluded.
-- B2-B must recover observation-to-release-date mapping. It may use archived H.15 releases or ALFRED output that associates the initial value with its vintage date; it may not assume every value was available on its observation date.
+- Canonical `availableAt`: 16:15 `America/New_York` on the witnessed initial-release date. The Board's calendars explicitly schedule H.15 at 4:15 p.m. ET and identify holiday deferrals; historical DST conversion must use `America/New_York` rather than a fixed UTC offset.
+- The implemented support regime is intentionally bounded to observation dates from 2021-01-01 through 2026-09-21 and release dates through 2026-09-22. Official Board calendars at the beginning and throughout that interval show the same 4:15 p.m. H.15 schedule. Rows outside that proven regime fail closed.
+- The initial-release date must be later than the observation date. This prevents `availableAt = observationTime`, same-date midnight, market-close, retrieval-time, and arbitrary-next-day shortcuts.
+- Holiday and Board-closure handling comes from the witnessed `realtime_start` date. The adapter does not infer release dates from a generic Monday-Friday or federal-holiday calendar.
 
 **Revisions, coverage, and access**
 
-- Protocol semantics remain `NOT_APPLICABLE`: these are market observations, not modeled macro-release vintages. Provider corrections must produce a new immutable snapshot and provenance note, not a silent overwrite.
-- Expected history is multiple decades and comfortably exceeds the five-year policy. Missing `.`/`n.a.` values, weekends, holidays, and closed days are explicit non-observations.
-- FRED API v1 requires an API key and enforces rate limits (documented as up to 120 requests/minute). A Board CSV route may avoid the key but still needs a release-date witness.
+- H.15 values can be corrected or initially omitted; the Board's announcement feed documents such cases, including a September 2023 Treasury-rate omission. The B2-B3 adapter therefore consumes only ALFRED initial-release rows and never assigns a current corrected value to an earlier initial-release boundary.
+- Protocol semantics remain `NOT_APPLICABLE`: these are initial-published market observations, not a macro-vintage series. Later provider corrections are not silently rewritten into the bounded initial-release dataset; a different correction-aware contract would require separate approval.
+- Coverage uses source-emitted `output_type=4` rows. A `.` value is an explicit non-observation counted as missing; generic weekdays, interpolation, forward fill, and backfill are prohibited.
+- FRED API v1 requires an API key and enforces rate limits (documented as up to 120 requests/minute). The key is runtime-only and is excluded from artifact identity, provenance, errors, fixtures, and review material. A current Board/FRED CSV without initial-release metadata is not sufficient for PIT acquisition.
 - No Treasury futures or Yahoo yield proxy is permitted.
 
 ### 3.5 BLS CPI family
@@ -313,9 +316,19 @@ B2-B may begin the resolved adapters and the two narrow vintage proofs. Completi
 - Cboe Global Indices Feed specification: https://www.cboe.com/document/tech-spec/document/technical-specifications/cboe-titanium-cboe-global-indices-feed-specification/
 - Cboe Main Channel End-of-Day Summary: https://datashop.cboe.com/main-channel-end-of-day-summary
 - Federal Reserve H.15: https://www.federalreserve.gov/releases/h15/
+- Federal Reserve H.15 announcements/corrections: https://www.federalreserve.gov/feeds/h15.html
+- Federal Reserve calendar — January 2021: https://www.federalreserve.gov/newsevents/2021-january.htm
+- Federal Reserve calendar — May 2022: https://www.federalreserve.gov/newsevents/2022-may.htm
+- Federal Reserve calendar — April 2023: https://www.federalreserve.gov/newsevents/2023-april.htm
+- Federal Reserve calendar — April 2024: https://www.federalreserve.gov/newsevents/2024-april.htm
+- Federal Reserve calendar — April 2025: https://www.federalreserve.gov/newsevents/2025-april.htm
+- Federal Reserve calendar — September 2026: https://www.federalreserve.gov/newsevents/2026-september.htm
 - H.15 Data Download Program: https://www.federalreserve.gov/datadownload/Choose.aspx?rel=H15
 - FRED `DGS2`: https://fred.stlouisfed.org/series/DGS2
 - FRED `DGS10`: https://fred.stlouisfed.org/series/DGS10
+- ALFRED `DGS2` download/vintage interface: https://alfred.stlouisfed.org/series/downloaddata?seid=DGS2
+- FRED observations API semantics: https://fred.stlouisfed.org/docs/api/fred/series_observations.html
+- FRED vintage-date semantics: https://fred.stlouisfed.org/docs/api/fred/series_vintagedates.html
 - FRED/ALFRED observations API: https://fred.stlouisfed.org/docs/api/fred/series_observations.html
 - FRED/ALFRED real-time periods: https://fred.stlouisfed.org/docs/api/fred/realtime_period.html
 - FRED API rate-limit errors: https://fred.stlouisfed.org/docs/api/fred/errors.html

@@ -8,6 +8,7 @@ export * from "./timezoneUtils";
 export * from "./binanceKlines";
 export * from "./immutableAcquisition";
 export * from "./binanceMonthlyArchive";
+export * from "./h15TreasuryYields";
 export * from "./treasuryYields";
 export * from "./yahooMarketSeries";
 export * from "./sampleMarketData";
