@@ -28,9 +28,9 @@ No source in this audit changes the execution-price boundary. Every acquired ser
 | `VIX` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | Cboe VIX Index, `VIX` | Official free Cboe `VIX_History.csv` daily closing-value download; timestamped Cboe Global Indices/EOD history is a possible future source subject to access and licensing | **BLOCKED** pending a defensible per-row PIT availability contract |
 | `US2Y` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | Federal Reserve H.15 / FRED `DGS2` | FRED/ALFRED observations API `output_type=4` initial-release rows plus the Board's H.15 calendar/time contract | RESOLVED for the bounded 2021-01-01 through 2026-09-21 observation regime; FRED API key required |
 | `US10Y` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | Federal Reserve H.15 / FRED `DGS10` | Same H.15/FRED initial-release contract | RESOLVED for the same bounded regime; FRED API key required |
-| `US_CPI_YOY` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPI-U All Items 12-month percent change, NSA; Table A; underlying `CUUR0000SA0` | BLS archived CPI releases and archived supplemental files | RESOLVED |
+| `US_CPI_YOY` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPI-U All Items 12-month percent change, NSA; underlying `CUUR0000SA0` | Official archived BLS CPI HTML releases with explicit release header and published NSA summary | RESOLVED / IMPLEMENTED for bounded 2021-01 through 2026-08 reference-period regime |
 | `US_CPI_MOM` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPI-U All Items 1-month percent change, SA; Table A; underlying `CUSR0000SA0` | BLS archived releases, monthly supplemental files, and annual seasonal-adjustment archives | **CONDITIONAL** |
-| `US_CPI_INDEX` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPI-U All Items index, NSA, `CUUR0000SA0` | BLS archived CPI supplemental files / archived releases | RESOLVED |
+| `US_CPI_INDEX` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPI-U All Items index, NSA, `CUUR0000SA0` | Official archived BLS CPI HTML releases with explicit release header and published NSA summary | RESOLVED / IMPLEMENTED for bounded 2021-01 through 2026-08 reference-period regime |
 | `US_NFP_NET_CHANGE` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CES Total Nonfarm over-the-month change; underlying level `CES0000000001` | Official CES Total Nonfarm vintage XLSX/ZIP plus Employment Situation release archive | RESOLVED |
 | `US_UNEMPLOYMENT_RATE` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPS unemployment rate, SA, `LNS14000000` | Employment Situation archived releases; ALFRED `UNRATE` may validate value-vintage mapping | **CONDITIONAL** |
 | `US_FED_FUNDS_TARGET_UPPER` | `MACRO_RELEASE` | `EVENT_DRIVEN` | `INITIAL_ONLY` | Federal Reserve FOMC statement target-range upper bound; FRED `DFEDTARU` is cross-check only | Official statement HTML/PDF and press-release metadata | RESOLVED from 2008 target-range era |
@@ -146,23 +146,26 @@ The two percent-change series are measures, not aliases for index-level series. 
 
 **Acquisition and timestamps**
 
-- Primary acquisition: BLS CPI archived news releases and archived monthly supplemental files. These preserve as-published releases; the BLS current API/database alone returns published historical series but is not a complete historical-vintage contract.
-- Raw timestamps: reference month, official release date, and release header/schedule time.
+- B2-B4 acquisition is deliberately limited to official archived BLS CPI HTML releases at `www.bls.gov/news.release/archives/cpi_MMDDYYYY.htm`. The parser requires the archive URL date, the release's `USDL` identity, the reference-month title, the explicit embargo header, and the published CPI-U NSA summary sentence to agree.
+- The accepted value source is the archived release's explicit statement that CPI-U changed by the stated 12-month percentage to the stated NSA index level. YoY is not recomputed from a later database index.
+- Raw timestamps are the reference month and the archived release's official release date/time witness. The modern archive includes both weekday-bearing and older date-only header variants; both must still state the same explicit `8:30 a.m. (ET)` boundary.
 - Canonical `observationTime`: reference-month end at UTC midnight, matching the M12 contract.
-- Canonical `publishedAt` and `availableAt`: official release date at 08:30 `America/New_York`, DST-aware, unless the archived release carries a different explicit release time.
+- Canonical `publishedAt` and `availableAt`: the witnessed release date at 08:30 `America/New_York`, converted with historical DST. A different or missing release time fails closed rather than being inferred from a schedule or acquisition time.
 - Acquisition time is provenance only.
+- BLS does not publish a checksum for these HTML releases. Raw SHA-256 and immutable artifact identity are retained with `providerChecksumPolicy = NOT_PUBLISHED`; no checksum is invented.
+- A page carrying a reissue, correction, or errata notice is rejected by this bounded parser. It requires a separately approved correction contract so a corrected page cannot be backdated silently to its original embargo time.
 
 **Vintage semantics**
 
-- Every distinct as-published value for an observation month is a separate record with its own publication timestamp and monotonically ordered `revisionIndex`.
-- CPI YoY and the unadjusted index use archived as-published tables; if values do not change, no synthetic duplicate revision is created.
-- CPI MoM is seasonally adjusted. BLS recalculates seasonal factors annually and can revise the previous five years. B2-B must prove that the combination of archived monthly supplemental files and archived annual seasonal-adjustment tables reconstructs each changed value and its release date. Until that fixture passes, CPI MoM remains conditional.
+- Every distinct accepted as-published value for an observation month is a separate canonical `HistoricalMacroRelease` with its own `vintageDate`, publication timestamp, release identity evidence, raw artifact identity, and monotonically ordered `revisionIndex`.
+- CPI YoY and the unadjusted index use the archived as-published release. BLS describes CPI-U as final when released; if a later accepted artifact repeats an unchanged value, no synthetic duplicate revision is created. Conflicting release identity or correction ambiguity fails closed.
+- CPI MoM is seasonally adjusted. BLS recalculates seasonal factors annually and can revise the previous five years. The narrow proof confirms a concrete change: the December 2023 all-items monthly SA value was published as `0.3` in release `USDL-24-0019` on 2024-01-11 and appears as `0.2` after the annual recalculation in the 2024-02-13 release. This proves current revised SA history cannot be backdated, but one representative pair does not prove complete release-by-release vintage reconstruction for the required window. CPI MoM therefore remains **CONDITIONAL**, and no broad CPI MoM adapter is exposed.
 - ALFRED `CPIAUCNS`/`CPIAUCSL` can be a cross-check or explicit secondary source because `fred/series/observations` output types 2/3/4 return value-vintage mappings. Vintage-date metadata without the corresponding value rows is insufficient.
 
 **Coverage, access, and missingness**
 
-- BLS CPI release archives extend well beyond the required five years; B2-B should target at least 60 consecutive published reference months plus all discovered revisions.
-- Expected periods are scheduled monthly CPI releases, not every calendar day. Government shutdown/nonpublication and explicit BLS errata are recorded, not imputed.
+- The implemented parser is bounded to reference periods 2021-01 through 2026-08, the modern HTML archive regime examined in B2-B4. It fails closed outside that range and on unsupported/reissued schemas. A production acquisition must still inventory at least 60 accepted monthly reference periods.
+- Expected periods are monthly reference periods between the first and last accepted releases, not elapsed days. Revisions add vintages rather than periods; internal gaps are reported without interpolation, and unknown trailing future periods are not marked missing.
 - BLS archives are public HTTPS. BLS API v1 is unauthenticated with lower limits; v2 registration increases limits. ALFRED API requires a secret API key, which must never enter manifests or snapshots.
 
 ### 3.6 BLS Employment Situation — NFP and unemployment
@@ -270,7 +273,7 @@ No credential value belongs in source code, manifests, normalized records, snaps
 ## 9. Unresolved risks and blockers
 
 1. **DXY — blocking:** licensed ICE delivery, exact EOD field, publication boundary, history entitlement, and storage/redistribution terms are not yet approved. Yahoo `DX-Y.NYB` is not an approved substitute.
-2. **CPI MoM — conditional:** annual revisions affect up to five prior years. A fixture must prove that archived monthly and annual BLS files produce complete direct-published value/vintage mappings and correct release timestamps.
+2. **CPI MoM — conditional:** the B2-B4 proof detects a representative annual revision (`2023-12`: `0.3` initially, `0.2` after the February 2024 recalculation), confirming that current revised SA history is unsafe for backdating. Complete release-by-release seasonal-vintage reconstruction and missing-artifact handling across the required window remain unproven, so no executable broad CPI MoM adapter exists.
 3. **Unemployment — conditional:** archived Employment Situation releases or ALFRED must be shown to recover every as-published value/vintage required by the protocol, not merely current history.
 4. **H.15 release mapping:** B2-B must prove the observation-date to release-date witness for a sample spanning ordinary weekdays, weekends, holidays, and a Board closure. Observation date alone is forbidden.
 5. **Binance timestamp units:** archive timestamps switch to microseconds from 2025. The current M12 millisecond parser contract needs an acquisition-side unit-normalization boundary and deterministic tests.
