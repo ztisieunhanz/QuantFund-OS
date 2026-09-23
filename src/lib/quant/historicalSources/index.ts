@@ -10,6 +10,7 @@ export * from "./immutableAcquisition";
 export * from "./binanceMonthlyArchive";
 export * from "./h15TreasuryYields";
 export * from "./blsCpiHistory";
+export * from "./fomcPolicyHistory";
 export * from "./treasuryYields";
 export * from "./yahooMarketSeries";
 export * from "./sampleMarketData";

@@ -202,18 +202,29 @@ The two percent-change series are measures, not aliases for index-level series. 
 - `FOMC_RATE_DECISION`: the corresponding official `FED_RATE_DECISION`/statement event.
 - FRED `DFEDTARU` is a useful official cross-check for the effective upper-limit level after 2008, but its repeated daily values must not be ingested as event-driven decisions.
 
-**Timestamp contract**
+**Timestamp contract (B2-B5 bounded implementation)**
 
 - Raw timestamps: meeting date, press-release date, and explicit “For release at” time from the official statement page.
 - Canonical event/macro `observationTime`: UTC midnight for the meeting decision date, preserving the M12 parser contract.
-- Canonical `publishedAt` and `availableAt`: the witnessed release date/time in `America/New_York`, DST-aware. Never assume 14:00: historical FOMC release times varied.
-- For the target upper series, create one `revisionIndex: 0` record per numeric policy decision, including unchanged decisions if required for event completeness. Do not create daily carry-forward macro releases.
+- `FOMC_RATE_DECISION.publishedAt` and `availableAt`: the statement's witnessed public release date/time in `America/New_York`, DST-aware. The B2-B5 parser does not assume 14:00 without the artifact's explicit `For release at` witness.
+- The paired official implementation note supplies a separate effective date for the Desk directive. B2-B5 preserves that date as provenance and represents its deterministic canonical boundary as 00:00 `America/New_York` at the start of the named effective date; this is a date-boundary representation, not a claim that the provider published an exact effective clock time.
+- `US_FED_FUNDS_TARGET_UPPER.publishedAt` remains the public statement time, while its replay `availableAt` is `max(statement release, effective-date boundary)`. This prevents announced-but-not-yet-effective policy state from appearing operational early without pretending that the decision itself was unknowable until the effective date.
+- The snapshot `releasedThroughMs` boundary filters the entire PIT-facing result: unreleased decisions cannot expose event/evidence rows, raw artifact identities or hashes, manifest provenance URLs, normalized rows, or coverage endpoints. Target-state rows remain separately gated by their effective boundary.
+- The target-upper series creates one `revisionIndex: 0` value per numeric policy decision, including unchanged decisions. Event completeness stays explicit and no daily carry-forward macro releases are created.
 - `FOMC_RATE_DECISION` actual is the upper bound for numeric rate decisions and `null` for qualitative-only statements. Consensus and surprise remain `null` without an independently approved PIT consensus source.
+
+**Bounded source evidence and regime**
+
+- Supported B2-B5 regime: January 27, 2021 through September 16, 2026, using the official meeting calendar, annual FOMC press-release indexes, same-day policy statement HTML, and paired implementation-note HTML.
+- Representative official statement evidence proves explicit 2:00 p.m. EST/EDT release witnesses across the regime: January 27, 2021 (unchanged, EST), March 16, 2022 (increase, EDT), June 14, 2023 (unchanged, EDT), September 18, 2024 (decrease, EDT), January 29, 2025 (unchanged, EST), and July 29, 2026 (unchanged, EDT).
+- Paired implementation notes state that the Desk directive is effective on the following date for those representatives, including March 17, 2022 and September 19, 2024. Statement and implementation ranges must agree exactly or acquisition fails.
+- Official annual FOMC release indexes for 2021 through September 2026 enumerate the regular policy statements and show no emergency/intermeeting target decision in this bounded window. An event identity outside the frozen calendar denominator fails closed and requires a separately reviewed exceptional-event regime; it is never silently omitted.
+- Corrected/reissued statement semantics are not approved. A correction/reissue marker fails closed rather than being forced into `INITIAL_ONLY`.
 
 **Coverage and failure policy**
 
-- Target-range upper coverage begins in December 2008. Official statement history supports the five-year readiness window and both upward/downward transition observations when the selected window contains them.
-- The statement archive is public HTTPS and needs no secret. Each record retains statement URL, release title/date/time, meeting date, extracted target text, document hash, and parser version.
+- Target-range upper coverage can begin in December 2008 in a future expanded regime. The implemented B2-B5 contract is deliberately bounded to 2021-01-27 through 2026-09-16 and supports both upward/downward transition observations when the selected snapshot contains them.
+- The statement archive is public HTTPS and needs no secret. Each normalized decision retains statement and implementation-note URLs, release/event/effective dates, release time/zone, action, target bounds, raw artifact identities/hashes, and parser version.
 - Missing exact release-time witness, ambiguous target language, emergency/intermeeting action ambiguity, or source conflict fails that event. `DFEDTARU` may flag a conflict but cannot silently replace the statement timestamp.
 
 ## 4. PIT and revision analysis
