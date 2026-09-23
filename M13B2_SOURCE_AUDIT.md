@@ -1,8 +1,8 @@
 # M13B-2 / B2-A Historical Research Data Source Audit
 
-**Audit date:** 2026-09-22  
-**Starting checkpoint:** `8689339a91d41eafc9e9a04a4985bba9b15e11ea`  
-**Scope:** documentation-only source and acquisition contract audit  
+**Audit date:** 2026-09-22
+**Starting checkpoint:** `8689339a91d41eafc9e9a04a4985bba9b15e11ea`
+**Scope:** documentation-only source and acquisition contract audit
 **Authority:** `RESEARCH_SERIES_SPECS` in `src/lib/quant/researchDataProtocol.ts`
 
 ## 1. Executive conclusion
