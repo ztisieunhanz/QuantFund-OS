@@ -12,7 +12,7 @@ export class HistoricalAcquisitionError extends Error {
 export interface RawArtifactRequestIdentity {
   readonly method: "GET";
   readonly url: string;
-  readonly checksumUrl: string;
+  readonly checksumUrl: string | null;
   readonly partition: string;
 }
 
@@ -30,27 +30,37 @@ export interface VerifiedRawArtifact {
   readonly instrument: string;
   readonly request: RawArtifactRequestIdentity;
   readonly retrievedAt: string;
-  readonly providerChecksum: ProviderChecksum;
+  readonly providerChecksum: ProviderChecksum | null;
   readonly rawSha256: string;
   readonly byteLength: number;
   readonly parserVersion: string;
   readonly licensingClassification: string;
 }
 
-export interface VerifyRawArtifactInput {
+interface VerifyRawArtifactBaseInput {
   readonly provider: string;
   readonly seriesId: string;
   readonly instrument: string;
   readonly archiveUrl: string;
-  readonly checksumUrl: string;
   readonly partition: string;
   readonly retrievedAt: string;
-  readonly expectedFileName: string;
-  readonly checksumText: string;
   readonly rawBytes: Uint8Array;
   readonly parserVersion: string;
   readonly licensingClassification: string;
 }
+
+export type VerifyRawArtifactInput = VerifyRawArtifactBaseInput & (
+  | {
+      readonly providerChecksumPolicy: "REQUIRED";
+      readonly checksumUrl: string;
+      readonly expectedFileName: string;
+      readonly checksumText: string;
+    }
+  | {
+      readonly providerChecksumPolicy: "NOT_PUBLISHED";
+      readonly checksumUrl: null;
+    }
+);
 
 export type BinaryFetcher = (url: string) => Promise<Uint8Array>;
 
@@ -105,7 +115,6 @@ export function verifyRawArtifact(input: VerifyRawArtifactInput): VerifiedRawArt
   const seriesId = requireText(input.seriesId, "seriesId");
   const instrument = requireText(input.instrument, "instrument");
   const archiveUrl = requireText(input.archiveUrl, "archiveUrl");
-  const checksumUrl = requireText(input.checksumUrl, "checksumUrl");
   const partition = requireText(input.partition, "partition");
   const parserVersion = requireText(input.parserVersion, "parserVersion");
   const licensingClassification = requireText(
@@ -120,12 +129,17 @@ export function verifyRawArtifact(input: VerifyRawArtifactInput): VerifiedRawArt
     throw new HistoricalAcquisitionError("rawBytes must contain a non-empty provider artifact.");
   }
 
-  const providerChecksum = parseSha256Checksum(input.checksumText, input.expectedFileName);
   const rawSha256 = sha256Hex(input.rawBytes);
-  if (rawSha256 !== providerChecksum.digest) {
-    throw new HistoricalAcquisitionError(
-      `raw SHA-256 ${rawSha256} does not match provider checksum ${providerChecksum.digest}.`
-    );
+  let checksumUrl: string | null = null;
+  let providerChecksum: ProviderChecksum | null = null;
+  if (input.providerChecksumPolicy === "REQUIRED") {
+    checksumUrl = requireText(input.checksumUrl, "checksumUrl");
+    providerChecksum = parseSha256Checksum(input.checksumText, input.expectedFileName);
+    if (rawSha256 !== providerChecksum.digest) {
+      throw new HistoricalAcquisitionError(
+        `raw SHA-256 ${rawSha256} does not match provider checksum ${providerChecksum.digest}.`
+      );
+    }
   }
 
   const request = Object.freeze({

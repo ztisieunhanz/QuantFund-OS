@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `8689339a91d41eafc9e9a04a4985bba9b15e11ea`
-- **Checkpoint Message**: `Infra: establish CI and portable handoff enforcement`
+- **Last Verified Code Checkpoint**: `459d2e2eedb3d1c4354c7c92ddaa5efa2940b8f5`
+- **Checkpoint Message**: `Fix B2-A audit trailing whitespace for CI`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -41,15 +41,16 @@ Do not rely only on AI memory or previous agent reports.
   - **Gate M13B-1** (Historical Research Data Protocol, Manifest & Coverage Contract): **COMPLETE**
   - **SYNC-01** (v1 Architecture, Roadmap & Recovery Source-of-Truth Sync): **COMPLETE** at `2f5de0124df67f38b626bae0077537848f6696ee`
   - **SYNC-02** (CI, Portability & Agent-Handoff Enforcement): **COMPLETE** at `8689339a91d41eafc9e9a04a4985bba9b15e11ea`
-  - **M13B-2 / B2-A** (Historical Research Data Source Audit): **APPROVED — UNCOMMITTED DOCUMENTATION**
-  - **M13B-2 / B2-B1** (Immutable Acquisition Foundation + Binance BTC/PAXG Adapter): **IN PROGRESS — NOT CHECKPOINTED**
+  - **M13B-2 / B2-A** (Historical Research Data Source Audit): **COMPLETE** at `459d2e2eedb3d1c4354c7c92ddaa5efa2940b8f5`
+  - **M13B-2 / B2-B1** (Immutable Acquisition Foundation + Binance BTC/PAXG Adapter): **COMPLETE** at `459d2e2eedb3d1c4354c7c92ddaa5efa2940b8f5`
+  - **M13B-2 / B2-B2R** (VIX Source Contract): **BLOCKED** pending defensible timestamped source semantics/access
 - **Validation Baseline**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (481/481 tests across 23 test files)
+  - `npx vitest run`: **PASS** (519/519 tests across 24 test files)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
   - **CI status**: The SYNC-02 workflow is present at the verified checkpoint. Its remote-run result was not reverified during this B2-B1 implementation run.
-- **Current Documented Phase**: M13B-2 / B2-B1 immutable acquisition foundation and Binance BTC/PAXG historical adapter — **IN PROGRESS / NOT CHECKPOINTED**. M13B-2 overall remains **INCOMPLETE**; M13C has not started.
+- **Current Documented Phase**: M13B-2 remains **INCOMPLETE**. B2-B1 is complete at `459d2e2eedb3d1c4354c7c92ddaa5efa2940b8f5`; VIX acquisition is blocked pending defensible timestamped source semantics/access. Work may continue on other independently source-resolved adapters. M13C has not started.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -434,6 +435,6 @@ SYNC-02 adds the proposed repository CI contract and product-independent handoff
 
 ### M13B-2 — Historical Research-Data Acquisition / Coverage Expansion
 
-**Status**: **NOT STARTED**
+**Status**: **INCOMPLETE**
 
-M13B-2 is the next planned gate. It must acquire and validate immutable, provenance-backed PIT research snapshots under `RESEARCH_DATA_PROTOCOL.md`. It must not silently start M13C research rules, M14 action integration, or production execution work. See `ROADMAP_V1.md` for the finite path through M17 and `ARCHITECTURE_V1.md` for target boundaries.
+B2-B1's immutable acquisition foundation and Binance BTC/PAXG adapter are complete at `459d2e2eedb3d1c4354c7c92ddaa5efa2940b8f5`. VIX acquisition is blocked because the official free Cboe daily CSV lacks a defensible per-row historical availability contract across ordinary, early-close, and GTH-only dates. No executable VIX adapter may assign `availableAt` until timestamped source semantics/access are approved. M13B-2 may continue with other independently source-resolved adapters, but remains incomplete and must not silently start M13C research rules, M14 action integration, or production execution work.

@@ -377,6 +377,7 @@ export function processBinanceMonthlyArchive(
     seriesId: identity.seriesId,
     instrument: identity.instrument,
     archiveUrl: identity.archiveUrl,
+    providerChecksumPolicy: "REQUIRED",
     checksumUrl: identity.checksumUrl,
     partition: identity.partition,
     retrievedAt: input.retrievedAt,

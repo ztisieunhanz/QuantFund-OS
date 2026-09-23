@@ -210,6 +210,7 @@ describe("Gate M13B-2/B2-B1 — immutable Binance monthly archive acquisition", 
       seriesId: "BTC",
       instrument: "BTCUSDT",
       archiveUrl: base.identity.archiveUrl,
+      providerChecksumPolicy: "REQUIRED",
       checksumUrl: base.identity.checksumUrl,
       partition: base.partition,
       expectedFileName: base.identity.fileName,
@@ -222,6 +223,27 @@ describe("Gate M13B-2/B2-B1 — immutable Binance monthly archive acquisition", 
     const second = verifyRawArtifact({ ...common, retrievedAt: "2026-02-01T00:00:00Z" });
     expect(first.artifactId).toBe(second.artifactId);
     expect(first.retrievedAt).not.toBe(second.retrievedAt);
+  });
+
+  it("represents an unpublished provider checksum truthfully as null", () => {
+    const rawBytes = new TextEncoder().encode("provider artifact without a published checksum");
+    const artifact = verifyRawArtifact({
+      provider: "TEST_PROVIDER",
+      seriesId: "TEST_SERIES",
+      instrument: "TEST_INSTRUMENT",
+      archiveUrl: "https://example.test/history.csv",
+      providerChecksumPolicy: "NOT_PUBLISHED",
+      checksumUrl: null,
+      partition: "FULL_HISTORY",
+      retrievedAt: RETRIEVED_AT,
+      rawBytes,
+      parserVersion: "test-v1",
+      licensingClassification: "TEST_TERMS_APPLY",
+    });
+
+    expect(artifact.providerChecksum).toBeNull();
+    expect(artifact.request.checksumUrl).toBeNull();
+    expect(artifact.rawSha256).toBe(sha256Hex(rawBytes));
   });
 
   it("assigns a new artifact identity when raw bytes change", () => {

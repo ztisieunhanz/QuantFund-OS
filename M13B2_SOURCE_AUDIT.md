@@ -11,8 +11,9 @@
 
 B2-B may implement acquisition and normalization adapters for the source-resolved series and small contract-verification fixtures for the conditional series. It must not claim a complete dataset or `RESEARCH_READY` status while any required series remains unresolved.
 
-- Ten series have a sufficiently explicit provider, instrument, acquisition path, timestamp rule, and PIT reconstruction path: BTC, PAXG, VIX, US2Y, US10Y, CPI YoY, CPI Index, NFP net change, Fed Funds target upper, and FOMC rate decisions.
+- Nine series have a sufficiently explicit provider, instrument, acquisition path, timestamp rule, and PIT reconstruction path: BTC, PAXG, US2Y, US10Y, CPI YoY, CPI Index, NFP net change, Fed Funds target upper, and FOMC rate decisions.
 - Two series are conditional pending a deterministic source proof: CPI MoM must prove reconstruction of annual seasonal-adjustment vintages, and unemployment must prove complete as-published vintage mapping rather than ingesting today's revised history.
+- VIX is blocked. The official free Cboe historical CSV provides daily closing values but does not establish a defensible per-row historical availability timestamp across ordinary, early-close, and GTH-only dates.
 - DXY is blocked. ICE is the official administrator and offers historical daily data through licensed ICE data products. The existing Yahoo `DX-Y.NYB` path is useful M12 evidence but is not an approved official research-grade substitute and has no verified historical publication-time contract.
 
 No source in this audit changes the execution-price boundary. Every acquired series remains `RESEARCH_CONTEXT_ONLY`; `BacktestDataset.assetBars` remains the sole executable-price authority.
@@ -24,7 +25,7 @@ No source in this audit changes the execution-price boundary. Every acquired ser
 | `BTC` | `MARKET_FACTOR` | `1H` | `NOT_APPLICABLE` | Binance Spot `BTCUSDT`, interval `1h` | Binance Public Data monthly/daily kline ZIP plus `.CHECKSUM`; public Spot klines endpoint only for gap checks | RESOLVED |
 | `PAXG` | `MARKET_FACTOR` | `1H` | `NOT_APPLICABLE` | Binance Spot `PAXGUSDT`, interval `1h` | Same Binance Public Data contract | RESOLVED |
 | `DXY` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | ICE U.S. Dollar Index, `DXY` / ICE identifier `NYICDX` | Licensed ICE Data API, Data Files, or Consolidated History | **BLOCKED** pending licensed access and exact EOD field contract |
-| `VIX` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | Cboe VIX Index, `VIX` | Official Cboe `VIX_History.csv` daily closing-value download | RESOLVED |
+| `VIX` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | Cboe VIX Index, `VIX` | Official free Cboe `VIX_History.csv` daily closing-value download; timestamped Cboe Global Indices/EOD history is a possible future source subject to access and licensing | **BLOCKED** pending a defensible per-row PIT availability contract |
 | `US2Y` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | Federal Reserve H.15 / FRED `DGS2` | Board H.15 download plus release witness, or FRED/ALFRED observations API | RESOLVED; FRED API key if API route used |
 | `US10Y` | `MARKET_FACTOR` | `DAILY` | `NOT_APPLICABLE` | Federal Reserve H.15 / FRED `DGS10` | Same H.15/FRED contract | RESOLVED; FRED API key if API route used |
 | `US_CPI_YOY` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPI-U All Items 12-month percent change, NSA; Table A; underlying `CUUR0000SA0` | BLS archived CPI releases and archived supplemental files | RESOLVED |
@@ -91,18 +92,21 @@ No source in this audit changes the execution-price boundary. Every acquired ser
 - Official download: `https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv`, linked by Cboe's VIX historical-data page as daily closing values from 1990 to present.
 - Use the `CLOSE` field, not VIX futures or an ETF proxy.
 
-**Timestamp contract**
+**Timestamp blocker**
 
 - Raw source timestamp: Cboe `DATE`; source file has date-level history, not a per-row download timestamp.
-- Canonical `observationTime`: UTC midnight representing the Cboe session date.
-- Canonical `availableAt`: 16:15 `America/New_York` on that session date, converted with historical DST rules. This is the end of Cboe regular trading hours and preserves the existing conservative M12 close boundary.
-- Acquisition time is recorded only in provenance.
+- The free CSV does not expose a per-row publication timestamp, effective business date, or session identifier. Official free-source documentation does not establish whether a row's `CLOSE` is tied to the ordinary RTH endpoint, an early-close endpoint, a GTH-only segment, or another end-of-day convention.
+- A universal 16:15 `America/New_York` rule is not approved. Some CSV rows occur on dates with no RTH but with GTH, and those rows must not be excluded merely to force an RTH-only contract.
+- Canonical `observationTime` and `availableAt` must remain unassigned for research-grade ingestion until the source contract is resolved. Acquisition time must not be substituted for historical availability.
+- Cboe Global Indices feed/EOD historical products expose or may preserve timestamped close/effective-date evidence and are a possible future resolution path, subject to approved access, licensing, exact field semantics, and a verified historical contract. This audit does not claim that paid access has been obtained.
 
 **Coverage and missingness**
 
-- Expected source history: 1990 to the latest completed Cboe session.
-- Expected denominator: Cboe business sessions, excluding official holidays/closures and the current incomplete session. No weekend interpolation.
-- Public HTTPS, no key for the published CSV. If Cboe withdraws or alters the file schema, fail closed; Yahoo `^VIX` is not an automatic research-grade fallback.
+- The free file contains history from 1990 to present, but that history is not approved for PIT normalization while per-row availability remains unresolved.
+- A coverage denominator cannot be inferred from generic weekdays or RTH sessions because valid source rows can exist on GTH-only/no-RTH dates. No interpolation, row deletion, or synthetic calendar repair is allowed.
+- Public HTTPS requires no key for the free CSV. That accessibility does not resolve PIT timestamp semantics. Yahoo `^VIX`, VIX futures, and ETF proxies are not automatic research-grade fallbacks.
+
+**Status:** blocked. Do not implement or expose a VIX acquisition adapter until a defensible timestamped source contract is approved.
 
 ### 3.4 Federal Reserve H.15 — US2Y and US10Y
 
@@ -232,7 +236,7 @@ Acquisition time and transient transport headers must not change the canonical n
 
 - The readiness policy requires at least five years for every required series and at least 60 unique periods for canonically monthly series.
 - The likely common-window constraint is PAXG, whose Binance history begins around its 2020 listing. B2-B must discover and record the exact first valid archive record.
-- Market missingness denominators use eligible provider sessions/slots after listing and before the final closed boundary: 24/7 hourly slots for Binance, Cboe sessions for VIX, ICE's contracted calendar for DXY, and H.15 publication-eligible observations for yields.
+- Market missingness denominators use eligible provider sessions/slots after listing and before the final closed boundary: 24/7 hourly slots for Binance, ICE's contracted calendar for DXY, and H.15 publication-eligible observations for yields. The VIX denominator remains blocked until its source date/session semantics are resolved.
 - Macro denominators use scheduled/released reference periods, not elapsed days. Revisions add vintages but not new observation periods.
 - FOMC denominators use official policy decisions/statements in the chosen window, including emergency/intermeeting actions when they meet the same source contract.
 - No series is interpolated solely to improve readiness. Closures, holidays, nonpublication, unavailable values, and provider corrections remain explicit.
@@ -243,7 +247,7 @@ Acquisition time and transient transport headers must not change the canonical n
 |---|---|
 | Binance Public Data | Public HTTPS; no key for archive/checksums or public market-data endpoint; throttle requests and prefer monthly files over API crawling. |
 | ICE Data Services | Licensed account/product entitlement expected; exact credentials, limits, and storage/redistribution rights unresolved. |
-| Cboe | Public HTTPS historical CSV; no key observed for the official daily VIX file. |
+| Cboe | Public HTTPS historical CSV; no key observed for the free daily VIX file, but its per-row PIT availability contract is unresolved. Timestamped Global Indices/EOD historical data is a possible future path subject to access and licensing approval. |
 | Federal Reserve Board H.15 | Public page/download; no secret for Board files. |
 | FRED/ALFRED API | Registered API key required; documented limit up to 120 requests/minute; secret supplied at acquisition runtime only. |
 | BLS | Public archives/files; API v1 unauthenticated, API v2 registration key for higher limits. Prefer archived files over high-volume API calls. |
@@ -276,7 +280,7 @@ No credential value belongs in source code, manifests, normalized records, snaps
 Proceed only in these bounded adapter families:
 
 1. **Binance archive adapter:** inventory monthly `BTCUSDT`/`PAXGUSDT` 1H files, verify published checksums, normalize millisecond/microsecond timestamps, and emit research-context records.
-2. **Cboe VIX adapter:** download and validate official daily CSV, enforce Cboe calendar/DST-aware 16:15 ET availability, and record missing sessions.
+2. **Cboe VIX contract/access resolution only:** do not implement the free-CSV adapter. Resolve timestamped close/effective-date semantics and access/licensing before assigning `availableAt` or defining missingness.
 3. **H.15/FRED adapter:** acquire `DGS2`/`DGS10`, recover explicit release-date witnesses, and emit daily observations at verified H.15 availability.
 4. **BLS CPI adapter:** parse archived release/supplemental artifacts for YoY/index; add a small CPI MoM vintage proof before allowing broad acquisition.
 5. **BLS labor adapter:** consume official CES vintage files for direct NFP net change; add an unemployment vintage proof before broad acquisition.
@@ -306,6 +310,8 @@ B2-B may begin the resolved adapters and the two narrow vintage proofs. Completi
 - Cboe VIX historical data: https://www.cboe.com/tradable_products/vix/vix_historical_data
 - Cboe VIX daily CSV: https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv
 - Cboe hours: https://www.cboe.com/about/hours/us-options
+- Cboe Global Indices Feed specification: https://www.cboe.com/document/tech-spec/document/technical-specifications/cboe-titanium-cboe-global-indices-feed-specification/
+- Cboe Main Channel End-of-Day Summary: https://datashop.cboe.com/main-channel-end-of-day-summary
 - Federal Reserve H.15: https://www.federalreserve.gov/releases/h15/
 - H.15 Data Download Program: https://www.federalreserve.gov/datadownload/Choose.aspx?rel=H15
 - FRED `DGS2`: https://fred.stlouisfed.org/series/DGS2
