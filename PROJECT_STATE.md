@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `2f5de0124df67f38b626bae0077537848f6696ee`
-- **Checkpoint Message**: `Docs: freeze v1 architecture roadmap and recovery policy`
+- **Last Verified Code Checkpoint**: `8689339a91d41eafc9e9a04a4985bba9b15e11ea`
+- **Checkpoint Message**: `Infra: establish CI and portable handoff enforcement`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -40,14 +40,16 @@ Do not rely only on AI memory or previous agent reports.
   - **Gate M12** (Historical Point-in-Time Data Infrastructure): **COMPLETE**
   - **Gate M13B-1** (Historical Research Data Protocol, Manifest & Coverage Contract): **COMPLETE**
   - **SYNC-01** (v1 Architecture, Roadmap & Recovery Source-of-Truth Sync): **COMPLETE** at `2f5de0124df67f38b626bae0077537848f6696ee`
-  - **SYNC-02** (CI, Portability & Agent-Handoff Enforcement): **IN PROGRESS — NOT CHECKPOINTED**
+  - **SYNC-02** (CI, Portability & Agent-Handoff Enforcement): **COMPLETE** at `8689339a91d41eafc9e9a04a4985bba9b15e11ea`
+  - **M13B-2 / B2-A** (Historical Research Data Source Audit): **APPROVED — UNCOMMITTED DOCUMENTATION**
+  - **M13B-2 / B2-B1** (Immutable Acquisition Foundation + Binance BTC/PAXG Adapter): **IN PROGRESS — NOT CHECKPOINTED**
 - **Validation Baseline**:
   - `npm run build`: **PASS**
   - `npx vitest run`: **PASS** (481/481 tests across 23 test files)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
-  - **CI status**: SYNC-02 proposes the workflow in the current uncommitted tree; it is not active or passing until committed, pushed, and observed.
-- **Current Documented Phase**: SYNC-02 CI, portability, and handoff enforcement — **IN PROGRESS / NOT CHECKPOINTED**. M13B-2 remains **NOT STARTED**.
+  - **CI status**: The SYNC-02 workflow is present at the verified checkpoint. Its remote-run result was not reverified during this B2-B1 implementation run.
+- **Current Documented Phase**: M13B-2 / B2-B1 immutable acquisition foundation and Binance BTC/PAXG historical adapter — **IN PROGRESS / NOT CHECKPOINTED**. M13B-2 overall remains **INCOMPLETE**; M13C has not started.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
