@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `a8bc389b86149cf0d64eb48f91e65872044e7e83`
-- **Checkpoint Message**: `Gate M13C: add PIT-safe research feature builder`
+- **Last Verified Code Checkpoint**: `9b36758cae3b6e33dbc1005a84e1fe007e9c9d11`
+- **Checkpoint Message**: `Gate M13C: add PIT-safe shadow research harness`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -58,14 +58,16 @@ Do not rely only on AI memory or previous agent reports.
   - **M13C / C-C** (PIT-Safe Stateful & Sequence Research Rules): **COMPLETE** at `5aa01a387d41f9da3574f167c58b9ad4857ff38d`
   - **M13C / C-D** (Hypothesis Registry + Anti-Data-Mining Governance): **COMPLETE** at `096297f28574518614a07eb46fde75bbf5da8da5`; predictive validity remains unassessed and no hypothesis is approved for paper action
   - **M13C / C-E** (PIT-Safe Macro + Technical Feature Builder): **COMPLETE** at `a8bc389b86149cf0d64eb48f91e65872044e7e83`; research features grant no action or execution authority
-  - **M13C / C-F** (PIT-Safe Shadow Research Harness): **IMPLEMENTED — NOT CHECKPOINTED**; observations remain research-only and grant no action or execution authority
+  - **M13C / C-F** (PIT-Safe Shadow Research Harness): **COMPLETE** at `9b36758cae3b6e33dbc1005a84e1fe007e9c9d11`; observations remain research-only and grant no action or execution authority
+  - **M13D / D-A** (Fixed-Rule Held-Out OOS Evaluation): **BLOCKED** pending the reviewed D-A-R1 methodology repair; aggregation has not started
+  - **M13D / D-A-R1** (Preregistered Stateful OOS Boundary Policy): **IMPLEMENTED — NOT CHECKPOINTED**
 - **Validation Baseline**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (959/959 tests across 35 test files at the last verified checkpoint)
+  - `npx vitest run`: **PASS** (982/982 tests across 36 test files at the last verified checkpoint)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
-  - **CI status**: The C-E checkpoint at `a8bc389b86149cf0d64eb48f91e65872044e7e83` passed the required remote workflow.
-- **Current Documented Phase**: M13B and M13C/C-A/C-B/C-C/C-D/C-E are **COMPLETE**. C-F implements deterministic PIT-safe shadow observations without predictive or trading authority. M13D has not started.
+  - **CI status**: The C-F checkpoint at `9b36758cae3b6e33dbc1005a84e1fe007e9c9d11` passed the required remote workflow.
+- **Current Documented Phase**: M13B and M13C/C-A through C-F are **COMPLETE**. D-A encountered an unresolved stateful TRAIN→OOS boundary choice; D-A-R1 preregisters that choice per hypothesis without implementing OOS aggregation or granting predictive/trading authority.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -401,7 +403,8 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - C-C's stateful sequence and persistence primitives are checkpointed; state remains research-evaluation-only.
 - C-D's deterministic Hypothesis Registry and anti-data-mining controls are checkpointed. Predictive validity remains unassessed and no hypothesis is approved for paper action.
 - C-E's PIT-safe technical and macro/event feature builder is checkpointed. Missing evidence remains explicit and no feature is action-eligible.
-- C-F's PIT-safe shadow research harness is implemented but not checkpointed. It binds preregistered hypotheses, explicit parameter configurations, C-E feature evidence, and C-B/C-C evaluation without creating action authority.
+- C-F's PIT-safe shadow research harness is checkpointed. It binds preregistered hypotheses, explicit parameter configurations, C-E feature evidence, and C-B/C-C evaluation without creating action authority.
+- D-A-R1 makes stateful OOS boundary handling an explicit identity-bearing hypothesis policy (`RESET_AT_OOS_START` or `CARRY_PIT_STATE_FROM_PRE_OOS`; stateless rules use `NOT_APPLICABLE`). D-A aggregation remains unimplemented.
 
 ---
 
@@ -447,8 +450,8 @@ For every major engineering gate:
 
 ## 14. Current Documented Phase
 
-### M13C / C-F — PIT-Safe Shadow Research Harness
+### M13D / D-A-R1 — Preregistered Stateful OOS Boundary Policy
 
 **Status**: **IMPLEMENTED — NOT CHECKPOINTED**
 
-M13B and C-A through C-E are complete; C-E is checkpointed at `a8bc389b86149cf0d64eb48f91e65872044e7e83`. C-F adds immutable deterministic stateless and stateful shadow observations. Each observation explicitly binds one integrity-validated C-D hypothesis, the exact C-B/C-C rule identity, a preregistered parameter configuration, one C-E feature vector, and the applicable TRAIN/OOS/outside-window classification. The harness revalidates supplied PIT context and feature evidence, scopes runtime rule inputs to declared available dependencies, preserves missing required inputs as `INSUFFICIENT_EVIDENCE`, and invokes the existing C-B/C-C evaluators rather than creating another rule engine. Results preserve trial-accounting and audit identity but contain no performance selection, optimization, ranking, paper-action approval, price authority, Permission, Risk, Omega, execution, accounting, or ActionDecision authority. M13D has not started.
+M13B and M13C C-A through C-F are complete; C-F is checkpointed at `9b36758cae3b6e33dbc1005a84e1fe007e9c9d11`. D-A correctly stopped before aggregation because the hypothesis contract did not preregister whether stateful research state resets at the OOS boundary or carries from strictly earlier PIT-safe evaluation. D-A-R1 adds an explicit per-hypothesis policy—`NOT_APPLICABLE`, `RESET_AT_OOS_START`, or `CARRY_PIT_STATE_FROM_PRE_OOS`—to scientific identity. C-F enforces stateless/stateful compatibility and preserves canonical-initial and supplied-prior-state identity evidence for later D-A validation. No policy is selected globally or after OOS inspection. D-A aggregation, predictive assessment, robustness, evidence promotion, and all trading/action authority remain unimplemented.

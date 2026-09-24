@@ -46,6 +46,11 @@ export interface TrainOosPolicy {
   readonly oosReuse: "NEVER_TUNE_ON_OOS";
 }
 
+export type StatefulOosBoundaryPolicy =
+  | "NOT_APPLICABLE"
+  | "RESET_AT_OOS_START"
+  | "CARRY_PIT_STATE_FROM_PRE_OOS";
+
 export interface TrialAccountingPolicy {
   readonly familyId: string;
   readonly unit: "ONE_TRIAL_PER_RULE_PARAMETER_CONFIGURATION";
@@ -76,6 +81,7 @@ export interface ResearchHypothesisDefinition {
   readonly parameterSpace: readonly ParameterSpecification[];
   readonly researchIntent: HypothesisResearchIntent;
   readonly trainOosPolicy: TrainOosPolicy;
+  readonly statefulOosBoundaryPolicy: StatefulOosBoundaryPolicy;
   readonly trialAccounting: TrialAccountingPolicy;
   readonly lifecycle: HypothesisLifecycle;
   readonly preRegistration: HypothesisPreRegistration;
@@ -312,6 +318,15 @@ function normalizeTrainOosPolicy(policy: TrainOosPolicy): TrainOosPolicy {
   });
 }
 
+function normalizeStatefulOosBoundaryPolicy(
+  policy: StatefulOosBoundaryPolicy
+): StatefulOosBoundaryPolicy {
+  if (!["NOT_APPLICABLE", "RESET_AT_OOS_START", "CARRY_PIT_STATE_FROM_PRE_OOS"].includes(policy)) {
+    fail("statefulOosBoundaryPolicy must be explicitly preregistered.");
+  }
+  return policy;
+}
+
 function normalizeTrialAccounting(
   policy: TrialAccountingPolicy,
   expectedTrialCount: number
@@ -358,6 +373,7 @@ function scientificIdentityFor(definition: ResearchHypothesisDefinition): string
     parameterSpace: definition.parameterSpace,
     researchIntent: definition.researchIntent,
     trainOosPolicy: definition.trainOosPolicy,
+    statefulOosBoundaryPolicy: definition.statefulOosBoundaryPolicy,
     trialAccounting: definition.trialAccounting,
   });
 }
@@ -389,6 +405,7 @@ export function defineResearchHypothesis(
       ),
     }),
     trainOosPolicy: normalizeTrainOosPolicy(definition.trainOosPolicy),
+    statefulOosBoundaryPolicy: normalizeStatefulOosBoundaryPolicy(definition.statefulOosBoundaryPolicy),
     trialAccounting: normalizeTrialAccounting(definition.trialAccounting, parameterSpace.trialCount),
     lifecycle: definition.lifecycle,
     preRegistration: Object.freeze({

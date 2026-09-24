@@ -12,6 +12,7 @@ import {
   type ParameterScalar,
   type ParameterSpecification,
   type RegisteredResearchHypothesis,
+  type StatefulOosBoundaryPolicy,
   type TrialAccountingPolicy,
 } from "./hypothesisRegistry";
 import {
@@ -52,6 +53,14 @@ export interface ShadowHypothesisBinding {
   readonly trialAccounting: TrialAccountingPolicy;
   readonly trialAccountingIdentity: string;
   readonly declaredDependencies: readonly ResearchDependency[];
+  readonly statefulOosBoundaryPolicy: StatefulOosBoundaryPolicy;
+}
+
+export interface ShadowStateBoundaryEvidence {
+  readonly policy: Exclude<StatefulOosBoundaryPolicy, "NOT_APPLICABLE">;
+  readonly priorStateIdentity: string;
+  readonly priorStateLastDecisionTime: number | null;
+  readonly canonicalInitialStateIdentity: string;
 }
 
 interface ShadowObservationBase {
@@ -64,6 +73,7 @@ interface ShadowObservationBase {
   readonly binding: ShadowHypothesisBinding;
   readonly featureVectorSemanticIdentity: string;
   readonly featureEvidence: readonly ResearchFeatureValue[];
+  readonly stateBoundaryEvidence: ShadowStateBoundaryEvidence | null;
   readonly status: ResearchRuleStatus;
   readonly semanticIdentity: string;
   readonly intendedUse: "SHADOW_RESEARCH_ONLY";
@@ -434,6 +444,7 @@ function prepareBinding(
     trialAccounting: hypothesis.trialAccounting,
     trialAccountingIdentity: parameterBinding.trialAccountingIdentity,
     declaredDependencies: hypothesis.requiredDependencies,
+    statefulOosBoundaryPolicy: hypothesis.statefulOosBoundaryPolicy,
   });
   return deepFreeze({
     hypothesis,
@@ -454,6 +465,7 @@ function observationIdentity(input: {
   readonly window: ShadowResearchWindow;
   readonly featureVectorSemanticIdentity: string;
   readonly featureEvidence: readonly ResearchFeatureValue[];
+  readonly stateBoundaryEvidence: ShadowStateBoundaryEvidence | null;
   readonly evaluation: ResearchRuleResult | StatefulResearchTransition<StatefulResearchState>;
 }): string {
   return canonicalJson({
@@ -466,6 +478,9 @@ export function runStatelessShadowObservation(
   input: StatelessShadowResearchRunInput
 ): StatelessShadowResearchObservation {
   const prepared = prepareBinding(input, input.rule);
+  if (prepared.hypothesis.statefulOosBoundaryPolicy !== "NOT_APPLICABLE") {
+    fail("stateless rules require statefulOosBoundaryPolicy NOT_APPLICABLE.");
+  }
   const ruleResult = input.rule.evaluate(prepared.context);
   const semanticIdentity = observationIdentity({
     evaluationKind: "STATELESS",
@@ -476,6 +491,7 @@ export function runStatelessShadowObservation(
     window: prepared.window,
     featureVectorSemanticIdentity: prepared.vector.semanticIdentity,
     featureEvidence: prepared.featureEvidence,
+    stateBoundaryEvidence: null,
     evaluation: ruleResult,
   });
   return deepFreeze({
@@ -489,6 +505,7 @@ export function runStatelessShadowObservation(
     binding: prepared.binding,
     featureVectorSemanticIdentity: prepared.vector.semanticIdentity,
     featureEvidence: prepared.featureEvidence,
+    stateBoundaryEvidence: null,
     status: ruleResult.status,
     ruleResult,
     stateTransition: null,
@@ -505,6 +522,16 @@ export function runStatefulShadowObservation<S extends StatefulResearchState>(
   input: StatefulShadowResearchRunInput<S>
 ): StatefulShadowResearchObservation<S> {
   const prepared = prepareBinding(input, input.rule);
+  if (prepared.hypothesis.statefulOosBoundaryPolicy === "NOT_APPLICABLE") {
+    fail("stateful rules require an explicit RESET or CARRY statefulOosBoundaryPolicy.");
+  }
+  const canonicalInitialState = input.rule.createInitialState(input.context.assetId);
+  const stateBoundaryEvidence = deepFreeze({
+    policy: prepared.hypothesis.statefulOosBoundaryPolicy,
+    priorStateIdentity: canonicalJson(input.priorState),
+    priorStateLastDecisionTime: input.priorState.lastDecisionTime,
+    canonicalInitialStateIdentity: canonicalJson(canonicalInitialState),
+  });
   const stateTransition = input.rule.transition(input.priorState, prepared.context);
   const semanticIdentity = observationIdentity({
     evaluationKind: "STATEFUL",
@@ -515,6 +542,7 @@ export function runStatefulShadowObservation<S extends StatefulResearchState>(
     window: prepared.window,
     featureVectorSemanticIdentity: prepared.vector.semanticIdentity,
     featureEvidence: prepared.featureEvidence,
+    stateBoundaryEvidence,
     evaluation: stateTransition,
   });
   return deepFreeze({
@@ -528,6 +556,7 @@ export function runStatefulShadowObservation<S extends StatefulResearchState>(
     binding: prepared.binding,
     featureVectorSemanticIdentity: prepared.vector.semanticIdentity,
     featureEvidence: prepared.featureEvidence,
+    stateBoundaryEvidence,
     status: stateTransition.status,
     ruleResult: null,
     stateTransition,

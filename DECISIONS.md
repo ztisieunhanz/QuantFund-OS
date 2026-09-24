@@ -357,3 +357,15 @@ All decisions in this log follow a compact, standard format:
 - **Scope / Consequences**: Follow `RECOVERY_AND_BACKUP.md`; inspect and preserve status/diff/untracked evidence before continuing the same gate with another agent.
 - **Explicit Non-Goals**: Does not treat chat memory as recovery evidence or authorize secrets in handoff bundles.
 - **Supersedes / Superseded by**: None
+
+---
+
+### DEC-027: Preregistered Stateful OOS Boundary Policy
+- **ID**: `DEC-027`
+- **Date**: 2026-09-24
+- **Status**: `ACCEPTED`
+- **Decision**: Every research hypothesis explicitly preregisters its stateful TRAIN→OOS boundary policy as `NOT_APPLICABLE`, `RESET_AT_OOS_START`, or `CARRY_PIT_STATE_FROM_PRE_OOS`. The policy participates in scientific semantic identity and cannot be selected or changed after OOS inspection. Stateless rules require `NOT_APPLICABLE`; stateful rules require RESET or CARRY when the concrete rule is supplied to the shadow harness.
+- **Rationale**: Resetting state and carrying strictly earlier PIT-safe state can produce different OOS sequence and persistence evidence. Making the choice per hypothesis and identity-bearing prevents post-OOS methodology selection while allowing both legitimate research designs.
+- **Scope / Consequences**: RESET requires the first OOS prior state to equal the rule/asset canonical initial state. CARRY requires a valid strictly earlier PIT-safe transition chain whose next state equals the first OOS prior state. C-F preserves the policy and state-identity proof material; D-A must validate the declared boundary before aggregation.
+- **Explicit Non-Goals**: Does not choose a global policy, implement D-A aggregation, establish predictive validity, approve paper action, or grant trading authority.
+- **Supersedes / Superseded by**: None

@@ -53,6 +53,7 @@ function definition(
       ordering: "TRAIN_BEFORE_OOS",
       oosReuse: "NEVER_TUNE_ON_OOS",
     },
+    statefulOosBoundaryPolicy: "NOT_APPLICABLE",
     trialAccounting: {
       familyId: "BTC-TREND-FAMILY",
       unit: "ONE_TRIAL_PER_RULE_PARAMETER_CONFIGURATION",
@@ -127,6 +128,26 @@ describe("M13C C-D hypothesis registry governance", () => {
     const changed = definition({ rule: { ...hypothesisRuleReference(rule), semanticIdentity: "different" } });
     expect(defineResearchHypothesis(changed).semanticIdentity)
       .not.toBe(defineResearchHypothesis(definition()).semanticIdentity);
+  });
+
+  it.each([
+    "NOT_APPLICABLE",
+    "RESET_AT_OOS_START",
+    "CARRY_PIT_STATE_FROM_PRE_OOS",
+  ] as const)("accepts the explicit %s stateful OOS boundary policy", (policy) => {
+    expect(defineResearchHypothesis(definition({ statefulOosBoundaryPolicy: policy })))
+      .toMatchObject({ statefulOosBoundaryPolicy: policy });
+  });
+
+  it("makes the stateful OOS boundary policy part of scientific identity", () => {
+    const reset = defineResearchHypothesis(definition({
+      statefulOosBoundaryPolicy: "RESET_AT_OOS_START",
+    }));
+    const carry = defineResearchHypothesis(definition({
+      statefulOosBoundaryPolicy: "CARRY_PIT_STATE_FROM_PRE_OOS",
+    }));
+    expect(reset.semanticIdentity).not.toBe(carry.semanticIdentity);
+    expect(reset.semanticIdentity).not.toBe(defineResearchHypothesis(definition()).semanticIdentity);
   });
 
   it("keeps lifecycle and declaration metadata out of scientific identity", () => {
@@ -231,6 +252,10 @@ describe("M13C C-D hypothesis registry governance", () => {
         ...hypothesis.trainOosPolicy,
         training: { ...hypothesis.trainOosPolicy.training, startTime: TRAIN_START + 1 },
       },
+    })],
+    ["stateful OOS boundary policy", (hypothesis: RegisteredResearchHypothesis) => ({
+      ...hypothesis,
+      statefulOosBoundaryPolicy: "RESET_AT_OOS_START" as const,
     })],
     ["trial accounting", (hypothesis: RegisteredResearchHypothesis) => ({
       ...hypothesis,
@@ -370,6 +395,16 @@ describe("M13C C-D hypothesis registry governance", () => {
     expect(() => defineResearchHypothesis(definition({ trainOosPolicy: badOos }))).toThrow(/never be declared reusable/);
     const badTrials = { ...definition().trialAccounting, variantHandling: "IGNORE" } as unknown as ResearchHypothesisDefinition["trialAccounting"];
     expect(() => defineResearchHypothesis(definition({ trialAccounting: badTrials }))).toThrow(/count every distinct/);
+  });
+
+  it("rejects a missing or unsupported stateful OOS boundary policy", () => {
+    const missing = { ...definition(), statefulOosBoundaryPolicy: undefined } as unknown as ResearchHypothesisDefinition;
+    const unsupported = {
+      ...definition(),
+      statefulOosBoundaryPolicy: "CHOOSE_AFTER_OOS",
+    } as unknown as ResearchHypothesisDefinition;
+    expect(() => defineResearchHypothesis(missing)).toThrow(/must be explicitly preregistered/);
+    expect(() => defineResearchHypothesis(unsupported)).toThrow(/must be explicitly preregistered/);
   });
 
   it("rejects undeclared result, performance, ranking, and selected-parameter fields", () => {

@@ -100,6 +100,7 @@ function hypothesis(
       ordering: "TRAIN_BEFORE_OOS",
       oosReuse: "NEVER_TUNE_ON_OOS",
     },
+    statefulOosBoundaryPolicy: "NOT_APPLICABLE",
     trialAccounting: {
       familyId: "SHADOW-FAMILY",
       unit: "ONE_TRIAL_PER_RULE_PARAMETER_CONFIGURATION",
@@ -192,7 +193,25 @@ describe("M13C C-F PIT-safe shadow research harness", () => {
       ruleId: "SHADOW_LEAF",
       parameterConfiguration: { threshold: 1 },
       trialAccounting: { declaredTrialCount: 2 },
+      statefulOosBoundaryPolicy: "NOT_APPLICABLE",
     });
+    expect(observation.stateBoundaryEvidence).toBeNull();
+  });
+
+  it("rejects a stateful boundary policy on a stateless rule", () => {
+    const rule = leaf();
+    const ctx = context();
+    expect(() => runStatelessShadowObservation({
+      registry: createHypothesisRegistry([hypothesis(rule, {
+        statefulOosBoundaryPolicy: "RESET_AT_OOS_START",
+      })]),
+      hypothesisId: "H-SHADOW",
+      hypothesisVersion: "1.0.0",
+      parameterConfiguration: { threshold: 1 },
+      rule,
+      context: ctx,
+      featureVector: vectorFor(ctx),
+    })).toThrow(/stateless rules require.*NOT_APPLICABLE/);
   });
 
   it("rejects a mismatched rule identity", () => {
@@ -355,9 +374,10 @@ describe("M13C C-F PIT-safe shadow research harness", () => {
       requiredDependencies: stateful.dependencies,
       parameterSpace: [{ name: "requiredConsecutive", kind: "FIXED", value: 2 }],
       trialAccounting: { ...hypothesis(condition).trialAccounting, declaredTrialCount: 1 },
+      statefulOosBoundaryPolicy: "RESET_AT_OOS_START",
     });
     const registry = createHypothesisRegistry([definition]);
-    const firstContext = context(TRAIN_TIME);
+    const firstContext = context(TRAIN_END);
     const initial = stateful.createInitialState("BTC");
     const original = JSON.stringify(initial);
     const first = runStatefulShadowObservation({
@@ -370,7 +390,7 @@ describe("M13C C-F PIT-safe shadow research harness", () => {
       context: firstContext,
       featureVector: vectorFor(firstContext),
     });
-    const secondContext = context(TRAIN_TIME + HOUR);
+    const secondContext = context(TRAIN_END + HOUR);
     const second = runStatefulShadowObservation({
       registry,
       hypothesisId: "H-SHADOW",
@@ -384,6 +404,109 @@ describe("M13C C-F PIT-safe shadow research harness", () => {
     expect(JSON.stringify(initial)).toBe(original);
     expect(first.stateTransition.event).toBe("STREAK_ADVANCED");
     expect(second.stateTransition.event).toBe("COMPLETED");
+    expect(first.binding.statefulOosBoundaryPolicy).toBe("RESET_AT_OOS_START");
+    expect(first.stateBoundaryEvidence).toMatchObject({
+      policy: "RESET_AT_OOS_START",
+      priorStateLastDecisionTime: null,
+    });
+    expect(first.stateBoundaryEvidence?.priorStateIdentity)
+      .toBe(first.stateBoundaryEvidence?.canonicalInitialStateIdentity);
+  });
+
+  it("preserves CARRY policy and prior-state proof material in observation identity", () => {
+    const condition = leaf();
+    const stateful = createPersistenceRule({
+      ruleId: "PERSISTENCE",
+      version: "1.0.0",
+      description: "Two observations",
+      rationale: "Stateful shadow test",
+      condition,
+      requiredConsecutive: 2,
+    });
+    const base = hypothesis(stateful, {
+      rule: hypothesisRuleReference(stateful),
+      requiredDependencies: stateful.dependencies,
+      parameterSpace: [{ name: "requiredConsecutive", kind: "FIXED", value: 2 }],
+      trialAccounting: { ...hypothesis(condition).trialAccounting, declaredTrialCount: 1 },
+      statefulOosBoundaryPolicy: "CARRY_PIT_STATE_FROM_PRE_OOS",
+    });
+    const originalDefinition = JSON.stringify(base);
+    const trainContext = context(TRAIN_END - HOUR);
+    const trainObservation = runStatefulShadowObservation({
+      registry: createHypothesisRegistry([base]),
+      hypothesisId: "H-SHADOW",
+      hypothesisVersion: "1.0.0",
+      parameterConfiguration: { requiredConsecutive: 2 },
+      rule: stateful,
+      priorState: stateful.createInitialState("BTC"),
+      context: trainContext,
+      featureVector: vectorFor(trainContext),
+    });
+    const oosContext = context(TRAIN_END);
+    const carried = runStatefulShadowObservation({
+      registry: createHypothesisRegistry([base]),
+      hypothesisId: "H-SHADOW",
+      hypothesisVersion: "1.0.0",
+      parameterConfiguration: { requiredConsecutive: 2 },
+      rule: stateful,
+      priorState: trainObservation.stateTransition.nextState,
+      context: oosContext,
+      featureVector: vectorFor(oosContext),
+    });
+    const resetDefinition = { ...base, statefulOosBoundaryPolicy: "RESET_AT_OOS_START" as const };
+    const reset = runStatefulShadowObservation({
+      registry: createHypothesisRegistry([resetDefinition]),
+      hypothesisId: "H-SHADOW",
+      hypothesisVersion: "1.0.0",
+      parameterConfiguration: { requiredConsecutive: 2 },
+      rule: stateful,
+      priorState: trainObservation.stateTransition.nextState,
+      context: oosContext,
+      featureVector: vectorFor(oosContext),
+    });
+    expect(carried.binding.statefulOosBoundaryPolicy).toBe("CARRY_PIT_STATE_FROM_PRE_OOS");
+    expect(carried.stateBoundaryEvidence).toMatchObject({
+      policy: "CARRY_PIT_STATE_FROM_PRE_OOS",
+      priorStateLastDecisionTime: TRAIN_END - HOUR,
+    });
+    expect(carried.semanticIdentity).not.toBe(reset.semanticIdentity);
+    expect(Object.isFrozen(carried.stateBoundaryEvidence)).toBe(true);
+    expect(JSON.stringify(base)).toBe(originalDefinition);
+    expect(carried).toMatchObject({
+      predictiveValidityEstablished: false,
+      approvedForPaperAction: false,
+      grantsExecutionAuthority: false,
+      priceAuthority: "NONE",
+    });
+  });
+
+  it("rejects NOT_APPLICABLE for a stateful rule", () => {
+    const condition = leaf();
+    const stateful = createPersistenceRule({
+      ruleId: "PERSISTENCE",
+      version: "1.0.0",
+      description: "Two observations",
+      rationale: "Stateful shadow test",
+      condition,
+      requiredConsecutive: 2,
+    });
+    const definition = hypothesis(stateful, {
+      rule: hypothesisRuleReference(stateful),
+      requiredDependencies: stateful.dependencies,
+      parameterSpace: [{ name: "requiredConsecutive", kind: "FIXED", value: 2 }],
+      trialAccounting: { ...hypothesis(condition).trialAccounting, declaredTrialCount: 1 },
+    });
+    const ctx = context();
+    expect(() => runStatefulShadowObservation({
+      registry: createHypothesisRegistry([definition]),
+      hypothesisId: "H-SHADOW",
+      hypothesisVersion: "1.0.0",
+      parameterConfiguration: { requiredConsecutive: 2 },
+      rule: stateful,
+      priorState: stateful.createInitialState("BTC"),
+      context: ctx,
+      featureVector: vectorFor(ctx),
+    })).toThrow(/stateful rules require an explicit RESET or CARRY/);
   });
 
   it("rejects invalid stateful time ordering through C-C semantics", () => {
@@ -401,6 +524,7 @@ describe("M13C C-F PIT-safe shadow research harness", () => {
       requiredDependencies: stateful.dependencies,
       parameterSpace: [{ name: "requiredConsecutive", kind: "FIXED", value: 2 }],
       trialAccounting: { ...hypothesis(condition).trialAccounting, declaredTrialCount: 1 },
+      statefulOosBoundaryPolicy: "RESET_AT_OOS_START",
     });
     const registry = createHypothesisRegistry([definition]);
     const ctx = context();
