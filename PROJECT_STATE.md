@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `096297f28574518614a07eb46fde75bbf5da8da5`
-- **Checkpoint Message**: `Gate M13C: add hypothesis registry governance`
+- **Last Verified Code Checkpoint**: `a8bc389b86149cf0d64eb48f91e65872044e7e83`
+- **Checkpoint Message**: `Gate M13C: add PIT-safe research feature builder`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -57,14 +57,15 @@ Do not rely only on AI memory or previous agent reports.
   - **M13C / C-B** (ResearchRule Interface + Combinators): **COMPLETE** at `45e4487d850e8fdd612286fc110991383e408995`
   - **M13C / C-C** (PIT-Safe Stateful & Sequence Research Rules): **COMPLETE** at `5aa01a387d41f9da3574f167c58b9ad4857ff38d`
   - **M13C / C-D** (Hypothesis Registry + Anti-Data-Mining Governance): **COMPLETE** at `096297f28574518614a07eb46fde75bbf5da8da5`; predictive validity remains unassessed and no hypothesis is approved for paper action
-  - **M13C / C-E** (PIT-Safe Macro + Technical Feature Builder): **IMPLEMENTED — NOT CHECKPOINTED**; research features grant no action or execution authority
+  - **M13C / C-E** (PIT-Safe Macro + Technical Feature Builder): **COMPLETE** at `a8bc389b86149cf0d64eb48f91e65872044e7e83`; research features grant no action or execution authority
+  - **M13C / C-F** (PIT-Safe Shadow Research Harness): **IMPLEMENTED — NOT CHECKPOINTED**; observations remain research-only and grant no action or execution authority
 - **Validation Baseline**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (936/936 tests across 34 test files at the last verified checkpoint)
+  - `npx vitest run`: **PASS** (959/959 tests across 35 test files at the last verified checkpoint)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
-  - **CI status**: The C-D checkpoint at `096297f28574518614a07eb46fde75bbf5da8da5` passed the required remote workflow.
-- **Current Documented Phase**: M13B and M13C/C-A/C-B/C-C/C-D are **COMPLETE**. C-E implements deterministic PIT-safe research feature construction without predictive or trading authority. C-F and M13D remain future work.
+  - **CI status**: The C-E checkpoint at `a8bc389b86149cf0d64eb48f91e65872044e7e83` passed the required remote workflow.
+- **Current Documented Phase**: M13B and M13C/C-A/C-B/C-C/C-D/C-E are **COMPLETE**. C-F implements deterministic PIT-safe shadow observations without predictive or trading authority. M13D has not started.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -399,7 +400,8 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - C-B's stateless ResearchRule contract and combinators are checkpointed; no rule is action-eligible.
 - C-C's stateful sequence and persistence primitives are checkpointed; state remains research-evaluation-only.
 - C-D's deterministic Hypothesis Registry and anti-data-mining controls are checkpointed. Predictive validity remains unassessed and no hypothesis is approved for paper action.
-- C-E's PIT-safe technical and macro/event feature builder is implemented but not checkpointed. Missing evidence remains explicit and no feature is action-eligible.
+- C-E's PIT-safe technical and macro/event feature builder is checkpointed. Missing evidence remains explicit and no feature is action-eligible.
+- C-F's PIT-safe shadow research harness is implemented but not checkpointed. It binds preregistered hypotheses, explicit parameter configurations, C-E feature evidence, and C-B/C-C evaluation without creating action authority.
 
 ---
 
@@ -413,7 +415,7 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - Historical macro alpha & regime strategy models (mapping PIT macro context to quant signals).
 - Historical event consensus provider integration & verified surprise calculation.
 - Historical factor freshness thresholds calibrated for daily/monthly series.
-- **M13C C-F and later**: Shadow research harness and subsequent OOS/robustness work.
+- **M13D and later**: OOS/robustness work and later roadmap gates.
 - **Post-v1 unless explicitly approved**: Additional executable time domains or a true multi-timeframe execution engine.
 - Short-selling support and margin semantics.
 - Train-set hyperparameter optimization & grid search engine.
@@ -445,8 +447,8 @@ For every major engineering gate:
 
 ## 14. Current Documented Phase
 
-### M13C / C-E — PIT-Safe Macro + Technical Feature Builder
+### M13C / C-F — PIT-Safe Shadow Research Harness
 
 **Status**: **IMPLEMENTED — NOT CHECKPOINTED**
 
-M13B and C-A through C-D are complete; C-D is checkpointed at `096297f28574518614a07eb46fde75bbf5da8da5`. C-E adds immutable deterministic feature definitions and a research-only vector builder tied to one asset and exact `decisionTime`/`asOf` boundary. Technical values use eligible canonical 1H bars or C-A's fully closed 4H/1D context; macro/event levels use only supplied canonical evidence with `availableAt <= decisionTime`. Unavailable features remain explicit and independent, with no zero-fill, synthetic substitute, or cross-feature invalidation. Definitions have stable versioned semantic identity, outputs preserve source evidence and age metadata, and neither definitions nor vectors contain performance selection. Predictive validity and paper-action approval remain false; features grant no price, Permission, Risk, Omega, execution, accounting, or ActionDecision authority. C-F and M13D have not started.
+M13B and C-A through C-E are complete; C-E is checkpointed at `a8bc389b86149cf0d64eb48f91e65872044e7e83`. C-F adds immutable deterministic stateless and stateful shadow observations. Each observation explicitly binds one integrity-validated C-D hypothesis, the exact C-B/C-C rule identity, a preregistered parameter configuration, one C-E feature vector, and the applicable TRAIN/OOS/outside-window classification. The harness revalidates supplied PIT context and feature evidence, scopes runtime rule inputs to declared available dependencies, preserves missing required inputs as `INSUFFICIENT_EVIDENCE`, and invokes the existing C-B/C-C evaluators rather than creating another rule engine. Results preserve trial-accounting and audit identity but contain no performance selection, optimization, ranking, paper-action approval, price authority, Permission, Risk, Omega, execution, accounting, or ActionDecision authority. M13D has not started.
