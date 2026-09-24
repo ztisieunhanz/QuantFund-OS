@@ -32,6 +32,10 @@ The VIX and rate-direction checks establish only that those observations exist i
 
 Snapshot identity is computed from normalized historical content plus manifest identity fields, including per-series content hashes. Record and source-entry ordering do not change the canonical input. `createdAt` and `snapshotHash` are excluded from the snapshot preimage to avoid wall-clock dependence and recursive hashing. The module exposes canonical serialization and an injectable cryptographic hashing boundary; production acquisition should supply a documented cryptographic implementation such as SHA-256.
 
+B2-C extends that authoritative identity with the immutable raw-artifact set and explicit per-series acquisition statuses. Raw-artifact identity preserves provider, series/instrument, request, raw SHA-256, parser, checksum policy/checksum, and licensing classification while excluding retrieval time from the hash preimage. Manifest sources, raw artifacts, and per-series statuses are set-like and sort canonically; record normalization continues to follow the M13B-1 protocol. The assembled snapshot uses SHA-256 and is deeply immutable.
+
+The snapshot-wide `startTime` and `endTime` retain the manifest's requested research window. They are not inferred as a claim that heterogeneous series are complete over a min/max union or intersection. Snapshot assembly reports acquired, not-included, conditional, and blocked series explicitly. It never creates zero-row manifests for unresolved series and leaves readiness as `NOT_EVALUATED`; a valid snapshot hash does not imply `RESEARCH_READY`.
+
 ## Architectural boundary
 
 All snapshots have `intendedUse: RESEARCH_ONLY` and `priceAuthority: RESEARCH_CONTEXT_ONLY`. `BacktestDataset.assetBars` remains the sole executable-price authority under DEC-016. During M13, research data and future research telemetry cannot affect Alpha engines, PermissionGate, RiskEngine, OmegaAllocator, target positions, execution, the canonical ledger, or portfolio accounting. Historical context remains audit-first under DEC-017, including DEC-018 carry-forward semantics at walk-forward boundaries.

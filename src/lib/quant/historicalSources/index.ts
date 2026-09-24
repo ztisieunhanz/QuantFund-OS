@@ -7,6 +7,7 @@ export * from "./types";
 export * from "./timezoneUtils";
 export * from "./binanceKlines";
 export * from "./immutableAcquisition";
+export * from "./researchDatasetSnapshot";
 export * from "./binanceMonthlyArchive";
 export * from "./h15TreasuryYields";
 export * from "./blsCpiHistory";
