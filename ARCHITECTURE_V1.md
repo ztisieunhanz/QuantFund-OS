@@ -28,9 +28,12 @@ Signal is not permission, permission is not risk, risk is not allocation, and al
 ## Timeframe rule
 
 - 1H is the only canonical execution domain for v1.0.
-- 4H and 1D may later be derived research context.
+- 4H and 1D are implemented as derived research context only.
 - Derived bars may use only fully closed, eligible 1H bars available at `decisionTime`.
 - An unfinished 4H or 1D bar must never be visible.
+- Derived buckets are UTC-aligned: 4H requires exactly four consecutive canonical 1H intervals and 1D requires all 24 intervals of the UTC day.
+- Canonical 1H timestamps represent candle open time for this derivation; final OHLCV eligibility is the exclusive interval end (`timestamp + 1H <= decisionTime`).
+- Missing or duplicate component intervals are never compressed into a derived candle.
 - Derived context cannot become a second executable-price authority.
 - 15m and additional execution domains are post-v1 unless explicitly approved.
 
@@ -98,4 +101,4 @@ The chatbot must not independently invent trading actions. It may explain ground
 
 ## Current implementation boundary
 
-This document does not claim that StrategyEligibility, the extensible rule registry, derived 4H/1D context, evidence-gated action policy, or ActionDecision already exists. Their implementation belongs to the roadmap gates and must preserve baseline replay, execution, and accounting parity.
+Derived 4H/1D research context is implemented as a pure, asset-scoped view over canonical 1H bars and is not connected to trading behavior. StrategyEligibility, the extensible rule registry, evidence-gated action policy, and ActionDecision do not yet exist. Their implementation belongs to later roadmap gates and must preserve baseline replay, execution, and accounting parity.

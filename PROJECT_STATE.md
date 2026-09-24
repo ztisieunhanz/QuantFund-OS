@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `3ffdc42701ac480f69f438114dcccd996db7fec6`
-- **Checkpoint Message**: `Gate M13B-2: add research dataset readiness assessment`
+- **Last Verified Code Checkpoint**: `2aaee91e9f36511060687106470c4378d68081e9`
+- **Checkpoint Message**: `Gate M13B-2: finalize research dataset readiness policy`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -52,14 +52,15 @@ Do not rely only on AI memory or previous agent reports.
   - **M13B-2 / B2-C-R1** (Shared Source-Artifact Identity Contract Repair): **COMPLETE** at `700fd05aa9fdf556c7e49e9bece94387440ce6d0`
   - **M13B-2 / B2-C-R2** (Artifact-Type ↔ Canonical-Series Link Validation): **COMPLETE** at `700fd05aa9fdf556c7e49e9bece94387440ce6d0`
   - **M13B-2 / B2-D** (Coverage / Missingness / Revision / Dataset Readiness): **COMPLETE** at `3ffdc42701ac480f69f438114dcccd996db7fec6`
-  - **M13B-2 / B2-E** (Final Data Policy + M13B Checkpoint Gate): **IMPLEMENTED — NOT CHECKPOINTED**; ready for independent review
+  - **M13B-2 / B2-E** (Final Data Policy + M13B Checkpoint Gate): **COMPLETE** at `2aaee91e9f36511060687106470c4378d68081e9`
+  - **M13C / C-A** (Derived PIT-Safe 4H + 1D Research Context): **IMPLEMENTED — NOT CHECKPOINTED**; ready for independent review
 - **Validation Baseline**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (797/797 tests across 30 test files at the last verified checkpoint)
+  - `npx vitest run`: **PASS** (804/804 tests across 30 test files at the last verified checkpoint)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
-  - **CI status**: The B2-D checkpoint at `3ffdc42701ac480f69f438114dcccd996db7fec6` passed the required remote workflow.
-- **Current Documented Phase**: B2-E resolves the required-versus-optional policy and makes the approved nine-series minimum capable of reaching `RESEARCH_READY` without changing the explicit `BLOCKED`/`CONDITIONAL` status of optional inputs. M13B is ready for final independent review; it is not checkpointed complete yet. M13C has **NOT STARTED**.
+  - **CI status**: The final M13B checkpoint at `2aaee91e9f36511060687106470c4378d68081e9` passed the required remote workflow.
+- **Current Documented Phase**: M13B is **COMPLETE**. M13C has started at C-A with a pure research-only derivation of complete UTC-aligned 4H and 1D candles from eligible canonical 1H bars. C-B and later gates have **NOT STARTED**.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -390,7 +391,7 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - B2-E resolves the B2-D policy limitation with an explicit nine-series required minimum and four-series optional classification; optional dependencies remain fail-closed at future rule level.
 - No historical macro model or macro action evidence is approved.
 - No action layer or `ActionDecision` is implemented.
-- No derived 4H/1D research context is implemented.
+- C-A derived 4H/1D research context is implemented but not checkpointed; it is not connected to trading authority.
 
 ---
 
@@ -404,7 +405,7 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - Historical macro alpha & regime strategy models (mapping PIT macro context to quant signals).
 - Historical event consensus provider integration & verified surprise calculation.
 - Historical factor freshness thresholds calibrated for daily/monthly series.
-- **M13C**: Derived 4H/1D research context from fully closed eligible canonical 1H bars.
+- **M13C C-B and later**: Research features/rules that may consume the C-A derived 4H/1D context.
 - **Post-v1 unless explicitly approved**: Additional executable time domains or a true multi-timeframe execution engine.
 - Short-selling support and margin semantics.
 - Train-set hyperparameter optimization & grid search engine.
@@ -442,8 +443,8 @@ For every major engineering gate:
 
 SYNC-02 adds the proposed repository CI contract and product-independent handoff rules. The workflow must not be described as active or passing until it is committed, pushed, and observed on the remote CI provider.
 
-### M13B-2 — Historical Research-Data Acquisition / Coverage Expansion
+### M13C / C-A — Derived PIT-Safe 4H + 1D Research Context
 
-**Status**: **READY FOR FINAL INDEPENDENT REVIEW**
+**Status**: **IMPLEMENTED — NOT CHECKPOINTED**
 
-B2-B1's immutable acquisition foundation and Binance BTC/PAXG adapter are complete. B2-B3's bounded H.15 US2Y/US10Y initial-release adapter, B2-B4's bounded CPI Index/YoY acquisition, B2-B5's FOMC policy acquisition, and B2-B6's bounded NFP vintage acquisition are complete. B2-C and B2-C-R1/R2 checkpoint immutable research-only snapshots and closed raw-artifact provenance/link contracts without granting readiness or executable-price authority. B2-D implements deterministic provider-specific coverage, missingness, PIT, and separate revision/vintage assessment. B2-E supersedes the legacy all-series dataset-readiness requirement with an explicit minimum: nine approved acquired series are required, while VIX/DXY remain optional `BLOCKED` inputs and CPI MoM/unemployment remain optional `CONDITIONAL` inputs. Optionality never permits fabrication or silent rule use. The minimum can reach `RESEARCH_READY` only under the approved coverage, PIT, missingness, revision, paired-FOMC, and rate-transition safeguards. M13B is ready for final independent review. M13C has not started, and no M14 action integration or production execution work is authorized.
+M13B is complete at `2aaee91e9f36511060687106470c4378d68081e9`. C-A derives deterministic UTC-aligned 4H and 1D research candles only from complete canonical 1H intervals whose close boundary is eligible at `decisionTime`. Missing hours and duplicate timestamps fail closed or suppress the affected incomplete bucket; current partial 4H/day buckets remain invisible. The API is pure, asset-scoped, immutable, and explicitly grants no executable-price, allocation, execution, or accounting authority. C-B and later M13C gates have not started.
