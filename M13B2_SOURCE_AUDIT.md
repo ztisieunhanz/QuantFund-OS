@@ -31,8 +31,8 @@ No source in this audit changes the execution-price boundary. Every acquired ser
 | `US_CPI_YOY` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPI-U All Items 12-month percent change, NSA; underlying `CUUR0000SA0` | Official archived BLS CPI HTML releases with explicit release header and published NSA summary | RESOLVED / IMPLEMENTED for bounded 2021-01 through 2026-08 reference-period regime |
 | `US_CPI_MOM` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPI-U All Items 1-month percent change, SA; Table A; underlying `CUSR0000SA0` | BLS archived releases, monthly supplemental files, and annual seasonal-adjustment archives | **CONDITIONAL** |
 | `US_CPI_INDEX` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPI-U All Items index, NSA, `CUUR0000SA0` | Official archived BLS CPI HTML releases with explicit release header and published NSA summary | RESOLVED / IMPLEMENTED for bounded 2021-01 through 2026-08 reference-period regime |
-| `US_NFP_NET_CHANGE` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CES Total Nonfarm over-the-month change; underlying level `CES0000000001` | Official CES Total Nonfarm vintage XLSX/ZIP plus Employment Situation release archive | RESOLVED |
-| `US_UNEMPLOYMENT_RATE` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPS unemployment rate, SA, `LNS14000000` | Employment Situation archived releases; ALFRED `UNRATE` may validate value-vintage mapping | **CONDITIONAL** |
+| `US_NFP_NET_CHANGE` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CES Total Nonfarm over-the-month change; underlying level `CES0000000001` | Official archived Employment Situation HTML releases, corroborated by official CES vintage documentation/files | RESOLVED / IMPLEMENTED for bounded 2021-01 through 2026-08 reference-period regime |
+| `US_UNEMPLOYMENT_RATE` | `MACRO_RELEASE` | `MONTHLY` | `VINTAGE_AWARE` | BLS CPS unemployment rate, SA, `LNS14000000` | Employment Situation archived releases and annual CPS seasonal-adjustment revision material; ALFRED `UNRATE` may validate value-vintage mapping | **CONDITIONAL**; no broad executable adapter |
 | `US_FED_FUNDS_TARGET_UPPER` | `MACRO_RELEASE` | `EVENT_DRIVEN` | `INITIAL_ONLY` | Federal Reserve FOMC statement target-range upper bound; FRED `DFEDTARU` is cross-check only | Official statement HTML/PDF and press-release metadata | RESOLVED from 2008 target-range era |
 | `FOMC_RATE_DECISION` | `OFFICIAL_EVENT` | `EVENT_DRIVEN` | `NOT_APPLICABLE` | Federal Reserve FOMC policy statement / rate decision | FOMC calendar plus official statement HTML/PDF | RESOLVED |
 
@@ -174,23 +174,32 @@ The two percent-change series are measures, not aliases for index-level series. 
 
 - Canonical measure: directly published seasonally adjusted over-the-month Total Nonfarm employment change, thousands of persons.
 - Provider identifier: BLS CES Total Nonfarm; underlying employment-level series `CES0000000001`.
-- Primary source: official CES Total Nonfarm vintage file (`cesvin00.xlsx`, or the official CES vintage ZIP/CSV) plus Employment Situation archived releases for release identity and timestamp.
+- The B2-B6 implementation uses official archived Employment Situation HTML releases as the primary executable artifacts. It requires the direct headline monthly change, the two explicit prior-month revision sentences, the `USDL` release identity, the archive URL date, and the explicit embargo header to agree. It never derives NFP by subtracting current employment levels.
+- Official CES Total Nonfarm vintage files (`cesvin00.xlsx` and the official CES vintage ZIP/CSV) corroborate the publication model and remain an audit/expansion source rather than a second executable parser in this bounded gate.
 - BLS states the vintage tables include both employment levels and over-the-month changes and preserve published values from first preliminary estimates onward (current-method vintages from May 2003).
-- Do not subtract a revised level from a different vintage. If levels are used, both months must be from the exact same publication row/vintage.
+- BLS revises an initial CES monthly estimate in each of the next two releases. B2-B6 maps these source-defined publications to canonical `revisionIndex` 0 (initial), 1 (first revision), and 2 (second/final regular revision). The prior-published value in each revision sentence must agree with any supplied preceding vintage or acquisition fails closed.
+- Annual benchmark and seasonal-readjustment effects that are explicitly reflected in those two regular revision sentences are preserved. Later benchmark-restated historical tables are not ingested as extra vintages in this implementation; extending beyond the regular three-publication sequence requires a separately reviewed contract.
+- The implemented parser is bounded to reference periods 2021-01 through 2026-08 and the examined modern archive schema. Unsupported, corrected/reissued, ambiguous, conflicting, or out-of-regime artifacts fail closed.
+- Do not subtract a revised level from a different vintage. If levels are used by a future extension, both months must be from the exact same publication row/vintage.
 
 **Unemployment source contract and condition**
 
 - Canonical measure: seasonally adjusted CPS unemployment rate, percent, BLS series `LNS14000000`.
 - Primary evidence: as-published Employment Situation archived releases. ALFRED `UNRATE` output with explicit value-vintage rows may be used as a secondary reconstruction/validation source.
 - The current BLS API series is not sufficient by itself because it does not promise the full historical sequence of values known at each release.
-- Before full acquisition, B2-B must demonstrate a deterministic five-year fixture that maps every initial/revised unemployment value to the exact archived release date. If archives omit a changed historical value, the series remains unresolved rather than backfilled with today's value.
+- Archived releases do expose the actual as-published monthly unemployment rate. They also prove that current history can differ: October 2023 was first published as `3.9` percent and was shown as `3.8` after the January 2024 annual seasonal-adjustment revision.
+- BLS states that seasonally adjusted CPS history for the previous five years is revised annually and that population-control changes can introduce additional comparability and correction issues. The 2026 January estimate was revised in March without reissuing its original Employment Situation release, demonstrating that archived headline pages alone do not enumerate every later value-vintage transition.
+- B2-B6 therefore does not establish a complete deterministic five-year mapping across annual seasonal revisions, population-control changes, errata, and non-reissued releases. `US_UNEMPLOYMENT_RATE` remains **CONDITIONAL**; no broad executable unemployment acquisition function or canonical unemployment release output is exposed.
+- A future resolution must inventory every required initial and revised value against its exact official publication artifact and release boundary. Missing evidence must fail closed rather than being replaced with today's revised value.
 
 **Shared timestamps and coverage**
 
 - Raw timestamps: reference month, release date, release time, archive/release ID, and vintage publication row/date.
 - Canonical `observationTime`: reference-month end at UTC midnight.
-- Canonical `publishedAt`/`availableAt`: release date at 08:30 `America/New_York`, unless an explicit archived witness differs.
+- Canonical `publishedAt`/`availableAt`: each accepted archived release's explicitly witnessed 08:30 ET boundary, converted in `America/New_York` with historical DST. The B2-B6 parser rejects rather than assumes a different or missing release clock.
 - Expected denominator: scheduled monthly Employment Situation releases. Missing/cancelled releases and explicit errata are recorded; weekends are irrelevant.
+- For NFP, expected observation periods are monthly reference periods; revisions add vintages rather than periods. Missing reference periods and publication opportunities for revision indexes 0/1/2 are reported separately without interpolation or forward fill.
+- `releasedThroughMs` filters the complete PIT-facing result. A future release contributes no macro row, evidence row, raw artifact identity/hash, manifest provenance, normalized identity, or coverage endpoint.
 - Public BLS archives/vintage files need no secret. ALFRED validation requires an API key and is subject to its rate limit.
 
 ### 3.7 Federal Reserve FOMC — target upper and rate-decision events
@@ -285,7 +294,7 @@ No credential value belongs in source code, manifests, normalized records, snaps
 
 1. **DXY — blocking:** licensed ICE delivery, exact EOD field, publication boundary, history entitlement, and storage/redistribution terms are not yet approved. Yahoo `DX-Y.NYB` is not an approved substitute.
 2. **CPI MoM — conditional:** the B2-B4 proof detects a representative annual revision (`2023-12`: `0.3` initially, `0.2` after the February 2024 recalculation), confirming that current revised SA history is unsafe for backdating. Complete release-by-release seasonal-vintage reconstruction and missing-artifact handling across the required window remain unproven, so no executable broad CPI MoM adapter exists.
-3. **Unemployment — conditional:** archived Employment Situation releases or ALFRED must be shown to recover every as-published value/vintage required by the protocol, not merely current history.
+3. **Unemployment — conditional:** B2-B6 proves individual archived as-published values and an annual revision difference, but not a complete deterministic five-year map across annual CPS seasonal revisions, population-control changes, errata, and non-reissued releases. No broad unemployment adapter exists; current revised history must not be backdated.
 4. **H.15 release mapping:** B2-B must prove the observation-date to release-date witness for a sample spanning ordinary weekdays, weekends, holidays, and a Board closure. Observation date alone is forbidden.
 5. **Binance timestamp units:** archive timestamps switch to microseconds from 2025. The current M12 millisecond parser contract needs an acquisition-side unit-normalization boundary and deterministic tests.
 6. **Historical file schemas:** BLS HTML/PDF/XLSX layouts vary by era. Parsers must be versioned, fixture-backed, and fail closed on unknown layouts.

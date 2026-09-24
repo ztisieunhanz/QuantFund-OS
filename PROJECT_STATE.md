@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `29c777079e0483c84b5875a9c09e42cd4b20848d`
-- **Checkpoint Message**: `Gate M13B-2: add BLS CPI PIT acquisition`
+- **Last Verified Code Checkpoint**: `65b268923ab7509391b2ee39a0bc87099d352b6d`
+- **Checkpoint Message**: `Gate M13B-2: add FOMC policy PIT acquisition`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -46,14 +46,15 @@ Do not rely only on AI memory or previous agent reports.
   - **M13B-2 / B2-B2R** (VIX Source Contract): **BLOCKED** pending defensible timestamped source semantics/access
   - **M13B-2 / B2-B3** (Federal Reserve H.15 US2Y/US10Y PIT Acquisition): **COMPLETE** at `dce533a0702f974469e0c24df96d9d8ba1b0c5c4`
   - **M13B-2 / B2-B4** (BLS CPI Historical PIT Acquisition): **COMPLETE** at `29c777079e0483c84b5875a9c09e42cd4b20848d`; CPI Index/YoY implemented for a bounded archive regime, CPI MoM remains conditional
-  - **M13B-2 / B2-B5** (FOMC Decision + Fed Funds Target Upper PIT Acquisition): **IN PROGRESS — NOT CHECKPOINTED** against baseline `29c777079e0483c84b5875a9c09e42cd4b20848d`
+  - **M13B-2 / B2-B5** (FOMC Decision + Fed Funds Target Upper PIT Acquisition): **COMPLETE** at `65b268923ab7509391b2ee39a0bc87099d352b6d`
+  - **M13B-2 / B2-B6** (BLS Labor Historical PIT Acquisition): **IN PROGRESS — NOT CHECKPOINTED** against baseline `65b268923ab7509391b2ee39a0bc87099d352b6d`; bounded NFP acquisition is implemented for review while unemployment remains conditional
 - **Validation Baseline**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (661/661 tests across 27 test files)
+  - `npx vitest run`: **PASS** (707/707 tests across 28 test files)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
-  - **CI status**: The B2-B4 checkpoint at `29c777079e0483c84b5875a9c09e42cd4b20848d` passed the required remote workflow; B2-B5 remains uncommitted and therefore has no CI run yet.
-- **Current Documented Phase**: M13B-2 remains **INCOMPLETE**. B2-B1, B2-B3, and B2-B4 are complete; B2-B2R leaves VIX blocked; B2-B5 FOMC/Fed Funds acquisition is in progress against baseline `29c777079e0483c84b5875a9c09e42cd4b20848d`. CPI MoM remains conditional, DXY remains blocked, and M13C has not started.
+  - **CI status**: The B2-B5 checkpoint at `65b268923ab7509391b2ee39a0bc87099d352b6d` passed the required remote workflow; B2-B6 remains uncommitted and therefore has no CI run yet.
+- **Current Documented Phase**: M13B-2 remains **INCOMPLETE**. B2-B1, B2-B3, B2-B4, and B2-B5 are complete; B2-B2R leaves VIX blocked; B2-B6 bounded NFP acquisition is in progress against baseline `65b268923ab7509391b2ee39a0bc87099d352b6d`, while unemployment remains conditional pending a complete five-year as-published vintage map. CPI MoM remains conditional, DXY remains blocked, and M13C has not started.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
