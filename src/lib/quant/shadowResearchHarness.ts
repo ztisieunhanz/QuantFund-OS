@@ -96,6 +96,10 @@ export interface StatefulShadowResearchObservation<S extends StatefulResearchSta
   readonly stateTransition: StatefulResearchTransition<S>;
 }
 
+export type ShadowResearchObservation =
+  | StatelessShadowResearchObservation
+  | StatefulShadowResearchObservation<StatefulResearchState>;
+
 export interface ShadowResearchRunInput {
   readonly registry: HypothesisRegistrySnapshot;
   readonly hypothesisId: string;
@@ -474,6 +478,227 @@ function observationIdentity(input: {
   });
 }
 
+export function shadowResearchStateIdentity(state: StatefulResearchState): string {
+  return canonicalJson(state);
+}
+
+function validateObservationContract(observation: ShadowResearchObservation): void {
+  if (observation.kind !== "SHADOW_RESEARCH_OBSERVATION"
+    || observation.schemaVersion !== SHADOW_RESEARCH_SCHEMA_VERSION
+    || observation.intendedUse !== "SHADOW_RESEARCH_ONLY"
+    || observation.predictiveValidityEstablished !== false
+    || observation.approvedForPaperAction !== false
+    || observation.grantsExecutionAuthority !== false
+    || observation.priceAuthority !== "NONE") {
+    fail("observation has an incompatible or authority-bearing contract.");
+  }
+  if (!Number.isSafeInteger(observation.decisionTime) || observation.decisionTime < 0
+    || observation.asOf !== observation.decisionTime
+    || typeof observation.assetId !== "string" || observation.assetId.trim().length === 0) {
+    fail("observation has an invalid asset or decisionTime/asOf boundary.");
+  }
+  if (!["STATELESS", "STATEFUL"].includes(observation.evaluationKind)
+    || !["TRAIN", "OOS", "OUTSIDE_DECLARED_WINDOW"].includes(observation.window)
+    || !["MATCH", "NO_MATCH", "INSUFFICIENT_EVIDENCE"].includes(observation.status)) {
+    fail("observation has an unsupported evaluation kind, window, or status.");
+  }
+  const binding = observation.binding;
+  for (const [field, value] of Object.entries({
+    hypothesisId: binding.hypothesisId,
+    hypothesisVersion: binding.hypothesisVersion,
+    hypothesisSemanticIdentity: binding.hypothesisSemanticIdentity,
+    ruleId: binding.ruleId,
+    ruleVersion: binding.ruleVersion,
+    ruleSemanticIdentity: binding.ruleSemanticIdentity,
+    parameterConfigurationIdentity: binding.parameterConfigurationIdentity,
+    trialAccountingIdentity: binding.trialAccountingIdentity,
+    featureVectorSemanticIdentity: observation.featureVectorSemanticIdentity,
+  })) {
+    if (typeof value !== "string" || value.length === 0) fail(`observation ${field} must be non-empty.`);
+  }
+  const expectedParameterIdentity = canonicalJson({
+    hypothesisSemanticIdentity: binding.hypothesisSemanticIdentity,
+    parameters: binding.parameterConfiguration,
+  });
+  if (binding.parameterConfigurationIdentity !== expectedParameterIdentity
+    || binding.trialAccountingIdentity !== canonicalJson(binding.trialAccounting)) {
+    fail("observation binding has a forged parameter or trial identity.");
+  }
+  for (const [name, value] of Object.entries(binding.parameterConfiguration)) {
+    if (!(value === null || typeof value === "string" || typeof value === "boolean"
+      || (typeof value === "number" && Number.isFinite(value)))) {
+      fail(`observation parameterConfiguration.${name} is not a deterministic scalar.`);
+    }
+  }
+}
+
+function validateRuleResult(
+  result: ResearchRuleResult,
+  observation: StatelessShadowResearchObservation
+): void {
+  if (result.kind !== "RESEARCH_EVIDENCE"
+    || result.ruleId !== observation.binding.ruleId
+    || result.version !== observation.binding.ruleVersion
+    || result.semanticIdentity !== observation.binding.ruleSemanticIdentity
+    || result.status !== observation.status
+    || result.decisionTime !== observation.decisionTime
+    || result.evaluatedAt !== observation.decisionTime
+    || result.asOf !== observation.asOf
+    || result.assetId !== observation.assetId
+    || result.predictiveValidityAssessed !== false
+    || result.grantsExecutionAuthority !== false) {
+    fail("stateless observation result is incompatible with its binding or PIT boundary.");
+  }
+  validateNestedRuleEvidence(result, observation.decisionTime, observation.asOf, observation.assetId);
+}
+
+function validateNestedRuleEvidence(
+  result: ResearchRuleResult,
+  decisionTime: number,
+  asOf: number,
+  assetId: AssetId
+): void {
+  if (result.kind !== "RESEARCH_EVIDENCE"
+    || !["MATCH", "NO_MATCH", "INSUFFICIENT_EVIDENCE"].includes(result.status)
+    || result.decisionTime !== decisionTime
+    || result.evaluatedAt !== decisionTime
+    || result.asOf !== asOf
+    || result.assetId !== assetId
+    || result.predictiveValidityAssessed !== false
+    || result.grantsExecutionAuthority !== false) {
+    fail("observation contains incompatible, non-PIT, or authority-bearing rule evidence.");
+  }
+  for (const child of result.childResults) {
+    validateNestedRuleEvidence(child, decisionTime, asOf, assetId);
+  }
+}
+
+function validateFeatureEvidence(observation: ShadowResearchObservation): void {
+  const declared = new Set(observation.binding.declaredDependencies.map(dependencyKey));
+  const seen = new Set<string>();
+  for (const feature of observation.featureEvidence) {
+    const key = `${feature.featureId}@${feature.version}`;
+    if (seen.has(key)) fail(`observation contains duplicate feature evidence ${key}.`);
+    seen.add(key);
+    if (typeof feature.featureId !== "string" || feature.featureId.length === 0
+      || typeof feature.version !== "string" || feature.version.length === 0
+      || typeof feature.semanticIdentity !== "string" || feature.semanticIdentity.length === 0
+      || !["AVAILABLE", "UNAVAILABLE"].includes(feature.status)
+      || !declared.has(dependencyKey(feature.dependency))
+      || feature.decisionTime !== observation.decisionTime
+      || feature.asOf !== observation.asOf
+      || feature.assetId !== observation.assetId
+      || feature.predictiveValidityEstablished !== false
+      || feature.approvedForPaperAction !== false
+      || feature.grantsExecutionAuthority !== false) {
+      fail("observation contains undeclared, cross-boundary, or authority-bearing feature evidence.");
+    }
+    if (feature.status === "AVAILABLE") {
+      if (feature.reasonCode !== "AVAILABLE"
+        || !Number.isFinite(feature.value) || feature.provenance === null) {
+        fail("available feature evidence must contain a finite value and provenance.");
+      }
+      const availableAt = feature.provenance.kind === "TECHNICAL_BARS"
+        ? feature.provenance.latestAvailableAt
+        : feature.provenance.availableAt;
+      if (!Number.isSafeInteger(availableAt) || availableAt > observation.decisionTime) {
+        fail("feature evidence is not PIT-eligible at observation decisionTime.");
+      }
+      if (feature.provenance.kind === "TECHNICAL_BARS"
+        && feature.provenance.records.some((record) => record.availableAt > observation.decisionTime)) {
+        fail("technical feature provenance contains future evidence.");
+      }
+      if (feature.provenance.kind === "RESEARCH_SERIES"
+        && (feature.provenance.record.availableAt > observation.decisionTime
+          || feature.provenance.record.availableAt !== feature.provenance.availableAt)) {
+        fail("research-series feature provenance contains future or inconsistent evidence.");
+      }
+    } else if (feature.reasonCode === "AVAILABLE"
+      || feature.value !== null || feature.provenance !== null) {
+      fail("unavailable feature evidence must not fabricate a value or provenance.");
+    }
+  }
+}
+
+function validateStateTransition(
+  observation: StatefulShadowResearchObservation<StatefulResearchState>
+): void {
+  const transition = observation.stateTransition;
+  const boundary = observation.stateBoundaryEvidence;
+  if (!boundary || transition.kind !== "RESEARCH_STATE_TRANSITION"
+    || transition.ruleId !== observation.binding.ruleId
+    || transition.version !== observation.binding.ruleVersion
+    || transition.semanticIdentity !== observation.binding.ruleSemanticIdentity
+    || transition.status !== observation.status
+    || transition.decisionTime !== observation.decisionTime
+    || transition.asOf !== observation.asOf
+    || transition.assetId !== observation.assetId
+    || transition.predictiveValidityAssessed !== false
+    || transition.grantsExecutionAuthority !== false) {
+    fail("stateful observation transition is incompatible with its binding or PIT boundary.");
+  }
+  for (const child of transition.childResults) {
+    validateNestedRuleEvidence(child, observation.decisionTime, observation.asOf, observation.assetId);
+  }
+  if (observation.binding.statefulOosBoundaryPolicy === "NOT_APPLICABLE"
+    || boundary.policy !== observation.binding.statefulOosBoundaryPolicy) {
+    fail("stateful observation boundary policy is incompatible with its binding.");
+  }
+  if (transition.previousState.assetId !== observation.assetId
+    || transition.nextState.assetId !== observation.assetId
+    || transition.previousState.ruleSemanticIdentity !== observation.binding.ruleSemanticIdentity
+    || transition.nextState.ruleSemanticIdentity !== observation.binding.ruleSemanticIdentity
+    || transition.previousState.lastDecisionTime !== boundary.priorStateLastDecisionTime
+    || transition.nextState.lastDecisionTime !== observation.decisionTime
+    || boundary.priorStateIdentity !== shadowResearchStateIdentity(transition.previousState)
+    || typeof boundary.canonicalInitialStateIdentity !== "string"
+    || boundary.canonicalInitialStateIdentity.length === 0
+    || (boundary.priorStateLastDecisionTime !== null
+      && (!Number.isSafeInteger(boundary.priorStateLastDecisionTime)
+        || boundary.priorStateLastDecisionTime >= observation.decisionTime))) {
+    fail("stateful observation has invalid or inconsistent state-boundary evidence.");
+  }
+}
+
+export function validateShadowResearchObservation(
+  observation: ShadowResearchObservation
+): ShadowResearchObservation {
+  validateObservationContract(observation);
+  validateFeatureEvidence(observation);
+  if (observation.evaluationKind === "STATELESS") {
+    if (observation.binding.statefulOosBoundaryPolicy !== "NOT_APPLICABLE"
+      || observation.stateBoundaryEvidence !== null
+      || observation.stateTransition !== null
+      || observation.ruleResult === null) {
+      fail("stateless observation has incompatible state-boundary evidence.");
+    }
+    validateRuleResult(observation.ruleResult, observation);
+  } else {
+    if (observation.ruleResult !== null || observation.stateTransition === null) {
+      fail("stateful observation must contain exactly one state transition.");
+    }
+    validateStateTransition(observation);
+  }
+  const recomputed = observationIdentity({
+    evaluationKind: observation.evaluationKind,
+    binding: observation.binding,
+    assetId: observation.assetId,
+    decisionTime: observation.decisionTime,
+    asOf: observation.asOf,
+    window: observation.window,
+    featureVectorSemanticIdentity: observation.featureVectorSemanticIdentity,
+    featureEvidence: observation.featureEvidence,
+    stateBoundaryEvidence: observation.stateBoundaryEvidence,
+    evaluation: observation.evaluationKind === "STATELESS"
+      ? observation.ruleResult
+      : observation.stateTransition,
+  });
+  if (recomputed !== observation.semanticIdentity) {
+    fail("observation semantic identity is forged or stale.");
+  }
+  return observation;
+}
+
 export function runStatelessShadowObservation(
   input: StatelessShadowResearchRunInput
 ): StatelessShadowResearchObservation {
@@ -528,9 +753,9 @@ export function runStatefulShadowObservation<S extends StatefulResearchState>(
   const canonicalInitialState = input.rule.createInitialState(input.context.assetId);
   const stateBoundaryEvidence = deepFreeze({
     policy: prepared.hypothesis.statefulOosBoundaryPolicy,
-    priorStateIdentity: canonicalJson(input.priorState),
+    priorStateIdentity: shadowResearchStateIdentity(input.priorState),
     priorStateLastDecisionTime: input.priorState.lastDecisionTime,
-    canonicalInitialStateIdentity: canonicalJson(canonicalInitialState),
+    canonicalInitialStateIdentity: shadowResearchStateIdentity(canonicalInitialState),
   });
   const stateTransition = input.rule.transition(input.priorState, prepared.context);
   const semanticIdentity = observationIdentity({
