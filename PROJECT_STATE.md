@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `5d07cb5c28b33ba92e0a09872468eaaa0ff91fc6`
-- **Checkpoint Message**: `Gate M13B-2: add immutable research dataset snapshots`
+- **Last Verified Code Checkpoint**: `700fd05aa9fdf556c7e49e9bece94387440ce6d0`
+- **Checkpoint Message**: `Gate M13B-2: repair research artifact provenance contracts`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -49,16 +49,16 @@ Do not rely only on AI memory or previous agent reports.
   - **M13B-2 / B2-B5** (FOMC Decision + Fed Funds Target Upper PIT Acquisition): **COMPLETE** at `65b268923ab7509391b2ee39a0bc87099d352b6d`
   - **M13B-2 / B2-B6** (BLS Labor Historical PIT Acquisition): **COMPLETE** at `4354558ac5042777e0423dcfac498a4e57587ea3`; bounded NFP vintage acquisition is implemented while unemployment remains conditional
   - **M13B-2 / B2-C** (Immutable Dataset Snapshot / Hash / Reproducibility): **COMPLETE** at `5d07cb5c28b33ba92e0a09872468eaaa0ff91fc6`
-  - **M13B-2 / B2-C-R1** (Shared Source-Artifact Identity Contract Repair): **IN PROGRESS — NOT CHECKPOINTED** against baseline `5d07cb5c28b33ba92e0a09872468eaaa0ff91fc6`; real BLS CPI integration exposed the source-artifact/canonical-series identity mismatch
-  - **M13B-2 / B2-C-R2** (Artifact-Type ↔ Canonical-Series Link Validation): **IN PROGRESS — NOT CHECKPOINTED** in the same WIP; R1 review exposed the need for a separate closed artifact-type/series compatibility contract
-  - **M13B-2 / B2-D** (Coverage / Missingness / Dataset Readiness): **NOT STARTED — BLOCKED** pending independent review of B2-C-R1/R2
+  - **M13B-2 / B2-C-R1** (Shared Source-Artifact Identity Contract Repair): **COMPLETE** at `700fd05aa9fdf556c7e49e9bece94387440ce6d0`
+  - **M13B-2 / B2-C-R2** (Artifact-Type ↔ Canonical-Series Link Validation): **COMPLETE** at `700fd05aa9fdf556c7e49e9bece94387440ce6d0`
+  - **M13B-2 / B2-D** (Coverage / Missingness / Revision / Dataset Readiness): **IMPLEMENTED — NOT CHECKPOINTED**; deterministic assessment is fail-closed on unresolved required-versus-optional policy
 - **Validation Baseline**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (764/764 tests across 29 test files)
+  - `npx vitest run`: **PASS** (783/783 tests across 29 test files at the last verified checkpoint)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
-  - **CI status**: The B2-C checkpoint at `5d07cb5c28b33ba92e0a09872468eaaa0ff91fc6` passed the required remote workflow; B2-C-R1 remains uncommitted and therefore has no CI run yet.
-- **Current Documented Phase**: M13B-2 remains **INCOMPLETE**. B2-C is checkpointed; B2-C-R1/R2 repair shared source-artifact identity and enforce a closed artifact-type-to-canonical-series compatibility contract. B2-D is not started and remains blocked pending independent review. B2-B2R leaves VIX blocked, unemployment and CPI MoM remain conditional, DXY remains blocked, and M13C has not started.
+  - **CI status**: The B2-C-R1/R2 checkpoint at `700fd05aa9fdf556c7e49e9bece94387440ce6d0` passed the required remote workflow.
+- **Current Documented Phase**: M13B-2 remains **INCOMPLETE**. B2-D is implemented but not checkpointed and cannot claim `RESEARCH_READY` because the approved documents do not yet reconcile M13B-1's all-series requirement with VIX/DXY `BLOCKED` and CPI MoM/unemployment `CONDITIONAL`. The evaluator reports provider-specific coverage and separate vintage completeness with machine-readable reasons. M13C has **NOT STARTED**.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -385,8 +385,8 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 ### Explicit Current Debts
 
 - A real research-grade historical dataset has not been acquired.
-- Dataset-level immutable SHA-256 snapshot assembly is checkpointed in B2-C; B2-C-R1/R2 repair source-artifact identity, explicit canonical-series linkage, and closed artifact-type/series compatibility before B2-D, while production persistence remains pending.
-- Provider-specific missingness denominator rules remain pending.
+- Dataset-level immutable SHA-256 snapshot assembly and the B2-C-R1/R2 provenance repairs are checkpointed; production persistence remains pending.
+- B2-D implements provider-specific coverage denominators and separate revision completeness, but required-versus-optional readiness policy remains unresolved and fail-closed.
 - No historical macro model or macro action evidence is approved.
 - No action layer or `ActionDecision` is implemented.
 - No derived 4H/1D research context is implemented.
@@ -445,4 +445,4 @@ SYNC-02 adds the proposed repository CI contract and product-independent handoff
 
 **Status**: **INCOMPLETE**
 
-B2-B1's immutable acquisition foundation and Binance BTC/PAXG adapter are complete. B2-B3's bounded H.15 US2Y/US10Y initial-release adapter, B2-B4's bounded CPI Index/YoY acquisition, B2-B5's FOMC policy acquisition, and B2-B6's bounded NFP vintage acquisition are complete. B2-C checkpointed one immutable, research-only SHA-256 snapshot contract without granting readiness or executable-price authority. B2-C-R1 separates provider-level source-artifact identity from canonical research-series linkage, and B2-C-R2 adds a separate closed compatibility contract so valid artifacts cannot support unrelated canonical series. B2-D remains not started and blocked pending review of those repairs. VIX and DXY remain blocked; CPI MoM and unemployment remain conditional. M13B-2 remains incomplete and must not silently start M13C research rules, M14 action integration, or production execution work.
+B2-B1's immutable acquisition foundation and Binance BTC/PAXG adapter are complete. B2-B3's bounded H.15 US2Y/US10Y initial-release adapter, B2-B4's bounded CPI Index/YoY acquisition, B2-B5's FOMC policy acquisition, and B2-B6's bounded NFP vintage acquisition are complete. B2-C and B2-C-R1/R2 checkpoint immutable research-only snapshots and closed raw-artifact provenance/link contracts without granting readiness or executable-price authority. B2-D now implements deterministic provider-specific coverage, missingness, PIT, and separate revision/vintage assessment. Its top-level readiness remains fail-closed as `READINESS_POLICY_UNRESOLVED` because no approved required-versus-optional policy reconciles the original all-series requirement with VIX/DXY `BLOCKED` and CPI MoM/unemployment `CONDITIONAL`. M13B-2 remains incomplete. M13C has not started, and no M14 action integration or production execution work is authorized.
