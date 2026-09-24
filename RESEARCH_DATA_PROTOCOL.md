@@ -4,7 +4,7 @@ This protocol defines machine-checkable metadata and coverage rules for immutabl
 
 ## Fixture data versus research-grade data
 
-The repository's compact M12 samples are deterministic parser and anti-lookahead fixtures. They are not a research-grade history. The legacy M13B-1 coverage API retains its `FIXTURE_ONLY` / `INSUFFICIENT` / `RESEARCH_READY` classifications, but B2-D does not promote an immutable B2-C snapshot merely because its hash is valid. B2-D fails closed as `READINESS_POLICY_UNRESOLVED` until an approved required-versus-optional series policy reconciles the original all-series requirement with the source-audit statuses below.
+The repository's compact M12 samples are deterministic parser and anti-lookahead fixtures. They are not a research-grade history. The legacy M13B-1 coverage API retains its `FIXTURE_ONLY` / `INSUFFICIENT` / `RESEARCH_READY` classifications for that original contract, but B2-E's `M13B-2-B2E-MINIMUM-V1` policy is authoritative for immutable dataset-level readiness. A valid snapshot hash alone never establishes `RESEARCH_READY`.
 
 ## Initial universe
 
@@ -24,9 +24,9 @@ Consensus is optional and nullable. It is not required because no separately ver
 
 ## Missingness, provenance, and coverage
 
-Each series reports a record count, missing count and counting method, coverage timestamps, provider instrument, availability rule, and a durable source descriptor. Missing observations are not silently interpolated. The coverage policy requires multi-year breadth, sufficiently broad monthly history, at least one observed VIX value at or above the predeclared administrative threshold, observed upward and downward Fed Funds target transitions, PIT availability, and revision-aware storage.
+Each series reports a record count, missing count and counting method, coverage timestamps, provider instrument, availability rule, and a durable source descriptor. Missing observations are not silently interpolated. The original M13B-1 policy required the whole initial universe, including an elevated VIX observation. B2-E supersedes that all-series requirement only for dataset-level M13 research readiness while preserving five-year breadth, 60 monthly periods, a maximum 5% provider-declared missing ratio, PIT availability, applicable revision completeness, and observed upward and downward Fed Funds target transitions.
 
-The VIX and rate-direction checks establish only that those observations exist in the snapshot. One elevated VIX datapoint does not establish a stress regime, and one rate move does not establish a tightening or easing phase. Accordingly, the policy and coverage report use observation/transition terminology and `RESEARCH_READY` makes no claim that an economic regime or policy cycle has been represented. These are data-readiness criteria, not guarantees of regime diversity, statistical significance, or predictive validity.
+The legacy VIX and current rate-direction checks establish only that those observations exist in the snapshot. One elevated VIX datapoint does not establish a stress regime, and one rate move does not establish a tightening or easing phase. Accordingly, coverage reports use observation/transition terminology and `RESEARCH_READY` makes no claim that an economic regime or policy cycle has been represented. These are data-readiness criteria, not guarantees of regime diversity, statistical significance, or predictive validity.
 
 ## Immutable snapshot identity
 
@@ -48,7 +48,17 @@ Revision completeness is independent of observation coverage. NFP expects revisi
 
 Current source status is explicit: BTC, PAXG, US2Y, US10Y, CPI Index, CPI YoY, NFP, Fed Funds target upper, and FOMC decisions are acquired when present in a validated snapshot; VIX and DXY remain `BLOCKED`; CPI MoM and unemployment remain `CONDITIONAL`; other supported-but-absent content is `NOT_INCLUDED`. Blocked or conditional series receive no fake zero-row manifest.
 
-The original M13B-1 policy lists every canonical series as required, while approved source evidence leaves four of those series unresolved. No approved document currently says which unresolved series are mandatory or optional for B2-D readiness. The evaluator therefore emits the machine-readable reason `REQUIRED_SERIES_POLICY_UNRESOLVED` and cannot return `RESEARCH_READY`. This limitation must be resolved by an independently approved data policy, not by acquisition code. Readiness, once definable, will mean only compliance with the historical data-quality, coverage, PIT, and revision contract. It will not establish profitability, predictive validity, statistical significance, ActionDecision eligibility, paper allocation, or execution authority.
+## B2-E final minimum data policy
+
+The machine-readable `M13B-2-B2E-MINIMUM-V1` policy resolves the B2-D limitation. Required series are BTC, PAXG, US2Y, US10Y, CPI Index, CPI YoY, NFP net change, Fed Funds target upper, and FOMC rate decisions. Optional series are DXY, VIX, CPI MoM, and unemployment. DXY and VIX remain `BLOCKED`; CPI MoM and unemployment remain `CONDITIONAL`. Optionality is a dataset-level minimum decision, not a data-quality waiver: absent optional series remain explicitly unavailable and receive no fake manifest, interpolation, substitution, or assumed value.
+
+M13C rules and later hypotheses must declare their data dependencies. A rule that depends on an optional series is unavailable or `INSUFFICIENT_EVIDENCE` while that series is unavailable; it cannot silently proceed without its declared input. This dependency enforcement belongs to M13C/M13D and is not implemented by B2-E.
+
+For required series, readiness requires a valid immutable snapshot, acquired status, valid PIT ordering, five-year observation breadth, at least 60 periods for monthly series, and no more than 5% provider-declared missingness where a denominator is known. NFP must have all initial/first/second-final regular vintages whose release opportunities are public. CPI Index/YoY may retain `UNKNOWN` final-vintage completeness only when every observed period has its initial as-published vintage and no expected initial vintage is missing; no final revision is invented.
+
+Fed Funds target upper retains an `UNKNOWN` standalone coverage denominator. That unknown is acceptable only when target states are acquired, `INITIAL_ONLY`-complete, PIT-valid, and paired with complete PIT-valid official FOMC event coverage; upward and downward target transitions remain required. No daily or monthly denominator is invented.
+
+`RESEARCH_READY` means only that the immutable historical dataset satisfies this minimum data-quality, coverage, PIT, and revision policy for subsequent research. It does not establish profitability, predictive validity, statistical significance, rule approval, ActionDecision eligibility, paper allocation, execution, or accounting authority.
 
 ## Architectural boundary
 

@@ -1,5 +1,4 @@
 import {
-  DEFAULT_RESEARCH_COVERAGE_POLICY,
   RESEARCH_SERIES_SPECS,
   type ResearchCadence,
   type ResearchSeriesId,
@@ -17,17 +16,93 @@ import {
   type ResearchSeriesAcquisitionStatus,
 } from "./researchDatasetSnapshot";
 
+export type ResearchSeriesReadinessRole = "REQUIRED" | "OPTIONAL";
+
+export interface ResearchSeriesReadinessPolicyEntry {
+  readonly role: ResearchSeriesReadinessRole;
+  readonly rationale: string;
+}
+
+export const M13B_REQUIRED_RESEARCH_SERIES = Object.freeze([
+  "BTC",
+  "PAXG",
+  "US2Y",
+  "US10Y",
+  "US_CPI_INDEX",
+  "US_CPI_YOY",
+  "US_NFP_NET_CHANGE",
+  "US_FED_FUNDS_TARGET_UPPER",
+  "FOMC_RATE_DECISION",
+] as const satisfies readonly ResearchSeriesId[]);
+
+export const M13B_OPTIONAL_RESEARCH_SERIES = Object.freeze([
+  "DXY",
+  "VIX",
+  "US_CPI_MOM",
+  "US_UNEMPLOYMENT_RATE",
+] as const satisfies readonly ResearchSeriesId[]);
+
+export const M13B_RESEARCH_DATASET_READINESS_POLICY = deepFreeze({
+  policyId: "M13B-2-B2E-MINIMUM-V1",
+  supersedesForDatasetReadiness: "M13B-1-COVERAGE-V1",
+  minimumCoverageDays: 365 * 5,
+  minimumMonthlyObservationPeriods: 60,
+  maximumMissingRatio: 0.05,
+  requireUpwardRateTransition: true,
+  requireDownwardRateTransition: true,
+  requiredSeries: M13B_REQUIRED_RESEARCH_SERIES,
+  optionalSeries: M13B_OPTIONAL_RESEARCH_SERIES,
+  series: {
+    BTC: { role: "REQUIRED", rationale: "Canonical 1H crypto market research input." },
+    PAXG: { role: "REQUIRED", rationale: "Canonical 1H gold-proxy market research input." },
+    US2Y: { role: "REQUIRED", rationale: "Approved short-rate market-factor context." },
+    US10Y: { role: "REQUIRED", rationale: "Approved long-rate market-factor context." },
+    US_CPI_INDEX: { role: "REQUIRED", rationale: "Approved as-published inflation-level history." },
+    US_CPI_YOY: { role: "REQUIRED", rationale: "Approved as-published inflation-rate history." },
+    US_NFP_NET_CHANGE: { role: "REQUIRED", rationale: "Approved revision-aware labor-growth history." },
+    US_FED_FUNDS_TARGET_UPPER: {
+      role: "REQUIRED",
+      rationale: "Approved effective policy-state history paired with official FOMC decisions.",
+    },
+    FOMC_RATE_DECISION: { role: "REQUIRED", rationale: "Approved bounded official policy-event history." },
+    DXY: {
+      role: "OPTIONAL",
+      rationale: "Source access, publication timing, and licensing remain blocked; no architecture source requires DXY for every hypothesis.",
+    },
+    VIX: {
+      role: "OPTIONAL",
+      rationale: "Per-row historical PIT availability remains blocked; no architecture source requires VIX for every hypothesis.",
+    },
+    US_CPI_MOM: {
+      role: "OPTIONAL",
+      rationale: "Complete seasonal-vintage reconstruction remains conditional; CPI Index and YoY provide the approved minimum inflation history.",
+    },
+    US_UNEMPLOYMENT_RATE: {
+      role: "OPTIONAL",
+      rationale: "Complete as-published vintage mapping remains conditional; NFP provides the approved minimum labor history.",
+    },
+  } satisfies Readonly<Record<ResearchSeriesId, ResearchSeriesReadinessPolicyEntry>>,
+  unknownMetricRules: {
+    US_FED_FUNDS_TARGET_UPPER:
+      "An UNKNOWN standalone denominator is acceptable only when target states are acquired, INITIAL_ONLY-complete, and paired FOMC official-event coverage is complete.",
+    CPI_FINAL_VINTAGE:
+      "UNKNOWN final-vintage completeness is acceptable for CPI Index/YoY only when every observed period has its initial as-published vintage and no expected initial vintage is missing.",
+  },
+  optionalDependencyRule:
+    "OPTIONAL does not permit substitution or assumed presence. A future rule that declares an optional-series dependency must be unavailable or INSUFFICIENT_EVIDENCE while that dependency is unavailable.",
+});
+
 export const RESEARCH_READINESS_POLICY_FINDING = Object.freeze({
-  status: "UNRESOLVED" as const,
-  code: "REQUIRED_SERIES_POLICY_UNRESOLVED" as const,
+  status: "RESOLVED" as const,
+  code: "REQUIRED_SERIES_POLICY_RESOLVED" as const,
   reason:
-    "M13B-1 lists every canonical series as required, while approved M13B-2 source evidence leaves VIX and DXY BLOCKED and CPI MoM and unemployment CONDITIONAL. No approved required-versus-optional policy resolves that conflict, so B2-D cannot claim RESEARCH_READY.",
+    "B2-E defines an explicit minimum required dataset and preserves unresolved series as optional, unavailable dependencies for future hypothesis-level enforcement.",
 });
 
 export type CoverageDenominatorStatus = "KNOWN" | "UNKNOWN" | "NOT_APPLICABLE";
 export type ObservationCoverageStatus = "COMPLETE" | "INCOMPLETE" | "UNKNOWN" | "NOT_APPLICABLE";
 export type RevisionCompletenessStatus = "COMPLETE" | "INCOMPLETE" | "UNKNOWN" | "NOT_APPLICABLE";
-export type DatasetReadinessStatus = "RESEARCH_READY" | "NOT_RESEARCH_READY" | "READINESS_POLICY_UNRESOLVED";
+export type DatasetReadinessStatus = "RESEARCH_READY" | "NOT_RESEARCH_READY";
 
 export interface MachineReadableReason {
   readonly code: string;
@@ -78,10 +153,11 @@ export interface ResearchSeriesReadinessAssessment {
 
 export interface ResearchDatasetReadinessAssessment {
   readonly snapshotHash: string;
-  readonly snapshotCryptographicallyValid: true;
+  readonly snapshotCryptographicallyValid: boolean;
   readonly intendedUse: "RESEARCH_ONLY";
   readonly priceAuthority: "RESEARCH_CONTEXT_ONLY";
   readonly readiness: DatasetReadinessStatus;
+  readonly policy: typeof M13B_RESEARCH_DATASET_READINESS_POLICY;
   readonly policyFinding: typeof RESEARCH_READINESS_POLICY_FINDING;
   readonly series: readonly ResearchSeriesReadinessAssessment[];
   readonly reasons: readonly MachineReadableReason[];
@@ -285,33 +361,138 @@ function assessSeries(snapshot: ResearchDatasetSnapshot, seriesId: ResearchSerie
 export function assessResearchDatasetReadiness(
   snapshot: ResearchDatasetSnapshot
 ): ResearchDatasetReadinessAssessment {
-  validateResearchDatasetSnapshot(snapshot);
-  const canonicalSeries = Object.keys(RESEARCH_SERIES_SPECS) as ResearchSeriesId[];
-  const series = canonicalSeries.sort().map((seriesId) => assessSeries(snapshot, seriesId));
-  const reasons: MachineReadableReason[] = [{
-    code: RESEARCH_READINESS_POLICY_FINDING.code,
-    message: RESEARCH_READINESS_POLICY_FINDING.reason,
-  }];
-  for (const item of series) {
-    for (const reason of item.reasons) {
-      if (item.acquisitionStatus === "ACQUIRED") {
-        reasons.push({ code: reason.code, message: `${item.seriesId}: ${reason.message}` });
-      }
-    }
-  }
-  // Keep the existing all-series policy visible as evidence; do not silently reinterpret it.
-  if (DEFAULT_RESEARCH_COVERAGE_POLICY.requiredSeries.length !== canonicalSeries.length) {
-    reasons.push({
-      code: "LEGACY_POLICY_SCOPE_MISMATCH",
-      message: "The legacy M13B-1 required-series list no longer matches the canonical series universe.",
+  try {
+    validateResearchDatasetSnapshot(snapshot);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Snapshot validation failed.";
+    const pitFailure = /availableAt|publishedAt|timestamp/iu.test(message);
+    return deepFreeze({
+      snapshotHash: snapshot?.snapshotHash ?? "INVALID",
+      snapshotCryptographicallyValid: false,
+      intendedUse: "RESEARCH_ONLY",
+      priceAuthority: "RESEARCH_CONTEXT_ONLY",
+      readiness: "NOT_RESEARCH_READY",
+      policy: M13B_RESEARCH_DATASET_READINESS_POLICY,
+      policyFinding: RESEARCH_READINESS_POLICY_FINDING,
+      series: [],
+      reasons: [{
+        code: pitFailure ? "PIT_AVAILABILITY_INVALID" : "SNAPSHOT_VALIDATION_FAILED",
+        message,
+      }],
+      predictiveValidityAssessed: false,
+      grantsExecutionAuthority: false,
     });
   }
+  const canonicalSeries = Object.keys(RESEARCH_SERIES_SPECS) as ResearchSeriesId[];
+  const series = canonicalSeries.sort().map((seriesId) => assessSeries(snapshot, seriesId));
+  const bySeries = new Map(series.map((item) => [item.seriesId, item]));
+  const reasons: MachineReadableReason[] = [];
+  const policy = M13B_RESEARCH_DATASET_READINESS_POLICY;
+
+  for (const seriesId of policy.requiredSeries) {
+    const item = bySeries.get(seriesId);
+    if (!item || item.acquisitionStatus !== "ACQUIRED") {
+      reasons.push({
+        code: "REQUIRED_SERIES_NOT_ACQUIRED",
+        message: `${seriesId} is required but is ${item?.acquisitionStatus ?? "ABSENT"}.`,
+      });
+      continue;
+    }
+    if (item.pitAvailabilityValid !== true) {
+      reasons.push({
+        code: "REQUIRED_SERIES_PIT_INVALID",
+        message: `${seriesId} does not have valid point-in-time availability.`,
+      });
+    }
+    if (
+      item.firstObservationTime === null ||
+      item.lastObservationTime === null ||
+      (item.lastObservationTime - item.firstObservationTime) / 86_400_000 < policy.minimumCoverageDays
+    ) {
+      reasons.push({
+        code: "REQUIRED_SERIES_COVERAGE_SPAN_INSUFFICIENT",
+        message: `${seriesId} does not span the required ${policy.minimumCoverageDays} days.`,
+      });
+    }
+    if (
+      item.cadence === "MONTHLY" &&
+      item.observedObservationCount < policy.minimumMonthlyObservationPeriods
+    ) {
+      reasons.push({
+        code: "REQUIRED_MONTHLY_PERIODS_INSUFFICIENT",
+        message: `${seriesId} has ${item.observedObservationCount} monthly periods; ${policy.minimumMonthlyObservationPeriods} are required.`,
+      });
+    }
+    if (item.denominator.status === "KNOWN") {
+      const missingRatio = item.coverageRatio === null ? 1 : 1 - item.coverageRatio;
+      if (missingRatio > policy.maximumMissingRatio) {
+        reasons.push({
+          code: "REQUIRED_SERIES_MISSINGNESS_EXCEEDS_POLICY",
+          message: `${seriesId} missing ratio ${missingRatio.toFixed(4)} exceeds ${policy.maximumMissingRatio.toFixed(4)}.`,
+        });
+      }
+    } else if (seriesId !== "US_FED_FUNDS_TARGET_UPPER") {
+      reasons.push({
+        code: "REQUIRED_SERIES_DENOMINATOR_UNKNOWN",
+        message: `${seriesId} has no approved coverage denominator exception.`,
+      });
+    }
+
+    const revision = item.revisionCompleteness;
+    const cpiUnknownAccepted =
+      (seriesId === "US_CPI_INDEX" || seriesId === "US_CPI_YOY") &&
+      revision.status === "UNKNOWN" &&
+      revision.missingExpectedVintages.length === 0;
+    if (revision.status === "INCOMPLETE" || (revision.status === "UNKNOWN" && !cpiUnknownAccepted)) {
+      reasons.push({
+        code: "REQUIRED_SERIES_REVISION_INCOMPLETE",
+        message: `${seriesId}: ${revision.reason}`,
+      });
+    }
+  }
+
+  const fomc = bySeries.get("FOMC_RATE_DECISION");
+  const target = bySeries.get("US_FED_FUNDS_TARGET_UPPER");
+  if (
+    target?.acquisitionStatus === "ACQUIRED" &&
+    target.denominator.status === "UNKNOWN" &&
+    !(
+      target.canonicalRecordCount > 0 &&
+      target.revisionCompleteness.status === "COMPLETE" &&
+      fomc?.acquisitionStatus === "ACQUIRED" &&
+      fomc.observationCoverage === "COMPLETE" &&
+      fomc.pitAvailabilityValid === true
+    )
+  ) {
+    reasons.push({
+      code: "FED_FUNDS_UNKNOWN_DENOMINATOR_EVIDENCE_INSUFFICIENT",
+      message: "Fed Funds target-upper UNKNOWN denominator lacks complete paired FOMC event and initial-only target-state evidence.",
+    });
+  }
+
+  const rateRecords = snapshot.dataset.macroReleases
+    .filter((record) => record.seriesId === "US_FED_FUNDS_TARGET_UPPER")
+    .sort((left, right) => left.observationTime - right.observationTime);
+  let upward = false;
+  let downward = false;
+  for (let index = 1; index < rateRecords.length; index += 1) {
+    if (rateRecords[index].value > rateRecords[index - 1].value) upward = true;
+    if (rateRecords[index].value < rateRecords[index - 1].value) downward = true;
+  }
+  if (policy.requireUpwardRateTransition && !upward) {
+    reasons.push({ code: "UPWARD_RATE_TRANSITION_MISSING", message: "No observed upward Fed Funds target transition is present." });
+  }
+  if (policy.requireDownwardRateTransition && !downward) {
+    reasons.push({ code: "DOWNWARD_RATE_TRANSITION_MISSING", message: "No observed downward Fed Funds target transition is present." });
+  }
+
   return deepFreeze({
     snapshotHash: snapshot.snapshotHash,
     snapshotCryptographicallyValid: true,
     intendedUse: "RESEARCH_ONLY",
     priceAuthority: "RESEARCH_CONTEXT_ONLY",
-    readiness: "READINESS_POLICY_UNRESOLVED",
+    readiness: reasons.length === 0 ? "RESEARCH_READY" : "NOT_RESEARCH_READY",
+    policy,
     policyFinding: RESEARCH_READINESS_POLICY_FINDING,
     series,
     reasons,

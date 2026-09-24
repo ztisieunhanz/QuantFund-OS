@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `700fd05aa9fdf556c7e49e9bece94387440ce6d0`
-- **Checkpoint Message**: `Gate M13B-2: repair research artifact provenance contracts`
+- **Last Verified Code Checkpoint**: `3ffdc42701ac480f69f438114dcccd996db7fec6`
+- **Checkpoint Message**: `Gate M13B-2: add research dataset readiness assessment`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -51,14 +51,15 @@ Do not rely only on AI memory or previous agent reports.
   - **M13B-2 / B2-C** (Immutable Dataset Snapshot / Hash / Reproducibility): **COMPLETE** at `5d07cb5c28b33ba92e0a09872468eaaa0ff91fc6`
   - **M13B-2 / B2-C-R1** (Shared Source-Artifact Identity Contract Repair): **COMPLETE** at `700fd05aa9fdf556c7e49e9bece94387440ce6d0`
   - **M13B-2 / B2-C-R2** (Artifact-Type ↔ Canonical-Series Link Validation): **COMPLETE** at `700fd05aa9fdf556c7e49e9bece94387440ce6d0`
-  - **M13B-2 / B2-D** (Coverage / Missingness / Revision / Dataset Readiness): **IMPLEMENTED — NOT CHECKPOINTED**; deterministic assessment is fail-closed on unresolved required-versus-optional policy
+  - **M13B-2 / B2-D** (Coverage / Missingness / Revision / Dataset Readiness): **COMPLETE** at `3ffdc42701ac480f69f438114dcccd996db7fec6`
+  - **M13B-2 / B2-E** (Final Data Policy + M13B Checkpoint Gate): **IMPLEMENTED — NOT CHECKPOINTED**; ready for independent review
 - **Validation Baseline**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (783/783 tests across 29 test files at the last verified checkpoint)
+  - `npx vitest run`: **PASS** (797/797 tests across 30 test files at the last verified checkpoint)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
-  - **CI status**: The B2-C-R1/R2 checkpoint at `700fd05aa9fdf556c7e49e9bece94387440ce6d0` passed the required remote workflow.
-- **Current Documented Phase**: M13B-2 remains **INCOMPLETE**. B2-D is implemented but not checkpointed and cannot claim `RESEARCH_READY` because the approved documents do not yet reconcile M13B-1's all-series requirement with VIX/DXY `BLOCKED` and CPI MoM/unemployment `CONDITIONAL`. The evaluator reports provider-specific coverage and separate vintage completeness with machine-readable reasons. M13C has **NOT STARTED**.
+  - **CI status**: The B2-D checkpoint at `3ffdc42701ac480f69f438114dcccd996db7fec6` passed the required remote workflow.
+- **Current Documented Phase**: B2-E resolves the required-versus-optional policy and makes the approved nine-series minimum capable of reaching `RESEARCH_READY` without changing the explicit `BLOCKED`/`CONDITIONAL` status of optional inputs. M13B is ready for final independent review; it is not checkpointed complete yet. M13C has **NOT STARTED**.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -384,9 +385,9 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 
 ### Explicit Current Debts
 
-- A real research-grade historical dataset has not been acquired.
+- No bulk research snapshot is stored in the repository; approved adapters assemble externally persisted immutable snapshots for readiness evaluation.
 - Dataset-level immutable SHA-256 snapshot assembly and the B2-C-R1/R2 provenance repairs are checkpointed; production persistence remains pending.
-- B2-D implements provider-specific coverage denominators and separate revision completeness, but required-versus-optional readiness policy remains unresolved and fail-closed.
+- B2-E resolves the B2-D policy limitation with an explicit nine-series required minimum and four-series optional classification; optional dependencies remain fail-closed at future rule level.
 - No historical macro model or macro action evidence is approved.
 - No action layer or `ActionDecision` is implemented.
 - No derived 4H/1D research context is implemented.
@@ -443,6 +444,6 @@ SYNC-02 adds the proposed repository CI contract and product-independent handoff
 
 ### M13B-2 — Historical Research-Data Acquisition / Coverage Expansion
 
-**Status**: **INCOMPLETE**
+**Status**: **READY FOR FINAL INDEPENDENT REVIEW**
 
-B2-B1's immutable acquisition foundation and Binance BTC/PAXG adapter are complete. B2-B3's bounded H.15 US2Y/US10Y initial-release adapter, B2-B4's bounded CPI Index/YoY acquisition, B2-B5's FOMC policy acquisition, and B2-B6's bounded NFP vintage acquisition are complete. B2-C and B2-C-R1/R2 checkpoint immutable research-only snapshots and closed raw-artifact provenance/link contracts without granting readiness or executable-price authority. B2-D now implements deterministic provider-specific coverage, missingness, PIT, and separate revision/vintage assessment. Its top-level readiness remains fail-closed as `READINESS_POLICY_UNRESOLVED` because no approved required-versus-optional policy reconciles the original all-series requirement with VIX/DXY `BLOCKED` and CPI MoM/unemployment `CONDITIONAL`. M13B-2 remains incomplete. M13C has not started, and no M14 action integration or production execution work is authorized.
+B2-B1's immutable acquisition foundation and Binance BTC/PAXG adapter are complete. B2-B3's bounded H.15 US2Y/US10Y initial-release adapter, B2-B4's bounded CPI Index/YoY acquisition, B2-B5's FOMC policy acquisition, and B2-B6's bounded NFP vintage acquisition are complete. B2-C and B2-C-R1/R2 checkpoint immutable research-only snapshots and closed raw-artifact provenance/link contracts without granting readiness or executable-price authority. B2-D implements deterministic provider-specific coverage, missingness, PIT, and separate revision/vintage assessment. B2-E supersedes the legacy all-series dataset-readiness requirement with an explicit minimum: nine approved acquired series are required, while VIX/DXY remain optional `BLOCKED` inputs and CPI MoM/unemployment remain optional `CONDITIONAL` inputs. Optionality never permits fabrication or silent rule use. The minimum can reach `RESEARCH_READY` only under the approved coverage, PIT, missingness, revision, paired-FOMC, and rate-transition safeguards. M13B is ready for final independent review. M13C has not started, and no M14 action integration or production execution work is authorized.

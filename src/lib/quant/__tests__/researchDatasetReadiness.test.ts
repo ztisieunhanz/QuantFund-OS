@@ -8,12 +8,16 @@ import {
   type ResearchSeriesManifestEntry,
 } from "../researchDataProtocol";
 import {
+  M13B_OPTIONAL_RESEARCH_SERIES,
+  M13B_REQUIRED_RESEARCH_SERIES,
+  M13B_RESEARCH_DATASET_READINESS_POLICY,
   assessResearchDatasetReadiness,
   canonicalJson,
   createResearchDatasetSnapshot,
   sha256Hex,
   verifyRawArtifact,
   type ResearchDatasetSnapshotInput,
+  type ResearchDatasetSnapshot,
   type ResearchSourceArtifactType,
   type VerifiedRawArtifact,
 } from "../historicalSources";
@@ -22,6 +26,10 @@ const START = Date.UTC(2024, 0, 1);
 const END = Date.UTC(2024, 11, 31, 23, 59, 59);
 const RELEASE = Date.UTC(2024, 1, 1, 13, 30);
 const MONTH = 31 * 86_400_000;
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
 
 function artifact(
   seriesId: ResearchSeriesId,
@@ -203,6 +211,117 @@ function fixture(options: FixtureOptions = {}): ResearchDatasetSnapshotInput {
   };
 }
 
+function minimumReadyFixture(): ResearchDatasetSnapshotInput {
+  const base = fixture();
+  const minimumStart = Date.UTC(2018, 0, 1);
+  const minimumEnd = Date.UTC(2024, 0, 2);
+  const marketObservations = ([
+    ["BTC", "BINANCE_PUBLIC_DATA", 42_000, "USDT"],
+    ["PAXG", "BINANCE_PUBLIC_DATA", 2_000, "USDT"],
+    ["US2Y", "FEDERAL_RESERVE_H15_VIA_FRED_ALFRED", 4.2, "PERCENT"],
+    ["US10Y", "FEDERAL_RESERVE_H15_VIA_FRED_ALFRED", 4.0, "PERCENT"],
+  ] as const).flatMap(([seriesId, provider, value, unit]) => [minimumStart, minimumEnd - 3_600_000].map(
+    (observationTime) => ({
+      seriesId,
+      provider,
+      value,
+      observationTime,
+      availableAt: observationTime + 3_600_000,
+      providerTimestamp: observationTime,
+      unit,
+    })
+  ));
+  const monthlyTimes = Array.from({ length: 61 }, (_, index) => Date.UTC(2018, index + 1, 0));
+  const cpi = monthlyTimes.flatMap((observationTime, index) => [
+    macro("US_CPI_INDEX", "BLS_ARCHIVED_CPI_RELEASE", observationTime, 0, 250 + index, observationTime + 40 * 86_400_000),
+    macro("US_CPI_YOY", "BLS_ARCHIVED_CPI_RELEASE", observationTime, 0, 2 + index / 100, observationTime + 40 * 86_400_000),
+  ]);
+  const nfp = monthlyTimes.flatMap((observationTime, index) => {
+    const vintages = [
+      macro("US_NFP_NET_CHANGE", "BLS_ARCHIVED_EMPLOYMENT_SITUATION", observationTime, 0, 200 + index, observationTime + 40 * 86_400_000),
+    ];
+    if (index < monthlyTimes.length - 1) {
+      vintages.push(macro("US_NFP_NET_CHANGE", "BLS_ARCHIVED_EMPLOYMENT_SITUATION", observationTime, 1, 199 + index, observationTime + 72 * 86_400_000));
+    }
+    if (index < monthlyTimes.length - 2) {
+      vintages.push(macro("US_NFP_NET_CHANGE", "BLS_ARCHIVED_EMPLOYMENT_SITUATION", observationTime, 2, 198 + index, observationTime + 103 * 86_400_000));
+    }
+    return vintages;
+  });
+  const policyTimes = [minimumStart, Date.UTC(2020, 11, 31), minimumEnd - 86_400_000];
+  const policyValues = [5, 6, 4];
+  const macroReleases = [
+    ...cpi,
+    ...nfp,
+    ...policyTimes.map((observationTime, index) =>
+      macro("US_FED_FUNDS_TARGET_UPPER", "FEDERAL_RESERVE_BOARD", observationTime, 0, policyValues[index], observationTime + 14 * 3_600_000)
+    ),
+  ];
+  const eventRecords = policyTimes.map((observationTime, index) => ({
+    eventId: `FOMC-${index}`,
+    eventType: "FED_RATE_DECISION",
+    provider: "FEDERAL_RESERVE_BOARD",
+    observationTime,
+    publishedAt: observationTime + 14 * 3_600_000,
+    availableAt: observationTime + 14 * 3_600_000,
+    actual: policyValues[index],
+    consensus: null,
+    consensusFrozenAt: null,
+    previous: index === 0 ? policyValues[index] : policyValues[index - 1],
+    surprise: null,
+    sourceQuality: "TIER_1_OFFICIAL" as const,
+  }));
+  const dataset: HistoricalDataset = {
+    marketObservations,
+    macroReleases,
+    eventRecords,
+    metadata: { interval: "1h", startTime: minimumStart, endTime: minimumEnd },
+  };
+  const manifestRecords = [
+    ...marketObservations,
+    ...macroReleases,
+    ...eventRecords.map((record) => ({ ...record, seriesId: "FOMC_RATE_DECISION" })),
+  ];
+  const sources = base.manifest.sources.map((source) => {
+    const records = manifestRecords.filter((record) => record.seriesId === source.seriesId);
+    return {
+      ...source,
+      firstObservationTime: Math.min(...records.map((record) => record.observationTime)),
+      lastObservationTime: Math.max(...records.map((record) => record.observationTime)),
+      firstAvailableAt: Math.min(...records.map((record) => record.availableAt)),
+      lastAvailableAt: Math.max(...records.map((record) => record.availableAt)),
+      recordCount: records.length,
+      missingness: { ...source.missingness, missingCount: 0 },
+    };
+  });
+  return {
+    dataset,
+    manifest: {
+      ...base.manifest,
+      startTime: minimumStart,
+      endTime: minimumEnd,
+      totalRecordCount: manifestRecords.length,
+      sources,
+    },
+    rawArtifacts: base.rawArtifacts,
+  };
+}
+
+function withoutBtc(input: ResearchDatasetSnapshotInput): ResearchDatasetSnapshotInput {
+  return {
+    dataset: {
+      ...input.dataset,
+      marketObservations: input.dataset.marketObservations.filter((record) => record.seriesId !== "BTC"),
+    },
+    manifest: {
+      ...input.manifest,
+      totalRecordCount: input.manifest.totalRecordCount - input.dataset.marketObservations.filter((record) => record.seriesId === "BTC").length,
+      sources: input.manifest.sources.filter((source) => source.seriesId !== "BTC"),
+    },
+    rawArtifacts: input.rawArtifacts.filter((item) => item.instrument !== "BTC"),
+  };
+}
+
 function assessment(options: FixtureOptions = {}) {
   return assessResearchDatasetReadiness(createResearchDatasetSnapshot(fixture(options)));
 }
@@ -214,11 +333,97 @@ function series(result: ReturnType<typeof assessment>, seriesId: ResearchSeriesI
 }
 
 describe("B2-D research dataset readiness", () => {
-  it("assesses the complete supported acquired-series fixture without inventing policy readiness", () => {
+  it("exposes the explicit required/optional policy as a machine-readable closed classification", () => {
+    expect(M13B_RESEARCH_DATASET_READINESS_POLICY.policyId).toBe("M13B-2-B2E-MINIMUM-V1");
+    expect(M13B_REQUIRED_RESEARCH_SERIES).toHaveLength(9);
+    expect(M13B_OPTIONAL_RESEARCH_SERIES).toEqual([
+      "DXY",
+      "VIX",
+      "US_CPI_MOM",
+      "US_UNEMPLOYMENT_RATE",
+    ]);
+    expect(Object.keys(M13B_RESEARCH_DATASET_READINESS_POLICY.series)).toHaveLength(13);
+    expect(M13B_RESEARCH_DATASET_READINESS_POLICY.optionalDependencyRule).toContain("INSUFFICIENT_EVIDENCE");
+  });
+
+  it("assesses the compact acquired-series fixture but does not mistake it for the minimum history", () => {
     const result = assessment();
     expect(result.series.filter((item) => item.acquisitionStatus === "ACQUIRED")).toHaveLength(9);
-    expect(result.readiness).toBe("READINESS_POLICY_UNRESOLVED");
-    expect(result.reasons[0].code).toBe("REQUIRED_SERIES_POLICY_UNRESOLVED");
+    expect(result.readiness).toBe("NOT_RESEARCH_READY");
+    expect(result.reasons.map((reason) => reason.code)).toContain("REQUIRED_SERIES_COVERAGE_SPAN_INSUFFICIENT");
+  });
+
+  it("allows the valid required minimum to reach RESEARCH_READY", () => {
+    const result = assessResearchDatasetReadiness(createResearchDatasetSnapshot(minimumReadyFixture()));
+    expect(result.readiness).toBe("RESEARCH_READY");
+    expect(result.reasons).toEqual([]);
+  });
+
+  it("fails closed when a required series is absent", () => {
+    const result = assessResearchDatasetReadiness(createResearchDatasetSnapshot(withoutBtc(minimumReadyFixture())));
+    expect(result.readiness).toBe("NOT_RESEARCH_READY");
+    expect(result.reasons).toContainEqual(expect.objectContaining({ code: "REQUIRED_SERIES_NOT_ACQUIRED" }));
+  });
+
+  it("returns NOT_RESEARCH_READY for invalid required-series PIT evidence", () => {
+    const forged = clone(createResearchDatasetSnapshot(minimumReadyFixture())) as ResearchDatasetSnapshot;
+    const btc = forged.dataset.marketObservations.find((record) => record.seriesId === "BTC");
+    if (!btc) throw new Error("missing BTC fixture");
+    (btc as { availableAt: number }).availableAt = btc.observationTime - 1;
+    const result = assessResearchDatasetReadiness(forged);
+    expect(result.readiness).toBe("NOT_RESEARCH_READY");
+    expect(result.snapshotCryptographicallyValid).toBe(false);
+    expect(result.reasons[0].code).toBe("PIT_AVAILABILITY_INVALID");
+  });
+
+  it("fails required-series missingness above the approved maximum", () => {
+    const input = minimumReadyFixture();
+    const sources = input.manifest.sources.map((source) => source.seriesId === "BTC"
+      ? { ...source, missingness: { ...source.missingness, missingCount: 1 } }
+      : source);
+    const result = assessResearchDatasetReadiness(createResearchDatasetSnapshot({
+      ...input,
+      manifest: { ...input.manifest, sources },
+    }));
+    expect(result.readiness).toBe("NOT_RESEARCH_READY");
+    expect(result.reasons).toContainEqual(expect.objectContaining({ code: "REQUIRED_SERIES_MISSINGNESS_EXCEEDS_POLICY" }));
+  });
+
+  it("fails when a required NFP revision opportunity is missing", () => {
+    const input = minimumReadyFixture();
+    const firstNfpTime = Math.min(...input.dataset.macroReleases
+      .filter((record) => record.seriesId === "US_NFP_NET_CHANGE")
+      .map((record) => record.observationTime));
+    const macroReleases = input.dataset.macroReleases.filter((record) => !(
+      record.seriesId === "US_NFP_NET_CHANGE" &&
+      record.observationTime === firstNfpTime &&
+      record.revisionIndex === 2
+    ));
+    const nfpRecords = macroReleases.filter((record) => record.seriesId === "US_NFP_NET_CHANGE");
+    const sources = input.manifest.sources.map((source) => source.seriesId === "US_NFP_NET_CHANGE"
+      ? {
+          ...source,
+          recordCount: nfpRecords.length,
+          firstAvailableAt: Math.min(...nfpRecords.map((record) => record.availableAt)),
+          lastAvailableAt: Math.max(...nfpRecords.map((record) => record.availableAt)),
+        }
+      : source);
+    const result = assessResearchDatasetReadiness(createResearchDatasetSnapshot({
+      ...input,
+      dataset: { ...input.dataset, macroReleases },
+      manifest: { ...input.manifest, totalRecordCount: input.manifest.totalRecordCount - 1, sources },
+    }));
+    expect(result.readiness).toBe("NOT_RESEARCH_READY");
+    expect(result.reasons).toContainEqual(expect.objectContaining({ code: "REQUIRED_SERIES_REVISION_INCOMPLETE" }));
+  });
+
+  it("does not let absent optional BLOCKED or CONDITIONAL series block readiness", () => {
+    const result = assessResearchDatasetReadiness(createResearchDatasetSnapshot(minimumReadyFixture()));
+    expect(series(result, "VIX").acquisitionStatus).toBe("BLOCKED");
+    expect(series(result, "DXY").acquisitionStatus).toBe("BLOCKED");
+    expect(series(result, "US_CPI_MOM").acquisitionStatus).toBe("CONDITIONAL");
+    expect(series(result, "US_UNEMPLOYMENT_RATE").acquisitionStatus).toBe("CONDITIONAL");
+    expect(result.readiness).toBe("RESEARCH_READY");
   });
 
   it("reports a missing monthly reference period with a truthful denominator", () => {
@@ -272,13 +477,13 @@ describe("B2-D research dataset readiness", () => {
   it("does not equate a valid immutable snapshot hash with readiness", () => {
     const snapshot = createResearchDatasetSnapshot(fixture());
     expect(snapshot.snapshotHash).toMatch(/^sha256:[0-9a-f]{64}$/u);
-    expect(assessResearchDatasetReadiness(snapshot).readiness).toBe("READINESS_POLICY_UNRESOLVED");
+    expect(assessResearchDatasetReadiness(snapshot).readiness).toBe("NOT_RESEARCH_READY");
   });
 
   it("produces explicit machine-readable insufficient-coverage reasons", () => {
     const result = assessment({ btcMissing: 2 });
     expect(series(result, "BTC").reasons.map((reason) => reason.code)).toContain("DECLARED_MISSING_OBSERVATIONS");
-    expect(result.reasons.some((reason) => reason.message.startsWith("BTC:"))).toBe(true);
+    expect(result.reasons.map((reason) => reason.code)).toContain("REQUIRED_SERIES_MISSINGNESS_EXCEEDS_POLICY");
   });
 
   it("is deterministic under equivalent input ordering", () => {
@@ -317,10 +522,14 @@ describe("B2-D research dataset readiness", () => {
     expect("assetBars" in result).toBe(false);
   });
 
-  it("reports target-upper denominator uncertainty instead of imposing a calendar cadence", () => {
-    const item = series(assessment(), "US_FED_FUNDS_TARGET_UPPER");
+  it("accepts the documented Fed Funds denominator and CPI final-vintage UNKNOWN semantics", () => {
+    const result = assessResearchDatasetReadiness(createResearchDatasetSnapshot(minimumReadyFixture()));
+    const item = series(result, "US_FED_FUNDS_TARGET_UPPER");
     expect(item.cadence).toBe("EVENT_DRIVEN");
     expect(item.denominator.status).toBe("UNKNOWN");
     expect(item.coverageRatio).toBeNull();
+    expect(series(result, "US_CPI_INDEX").revisionCompleteness.status).toBe("UNKNOWN");
+    expect(series(result, "US_CPI_YOY").revisionCompleteness.status).toBe("UNKNOWN");
+    expect(result.readiness).toBe("RESEARCH_READY");
   });
 });
