@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `6e350f29e3d941a280322a23ee2db709aa90701a`
-- **Checkpoint Message**: `Gate M13C: add PIT-safe derived 4H and 1D context`
+- **Last Verified Code Checkpoint**: `45e4487d850e8fdd612286fc110991383e408995`
+- **Checkpoint Message**: `Gate M13C: add research rule contract and combinators`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -54,14 +54,15 @@ Do not rely only on AI memory or previous agent reports.
   - **M13B-2 / B2-D** (Coverage / Missingness / Revision / Dataset Readiness): **COMPLETE** at `3ffdc42701ac480f69f438114dcccd996db7fec6`
   - **M13B-2 / B2-E** (Final Data Policy + M13B Checkpoint Gate): **COMPLETE** at `2aaee91e9f36511060687106470c4378d68081e9`
   - **M13C / C-A** (Derived PIT-Safe 4H + 1D Research Context): **COMPLETE** at `6e350f29e3d941a280322a23ee2db709aa90701a`
-  - **M13C / C-B** (ResearchRule Interface + Combinators): **IMPLEMENTED — NOT CHECKPOINTED**; ready for independent review
+  - **M13C / C-B** (ResearchRule Interface + Combinators): **COMPLETE** at `45e4487d850e8fdd612286fc110991383e408995`
+  - **M13C / C-C** (PIT-Safe Stateful & Sequence Research Rules): **IMPLEMENTED — NOT CHECKPOINTED**; ready for independent review
 - **Validation Baseline**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (827/827 tests across 31 test files at the last verified checkpoint)
+  - `npx vitest run`: **PASS** (857/857 tests across 32 test files at the last verified checkpoint)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
-  - **CI status**: The C-A checkpoint at `6e350f29e3d941a280322a23ee2db709aa90701a` passed the required remote workflow.
-- **Current Documented Phase**: M13B and M13C/C-A are **COMPLETE**. C-B implements a stateless research-only `ResearchRule` contract with declared PIT dependencies and deterministic three-valued AND/OR/NOT composition. C-C and later gates have **NOT STARTED**.
+  - **CI status**: The C-B checkpoint at `45e4487d850e8fdd612286fc110991383e408995` passed the required remote workflow.
+- **Current Documented Phase**: M13B and M13C/C-A/C-B are **COMPLETE**. C-C implements explicit immutable state transitions for ordered A-then-B windows and consecutive-evaluation persistence. C-D and later gates have **NOT STARTED**.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -393,7 +394,8 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - No historical macro model or macro action evidence is approved.
 - No action layer or `ActionDecision` is implemented.
 - C-A derived 4H/1D research context is checkpointed and remains disconnected from trading authority.
-- C-B's stateless ResearchRule contract and combinators are implemented but not checkpointed; no rule is action-eligible.
+- C-B's stateless ResearchRule contract and combinators are checkpointed; no rule is action-eligible.
+- C-C's stateful sequence and persistence primitives are implemented but not checkpointed; state remains research-evaluation-only.
 
 ---
 
@@ -407,7 +409,7 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - Historical macro alpha & regime strategy models (mapping PIT macro context to quant signals).
 - Historical event consensus provider integration & verified surprise calculation.
 - Historical factor freshness thresholds calibrated for daily/monthly series.
-- **M13C C-C and later**: Stateful/sequence rules, hypothesis registry, feature builder, and shadow research harness.
+- **M13C C-D and later**: Hypothesis registry, feature builder, and shadow research harness.
 - **Post-v1 unless explicitly approved**: Additional executable time domains or a true multi-timeframe execution engine.
 - Short-selling support and margin semantics.
 - Train-set hyperparameter optimization & grid search engine.
@@ -445,8 +447,8 @@ For every major engineering gate:
 
 SYNC-02 adds the proposed repository CI contract and product-independent handoff rules. The workflow must not be described as active or passing until it is committed, pushed, and observed on the remote CI provider.
 
-### M13C / C-B — ResearchRule Interface + Combinators
+### M13C / C-C — PIT-Safe Stateful & Sequence Research Rules
 
 **Status**: **IMPLEMENTED — NOT CHECKPOINTED**
 
-M13B is complete, and C-A is complete at `6e350f29e3d941a280322a23ee2db709aa90701a`. C-B adds stateless, parameterized ResearchRules with explicit stable identity, declared canonical-series/1H/4H/1D dependencies, structured `MATCH` / `NO_MATCH` / `INSUFFICIENT_EVIDENCE` results, and fail-closed three-valued AND/OR/NOT composition. Leaf evaluators receive only declared dependencies. Results are research evidence only and grant no Permission, Risk, Omega, execution, accounting, or ActionDecision authority. C-C and later M13C gates have not started.
+M13B, C-A, and C-B are complete; C-B is checkpointed at `45e4487d850e8fdd612286fc110991383e408995`. C-C adds pure deterministic one-observation transitions for bounded A-then-B sequences and consecutive-evaluation persistence. State is immutable, semantic-rule-bound, asset-scoped, strictly increasing in `decisionTime`, and compact. Missing B evidence suspends the sequence window without advancing it; insufficient persistence evidence resets the streak so continuity is never inferred across a gap. Completion and expiry reset the primitive for a later cycle. Results remain research evidence only and grant no Permission, Risk, Omega, execution, accounting, or ActionDecision authority. C-D and later M13C gates have not started.

@@ -59,6 +59,8 @@ The target rule system must allow complex moving-average stacks, multiple indica
 
 The implemented C-B `ResearchRule` foundation is stateless and research-only. Each rule has explicit ID/version/parameters, receives only its declared PIT-safe canonical-series or 1H/4H/1D dependencies, and returns structured `MATCH`, `NO_MATCH`, or `INSUFFICIENT_EVIDENCE`. AND/OR/NOT use explicit three-valued fail-closed semantics. These results are evidence, not `SignalOutput`, permission, allocation, execution, or action authority.
 
+The implemented C-C extension adds explicit immutable research-evaluation state for bounded A-then-B sequences and consecutive-evaluation persistence. Each transition consumes only prior compatible asset-scoped state plus one current PIT-safe context; `decisionTime` must increase strictly, so equal-time ordering is rejected. Ordered sequences evaluate only the child active in the current phase, using that child's declared dependency view. Missing evidence never advances a sequence, and it resets persistence to avoid inferring continuity across a data gap. State and transition evidence are bounded, deterministic, and grant no trading authority.
+
 These research-plane components are target architecture unless separately identified as implemented. Historical context remains audit-first today.
 
 ## Decision plane target
@@ -103,4 +105,4 @@ The chatbot must not independently invent trading actions. It may explain ground
 
 ## Current implementation boundary
 
-Derived 4H/1D research context and the stateless ResearchRule/combinator foundation are implemented without connection to trading behavior. Stateful rules, StrategyEligibility, the Hypothesis Registry, evidence-gated action policy, and ActionDecision do not yet exist. Their implementation belongs to later roadmap gates and must preserve baseline replay, execution, and accounting parity.
+Derived 4H/1D research context, the stateless ResearchRule/combinator foundation, and bounded stateful sequence/persistence primitives are implemented without connection to trading behavior. Actual hypotheses, StrategyEligibility, the Hypothesis Registry, evidence-gated action policy, and ActionDecision do not yet exist. Their implementation belongs to later roadmap gates and must preserve baseline replay, execution, and accounting parity.
