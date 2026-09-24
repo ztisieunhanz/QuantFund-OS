@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `5aa01a387d41f9da3574f167c58b9ad4857ff38d`
-- **Checkpoint Message**: `Gate M13C: add PIT-safe stateful research rules`
+- **Last Verified Code Checkpoint**: `096297f28574518614a07eb46fde75bbf5da8da5`
+- **Checkpoint Message**: `Gate M13C: add hypothesis registry governance`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -56,14 +56,15 @@ Do not rely only on AI memory or previous agent reports.
   - **M13C / C-A** (Derived PIT-Safe 4H + 1D Research Context): **COMPLETE** at `6e350f29e3d941a280322a23ee2db709aa90701a`
   - **M13C / C-B** (ResearchRule Interface + Combinators): **COMPLETE** at `45e4487d850e8fdd612286fc110991383e408995`
   - **M13C / C-C** (PIT-Safe Stateful & Sequence Research Rules): **COMPLETE** at `5aa01a387d41f9da3574f167c58b9ad4857ff38d`
-  - **M13C / C-D** (Hypothesis Registry + Anti-Data-Mining Governance): **IMPLEMENTED — NOT CHECKPOINTED**; predictive validity remains unassessed and no hypothesis is approved for paper action
+  - **M13C / C-D** (Hypothesis Registry + Anti-Data-Mining Governance): **COMPLETE** at `096297f28574518614a07eb46fde75bbf5da8da5`; predictive validity remains unassessed and no hypothesis is approved for paper action
+  - **M13C / C-E** (PIT-Safe Macro + Technical Feature Builder): **IMPLEMENTED — NOT CHECKPOINTED**; research features grant no action or execution authority
 - **Validation Baseline**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (893/893 tests across 33 test files at the last verified checkpoint)
+  - `npx vitest run`: **PASS** (936/936 tests across 34 test files at the last verified checkpoint)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
-  - **CI status**: The C-C checkpoint at `5aa01a387d41f9da3574f167c58b9ad4857ff38d` passed the required remote workflow.
-- **Current Documented Phase**: M13B and M13C/C-A/C-B/C-C are **COMPLETE**. C-D implements deterministic pre-registration and anti-data-mining governance without evaluation or action authority. C-E, C-F, and M13D remain future work.
+  - **CI status**: The C-D checkpoint at `096297f28574518614a07eb46fde75bbf5da8da5` passed the required remote workflow.
+- **Current Documented Phase**: M13B and M13C/C-A/C-B/C-C/C-D are **COMPLETE**. C-E implements deterministic PIT-safe research feature construction without predictive or trading authority. C-F and M13D remain future work.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -397,7 +398,8 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - C-A derived 4H/1D research context is checkpointed and remains disconnected from trading authority.
 - C-B's stateless ResearchRule contract and combinators are checkpointed; no rule is action-eligible.
 - C-C's stateful sequence and persistence primitives are checkpointed; state remains research-evaluation-only.
-- C-D's deterministic Hypothesis Registry and anti-data-mining controls are implemented but not checkpointed. Predictive validity remains unassessed and no hypothesis is approved for paper action.
+- C-D's deterministic Hypothesis Registry and anti-data-mining controls are checkpointed. Predictive validity remains unassessed and no hypothesis is approved for paper action.
+- C-E's PIT-safe technical and macro/event feature builder is implemented but not checkpointed. Missing evidence remains explicit and no feature is action-eligible.
 
 ---
 
@@ -411,7 +413,7 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - Historical macro alpha & regime strategy models (mapping PIT macro context to quant signals).
 - Historical event consensus provider integration & verified surprise calculation.
 - Historical factor freshness thresholds calibrated for daily/monthly series.
-- **M13C C-E/C-F and later**: Feature builder, shadow research harness, and subsequent OOS/robustness work.
+- **M13C C-F and later**: Shadow research harness and subsequent OOS/robustness work.
 - **Post-v1 unless explicitly approved**: Additional executable time domains or a true multi-timeframe execution engine.
 - Short-selling support and margin semantics.
 - Train-set hyperparameter optimization & grid search engine.
@@ -443,8 +445,8 @@ For every major engineering gate:
 
 ## 14. Current Documented Phase
 
-### M13C / C-D — Hypothesis Registry + Anti-Data-Mining Governance
+### M13C / C-E — PIT-Safe Macro + Technical Feature Builder
 
 **Status**: **IMPLEMENTED — NOT CHECKPOINTED**
 
-M13B and C-A through C-C are complete; C-C is checkpointed at `5aa01a387d41f9da3574f167c58b9ad4857ff38d`. C-D adds an immutable deterministic registry for predeclared hypothesis identity, rationale, rule references, assets/dependencies, finite parameter spaces, non-overlapping train/OOS policy, exact declarative trial accounting, and lifecycle preservation for rejected, failed, and insufficient-evidence outcomes. Snapshot schema/use/non-authority fields are validated before trust, extension, or serialization; existing entries are then normalized and their scientific identities and non-authority flags are independently revalidated. The registry stores no performance, ranking, selected-parameter, or OOS-result fields and performs no evaluation, search, tuning, or strategy selection. Predictive validity is not established, no hypothesis is approved for paper action, and the registry grants no Permission, Risk, Omega, execution, accounting, or ActionDecision authority. C-E, C-F, and M13D remain future work.
+M13B and C-A through C-D are complete; C-D is checkpointed at `096297f28574518614a07eb46fde75bbf5da8da5`. C-E adds immutable deterministic feature definitions and a research-only vector builder tied to one asset and exact `decisionTime`/`asOf` boundary. Technical values use eligible canonical 1H bars or C-A's fully closed 4H/1D context; macro/event levels use only supplied canonical evidence with `availableAt <= decisionTime`. Unavailable features remain explicit and independent, with no zero-fill, synthetic substitute, or cross-feature invalidation. Definitions have stable versioned semantic identity, outputs preserve source evidence and age metadata, and neither definitions nor vectors contain performance selection. Predictive validity and paper-action approval remain false; features grant no price, Permission, Risk, Omega, execution, accounting, or ActionDecision authority. C-F and M13D have not started.
