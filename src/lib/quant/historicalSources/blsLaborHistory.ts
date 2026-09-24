@@ -360,7 +360,7 @@ export function processBlsLaborHistory(input: ProcessBlsLaborHistoryInput): BlsL
     sourceUrls.add(sourceUrl);
     const artifact = verifyRawArtifact({
       provider: "US_BUREAU_OF_LABOR_STATISTICS",
-      seriesId: "US_NFP_NET_CHANGE",
+      sourceArtifactType: "BLS_EMPLOYMENT_SITUATION_ARCHIVED_NEWS_RELEASE",
       instrument: "CES_TOTAL_NONFARM_DIRECT_PUBLISHED_CHANGE",
       archiveUrl: sourceUrl,
       providerChecksumPolicy: "NOT_PUBLISHED",

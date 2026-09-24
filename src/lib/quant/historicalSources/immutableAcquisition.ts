@@ -1,6 +1,48 @@
 import { createHash } from "node:crypto";
+import type { ResearchSeriesId } from "../researchDataProtocol";
 
-export const RAW_ARTIFACT_IDENTITY_VERSION = "M13B2-RAW-ARTIFACT-V1";
+export const RAW_ARTIFACT_IDENTITY_VERSION = "M13B2-RAW-ARTIFACT-V2";
+
+export type ResearchSourceArtifactType =
+  | "BINANCE_SPOT_MONTHLY_KLINES_1H"
+  | "FRED_ALFRED_H15_INITIAL_RELEASE_OBSERVATIONS"
+  | "BLS_CPI_ARCHIVED_NEWS_RELEASE"
+  | "BLS_EMPLOYMENT_SITUATION_ARCHIVED_NEWS_RELEASE"
+  | "FOMC_POLICY_STATEMENT"
+  | "FOMC_IMPLEMENTATION_NOTE";
+
+export const APPROVED_RESEARCH_SOURCE_ARTIFACT_TYPES: Readonly<
+  Record<string, readonly ResearchSourceArtifactType[]>
+> = Object.freeze({
+  BINANCE_PUBLIC_DATA: Object.freeze(
+    ["BINANCE_SPOT_MONTHLY_KLINES_1H"] as readonly ResearchSourceArtifactType[]
+  ),
+  FEDERAL_RESERVE_FRED_ALFRED: Object.freeze(
+    ["FRED_ALFRED_H15_INITIAL_RELEASE_OBSERVATIONS"] as readonly ResearchSourceArtifactType[]
+  ),
+  US_BUREAU_OF_LABOR_STATISTICS: Object.freeze([
+    "BLS_CPI_ARCHIVED_NEWS_RELEASE",
+    "BLS_EMPLOYMENT_SITUATION_ARCHIVED_NEWS_RELEASE",
+  ] as readonly ResearchSourceArtifactType[]),
+  FEDERAL_RESERVE_BOARD: Object.freeze(
+    ["FOMC_POLICY_STATEMENT", "FOMC_IMPLEMENTATION_NOTE"] as readonly ResearchSourceArtifactType[]
+  ),
+});
+
+export const APPROVED_RESEARCH_SOURCE_ARTIFACT_SERIES = Object.freeze({
+  BINANCE_SPOT_MONTHLY_KLINES_1H: Object.freeze(["BTC", "PAXG"] as const),
+  FRED_ALFRED_H15_INITIAL_RELEASE_OBSERVATIONS: Object.freeze(["US10Y", "US2Y"] as const),
+  BLS_CPI_ARCHIVED_NEWS_RELEASE: Object.freeze(["US_CPI_INDEX", "US_CPI_YOY"] as const),
+  BLS_EMPLOYMENT_SITUATION_ARCHIVED_NEWS_RELEASE: Object.freeze(["US_NFP_NET_CHANGE"] as const),
+  FOMC_POLICY_STATEMENT: Object.freeze([
+    "FOMC_RATE_DECISION",
+    "US_FED_FUNDS_TARGET_UPPER",
+  ] as const),
+  FOMC_IMPLEMENTATION_NOTE: Object.freeze([
+    "FOMC_RATE_DECISION",
+    "US_FED_FUNDS_TARGET_UPPER",
+  ] as const),
+}) satisfies Readonly<Record<ResearchSourceArtifactType, readonly ResearchSeriesId[]>>;
 
 export class HistoricalAcquisitionError extends Error {
   constructor(message: string) {
@@ -26,7 +68,7 @@ export interface VerifiedRawArtifact {
   readonly identityVersion: typeof RAW_ARTIFACT_IDENTITY_VERSION;
   readonly artifactId: string;
   readonly provider: string;
-  readonly seriesId: string;
+  readonly sourceArtifactType: ResearchSourceArtifactType;
   readonly instrument: string;
   readonly request: RawArtifactRequestIdentity;
   readonly retrievedAt: string;
@@ -39,7 +81,7 @@ export interface VerifiedRawArtifact {
 
 interface VerifyRawArtifactBaseInput {
   readonly provider: string;
-  readonly seriesId: string;
+  readonly sourceArtifactType: ResearchSourceArtifactType;
   readonly instrument: string;
   readonly archiveUrl: string;
   readonly partition: string;
@@ -112,7 +154,13 @@ export function parseSha256Checksum(text: string, expectedFileName: string): Pro
 
 export function verifyRawArtifact(input: VerifyRawArtifactInput): VerifiedRawArtifact {
   const provider = requireText(input.provider, "provider");
-  const seriesId = requireText(input.seriesId, "seriesId");
+  const sourceArtifactType = requireText(input.sourceArtifactType, "sourceArtifactType") as ResearchSourceArtifactType;
+  const approvedTypes = APPROVED_RESEARCH_SOURCE_ARTIFACT_TYPES[provider];
+  if (!approvedTypes?.includes(sourceArtifactType)) {
+    throw new HistoricalAcquisitionError(
+      `sourceArtifactType "${sourceArtifactType}" is not approved for provider "${provider}".`
+    );
+  }
   const instrument = requireText(input.instrument, "instrument");
   const archiveUrl = requireText(input.archiveUrl, "archiveUrl");
   const partition = requireText(input.partition, "partition");
@@ -151,7 +199,7 @@ export function verifyRawArtifact(input: VerifyRawArtifactInput): VerifiedRawArt
   const stableIdentity = {
     identityVersion: RAW_ARTIFACT_IDENTITY_VERSION,
     provider,
-    seriesId,
+    sourceArtifactType,
     instrument,
     request,
     providerChecksum,

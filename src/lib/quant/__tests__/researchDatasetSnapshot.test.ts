@@ -10,6 +10,7 @@ import {
 import {
   BLS_CPI_MOM_STATUS,
   BLS_UNEMPLOYMENT_STATUS,
+  APPROVED_RESEARCH_SOURCE_ARTIFACT_SERIES,
   CURRENT_UNRESOLVED_RESEARCH_SERIES,
   RAW_ARTIFACT_IDENTITY_VERSION,
   ResearchDatasetSnapshotRegistry,
@@ -17,11 +18,13 @@ import {
   canonicalJson,
   computeResearchDatasetSnapshotHash,
   createResearchDatasetSnapshot,
+  processBlsCpiHistory,
   sha256Hex,
   validateResearchDatasetSnapshot,
   verifyRawArtifact,
   type ResearchDatasetSnapshotInput,
   type ResearchDatasetSnapshotManifestInput,
+  type ResearchSourceArtifactType,
   type VerifiedRawArtifact,
 } from "../historicalSources";
 
@@ -44,12 +47,23 @@ function makeArtifact(
   retrievedAt = "2026-09-24T00:00:00.000Z",
   checksumRequired = false
 ): VerifiedRawArtifact {
+  const sourceArtifactType: ResearchSourceArtifactType = provider === "BINANCE_PUBLIC_DATA"
+    ? "BINANCE_SPOT_MONTHLY_KLINES_1H"
+    : provider === "FEDERAL_RESERVE_FRED_ALFRED"
+      ? "FRED_ALFRED_H15_INITIAL_RELEASE_OBSERVATIONS"
+      : provider === "US_BUREAU_OF_LABOR_STATISTICS"
+        ? seriesId === "US_NFP_NET_CHANGE"
+          ? "BLS_EMPLOYMENT_SITUATION_ARCHIVED_NEWS_RELEASE"
+          : "BLS_CPI_ARCHIVED_NEWS_RELEASE"
+        : seriesId === "US_FED_FUNDS_TARGET_UPPER"
+          ? "FOMC_IMPLEMENTATION_NOTE"
+          : "FOMC_POLICY_STATEMENT";
   const rawBytes = new TextEncoder().encode(`raw:${label}`);
   const archiveUrl = `https://example.test/${label}.bin`;
   if (checksumRequired) {
     return verifyRawArtifact({
       provider,
-      seriesId,
+      sourceArtifactType,
       instrument: `INSTRUMENT_${seriesId}`,
       archiveUrl,
       partition: label,
@@ -65,7 +79,7 @@ function makeArtifact(
   }
   return verifyRawArtifact({
     provider,
-    seriesId,
+    sourceArtifactType,
     instrument: `INSTRUMENT_${seriesId}`,
     archiveUrl,
     partition: label,
@@ -223,6 +237,55 @@ function fixture(): FixtureParts {
   return { input: { dataset, manifest, rawArtifacts: Object.values(artifactsByLabel) }, artifactsByLabel };
 }
 
+function fixtureWithRealBlsCpiOutput(): ResearchDatasetSnapshotInput {
+  const base = fixture();
+  const html = `<!doctype html><html><body>
+    <h1>Consumer Price Index News Release</h1>
+    <p>Transmission of material in this release is embargoed until
+    8:30 a.m. (ET) Tuesday, February 13, 2024 USDL-24-0256</p>
+    <h2>CONSUMER PRICE INDEX - JANUARY 2024</h2>
+    <p>The Consumer Price Index for All Urban Consumers (CPI-U) increased
+    3.1 percent over the last 12 months to an index level of
+    308.417 (1982-84=100).</p>
+  </body></html>`;
+  const cpi = processBlsCpiHistory({
+    artifacts: [{
+      sourceUrl: "https://www.bls.gov/news.release/archives/cpi_02132024.htm",
+      responseBytes: new TextEncoder().encode(html),
+      retrievedAt: "2026-09-24T00:00:00.000Z",
+    }],
+    releasedThroughMs: END,
+  });
+  const macroReleases = [
+    ...base.input.dataset.macroReleases.filter(
+      (release) => release.seriesId !== "US_CPI_INDEX" && release.seriesId !== "US_CPI_YOY"
+    ),
+    ...cpi.series.US_CPI_INDEX.releases,
+    ...cpi.series.US_CPI_YOY.releases,
+  ];
+  const sources = [
+    ...base.input.manifest.sources.filter(
+      (source) => source.seriesId !== "US_CPI_INDEX" && source.seriesId !== "US_CPI_YOY"
+    ),
+    cpi.series.US_CPI_INDEX.manifestEntry,
+    cpi.series.US_CPI_YOY.manifestEntry,
+  ];
+  const dataset = { ...base.input.dataset, macroReleases };
+  return {
+    dataset,
+    manifest: {
+      ...base.input.manifest,
+      totalRecordCount:
+        dataset.marketObservations.length + dataset.macroReleases.length + dataset.eventRecords.length,
+      sources,
+    },
+    rawArtifacts: [
+      ...base.input.rawArtifacts.filter((artifact) => artifact.artifactId !== base.artifactsByLabel.cpi.artifactId),
+      ...cpi.artifacts,
+    ],
+  };
+}
+
 function replaceSource(
   input: ResearchDatasetSnapshotInput,
   seriesId: ResearchSeriesId,
@@ -233,6 +296,49 @@ function replaceSource(
     manifest: {
       ...clone(input.manifest),
       sources: input.manifest.sources.map((source) => source.seriesId === seriesId ? { ...source, ...patch } : clone(source)),
+    },
+  };
+}
+
+function addUnresolvedMonthlySeries(
+  input: ResearchDatasetSnapshotInput,
+  seriesId: "US_CPI_MOM" | "US_UNEMPLOYMENT_RATE",
+  artifactId: string
+): ResearchDatasetSnapshotInput {
+  const provider = seriesId === "US_CPI_MOM"
+    ? "BLS_ARCHIVED_CPI_RELEASE"
+    : "BLS_ARCHIVED_EMPLOYMENT_SITUATION";
+  const record = macro(seriesId, provider, 5 * 86_400_000, 3.7);
+  const spec = RESEARCH_SERIES_SPECS[seriesId];
+  const source: ResearchSeriesManifestEntry = {
+    seriesId,
+    kind: spec.kind,
+    provider,
+    providerInstrument: `OFFICIAL_${seriesId}`,
+    cadence: spec.cadence,
+    unit: "PERCENT",
+    firstObservationTime: record.observationTime,
+    lastObservationTime: record.observationTime,
+    firstAvailableAt: record.availableAt,
+    lastAvailableAt: record.availableAt,
+    recordCount: 1,
+    missingness: { missingCount: 0, method: "Official expected monthly release denominator" },
+    revisionSemantics: spec.revisionSemantics,
+    timezoneSessionRule: "America/New_York release witness",
+    availabilityRule: "Explicit archived release boundary",
+    provenance: canonicalJson({ artifactId }),
+    contentHash: digest(`content:${seriesId}`),
+  };
+  return {
+    ...clone(input),
+    dataset: {
+      ...clone(input.dataset),
+      macroReleases: [...input.dataset.macroReleases, record],
+    },
+    manifest: {
+      ...clone(input.manifest),
+      totalRecordCount: input.manifest.totalRecordCount + 1,
+      sources: [...input.manifest.sources, source],
     },
   };
 }
@@ -270,7 +376,7 @@ describe("Gate M13B-2 B2-C — immutable research dataset snapshots", () => {
     const first = fixture();
     const replacement = makeArtifact("US2Y", "FEDERAL_RESERVE_FRED_ALFRED", "us2y", "2030-01-01T00:00:00.000Z");
     expect(replacement.artifactId).toBe(first.artifactsByLabel.us2y.artifactId);
-    const second = { ...clone(first.input), rawArtifacts: first.input.rawArtifacts.map((item) => item.seriesId === "US2Y" ? replacement : item) };
+    const second = { ...clone(first.input), rawArtifacts: first.input.rawArtifacts.map((item) => item.artifactId === first.artifactsByLabel.us2y.artifactId ? replacement : item) };
     expect(computeResearchDatasetSnapshotHash(second)).toBe(computeResearchDatasetSnapshotHash(first.input));
   });
 
@@ -315,18 +421,15 @@ describe("Gate M13B-2 B2-C — immutable research dataset snapshots", () => {
   it("changes identity when raw artifact SHA changes", () => {
     const base = fixture();
     const changed = makeArtifact("US2Y", "FEDERAL_RESERVE_FRED_ALFRED", "us2y-changed");
-    let input: ResearchDatasetSnapshotInput = { ...clone(base.input), rawArtifacts: base.input.rawArtifacts.map((item) => item.seriesId === "US2Y" ? changed : item) };
+    let input: ResearchDatasetSnapshotInput = { ...clone(base.input), rawArtifacts: base.input.rawArtifacts.map((item) => item.artifactId === base.artifactsByLabel.us2y.artifactId ? changed : item) };
     input = replaceSource(input, "US2Y", { provenance: canonicalJson({ artifactIds: [changed.artifactId] }) });
     expect(computeResearchDatasetSnapshotHash(input)).not.toBe(computeResearchDatasetSnapshotHash(base.input));
   });
 
   it("changes identity when provider identity changes", () => {
     const base = fixture();
-    const changed = makeArtifact("US2Y", "ALTERNATE_OFFICIAL_PROVIDER", "us2y");
-    let input: ResearchDatasetSnapshotInput = { ...clone(base.input), rawArtifacts: base.input.rawArtifacts.map((item) => item.seriesId === "US2Y" ? changed : item) };
-    input = replaceSource(input, "US2Y", {
+    let input = replaceSource(base.input, "US2Y", {
       provider: "ALTERNATE_OFFICIAL_PROVIDER",
-      provenance: canonicalJson({ artifactIds: [changed.artifactId] }),
     });
     input = {
       ...input,
@@ -445,9 +548,8 @@ describe("Gate M13B-2 B2-C — immutable research dataset snapshots", () => {
     expect(() => validateResearchDatasetSnapshot(snapshot)).toThrow(/unsupported snapshot schemaVersion/i);
   });
 
-  it("rejects fake acquisition of a currently unresolved series", () => {
+  it("rejects fake acquisition of a currently unresolved series at the artifact compatibility boundary", () => {
     const base = fixture();
-    const dxyArtifact = makeArtifact("DXY", "UNAPPROVED_DXY", "dxy");
     const dxyRecord = market("DXY", "UNAPPROVED_DXY", 14_400_000, 104);
     const dxySource: ResearchSeriesManifestEntry = {
       ...base.input.manifest.sources[0],
@@ -460,7 +562,7 @@ describe("Gate M13B-2 B2-C — immutable research dataset snapshots", () => {
       firstAvailableAt: dxyRecord.availableAt,
       lastAvailableAt: dxyRecord.availableAt,
       recordCount: 1,
-      provenance: canonicalJson({ artifactIds: [dxyArtifact.artifactId] }),
+      provenance: canonicalJson({ artifactIds: [base.artifactsByLabel.btc.artifactId] }),
       contentHash: digest("dxy"),
     };
     const input: ResearchDatasetSnapshotInput = {
@@ -470,9 +572,9 @@ describe("Gate M13B-2 B2-C — immutable research dataset snapshots", () => {
         totalRecordCount: base.input.manifest.totalRecordCount + 1,
         sources: [...base.input.manifest.sources, dxySource],
       },
-      rawArtifacts: [...base.input.rawArtifacts, dxyArtifact],
+      rawArtifacts: base.input.rawArtifacts,
     };
-    expect(() => createResearchDatasetSnapshot(input)).toThrow(/DXY is unresolved/i);
+    expect(() => createResearchDatasetSnapshot(input)).toThrow(/not approved to support canonical research series DXY/i);
   });
 
   it("rejects a caller-provided wrong snapshot hash", () => {
@@ -527,6 +629,222 @@ describe("Gate M13B-2 B2-C — immutable research dataset snapshots", () => {
     expect(snapshot.manifest.sources).toHaveLength(9);
   });
 
+  it("assembles actual BLS CPI adapter output with one source artifact linked to both canonical CPI series", () => {
+    const snapshot = createResearchDatasetSnapshot(fixtureWithRealBlsCpiOutput());
+    const artifact = snapshot.rawArtifacts.find(
+      (item) => item.sourceArtifactType === "BLS_CPI_ARCHIVED_NEWS_RELEASE"
+    );
+    expect(artifact).toBeDefined();
+    expect(snapshot.rawArtifacts.filter(
+      (item) => item.sourceArtifactType === "BLS_CPI_ARCHIVED_NEWS_RELEASE"
+    )).toHaveLength(1);
+    expect(snapshot.artifactSeriesLinks.find((link) => link.artifactId === artifact?.artifactId)?.researchSeriesIds)
+      .toEqual(["US_CPI_INDEX", "US_CPI_YOY"]);
+  });
+
+  it("accepts only the approved CPI artifact links to CPI Index and CPI YoY", () => {
+    const snapshot = createResearchDatasetSnapshot(fixtureWithRealBlsCpiOutput());
+    const artifact = snapshot.rawArtifacts.find(
+      (item) => item.sourceArtifactType === "BLS_CPI_ARCHIVED_NEWS_RELEASE"
+    );
+    const link = snapshot.artifactSeriesLinks.find((item) => item.artifactId === artifact?.artifactId);
+    expect(link?.researchSeriesIds).toEqual(["US_CPI_INDEX", "US_CPI_YOY"]);
+    expect(snapshot.rawArtifacts.filter((item) => item.artifactId === artifact?.artifactId)).toHaveLength(1);
+  });
+
+  it("rejects a BLS CPI artifact linked to BTC", () => {
+    const base = fixture();
+    try {
+      createResearchDatasetSnapshot(replaceSource(base.input, "BTC", {
+        provenance: canonicalJson({ artifactId: base.artifactsByLabel.cpi.artifactId }),
+      }));
+      throw new Error("expected incompatible artifact/series link to fail");
+    } catch (error) {
+      const message = String(error);
+      expect(message).toContain(base.artifactsByLabel.cpi.artifactId);
+      expect(message).toContain("BLS_CPI_ARCHIVED_NEWS_RELEASE");
+      expect(message).toContain("BTC");
+    }
+  });
+
+  it("rejects a BLS CPI artifact linked to NFP", () => {
+    const base = fixture();
+    expect(() => createResearchDatasetSnapshot(replaceSource(base.input, "US_NFP_NET_CHANGE", {
+      provenance: canonicalJson({ artifactId: base.artifactsByLabel.cpi.artifactId }),
+    }))).toThrow(/BLS_CPI_ARCHIVED_NEWS_RELEASE.*US_NFP_NET_CHANGE/i);
+  });
+
+  it("accepts Employment Situation for NFP but rejects unemployment while it remains conditional", () => {
+    const base = fixture();
+    const snapshot = createResearchDatasetSnapshot(base.input);
+    const nfpLink = snapshot.artifactSeriesLinks.find(
+      (link) => link.artifactId === base.artifactsByLabel.nfp.artifactId
+    );
+    expect(nfpLink?.researchSeriesIds).toEqual(["US_NFP_NET_CHANGE"]);
+    expect(snapshot.seriesStatuses.find((status) => status.seriesId === "US_UNEMPLOYMENT_RATE")?.status)
+      .toBe("CONDITIONAL");
+    expect(() => createResearchDatasetSnapshot(addUnresolvedMonthlySeries(
+      base.input,
+      "US_UNEMPLOYMENT_RATE",
+      base.artifactsByLabel.nfp.artifactId
+    ))).toThrow(/BLS_EMPLOYMENT_SITUATION_ARCHIVED_NEWS_RELEASE.*US_UNEMPLOYMENT_RATE/i);
+  });
+
+  it("accepts Binance artifacts for BTC and PAXG but rejects a Binance-to-CPI cross-link", () => {
+    const base = fixture();
+    const snapshot = createResearchDatasetSnapshot(base.input);
+    expect(snapshot.artifactSeriesLinks.find(
+      (link) => link.artifactId === base.artifactsByLabel.btc.artifactId
+    )?.researchSeriesIds).toEqual(["BTC"]);
+    expect(snapshot.artifactSeriesLinks.find(
+      (link) => link.artifactId === base.artifactsByLabel.paxg.artifactId
+    )?.researchSeriesIds).toEqual(["PAXG"]);
+    expect(() => createResearchDatasetSnapshot(replaceSource(base.input, "US_CPI_INDEX", {
+      provenance: canonicalJson({ artifactId: base.artifactsByLabel.btc.artifactId }),
+    }))).toThrow(/BINANCE_SPOT_MONTHLY_KLINES_1H.*US_CPI_INDEX/i);
+  });
+
+  it("accepts H.15 artifacts for US2Y and US10Y but rejects an H.15-to-BTC cross-link", () => {
+    const base = fixture();
+    const snapshot = createResearchDatasetSnapshot(base.input);
+    expect(snapshot.artifactSeriesLinks.find(
+      (link) => link.artifactId === base.artifactsByLabel.us2y.artifactId
+    )?.researchSeriesIds).toEqual(["US2Y"]);
+    expect(snapshot.artifactSeriesLinks.find(
+      (link) => link.artifactId === base.artifactsByLabel.us10y.artifactId
+    )?.researchSeriesIds).toEqual(["US10Y"]);
+    expect(() => createResearchDatasetSnapshot(replaceSource(base.input, "BTC", {
+      provenance: canonicalJson({ artifactId: base.artifactsByLabel.us2y.artifactId }),
+    }))).toThrow(/FRED_ALFRED_H15_INITIAL_RELEASE_OBSERVATIONS.*BTC/i);
+  });
+
+  it("matches FOMC statement/note compatibility to the approved paired provenance contract", () => {
+    const base = fixture();
+    const snapshot = createResearchDatasetSnapshot(base.input);
+    for (const artifact of [base.artifactsByLabel.fomc, base.artifactsByLabel.target]) {
+      expect(snapshot.artifactSeriesLinks.find((link) => link.artifactId === artifact.artifactId)?.researchSeriesIds)
+        .toEqual(["FOMC_RATE_DECISION", "US_FED_FUNDS_TARGET_UPPER"]);
+    }
+    expect(APPROVED_RESEARCH_SOURCE_ARTIFACT_SERIES.FOMC_POLICY_STATEMENT)
+      .toEqual(["FOMC_RATE_DECISION", "US_FED_FUNDS_TARGET_UPPER"]);
+    expect(APPROVED_RESEARCH_SOURCE_ARTIFACT_SERIES.FOMC_IMPLEMENTATION_NOTE)
+      .toEqual(["FOMC_RATE_DECISION", "US_FED_FUNDS_TARGET_UPPER"]);
+  });
+
+  it("rejects an invalid FOMC statement-to-BTC cross-link", () => {
+    const base = fixture();
+    expect(() => createResearchDatasetSnapshot(replaceSource(base.input, "BTC", {
+      provenance: canonicalJson({ artifactId: base.artifactsByLabel.fomc.artifactId }),
+    }))).toThrow(/FOMC_POLICY_STATEMENT.*BTC/i);
+  });
+
+  it("does not permit a CPI artifact to make unresolved CPI MoM acquired", () => {
+    const base = fixture();
+    expect(createResearchDatasetSnapshot(base.input).seriesStatuses.find(
+      (status) => status.seriesId === "US_CPI_MOM"
+    )?.status).toBe("CONDITIONAL");
+    expect(() => createResearchDatasetSnapshot(addUnresolvedMonthlySeries(
+      base.input,
+      "US_CPI_MOM",
+      base.artifactsByLabel.cpi.artifactId
+    ))).toThrow(/BLS_CPI_ARCHIVED_NEWS_RELEASE.*US_CPI_MOM/i);
+  });
+
+  it("keeps every closed source-artifact compatibility list deterministic", () => {
+    for (const allowedSeries of Object.values(APPROVED_RESEARCH_SOURCE_ARTIFACT_SERIES)) {
+      expect(Object.isFrozen(allowedSeries)).toBe(true);
+      expect(allowedSeries).toEqual([...allowedSeries].sort((left, right) => left.localeCompare(right)));
+      expect(new Set(allowedSeries).size).toBe(allowedSeries.length);
+    }
+  });
+
+  it("includes explicit artifact-to-series links in the snapshot hash preimage", () => {
+    const canonicalInput = buildResearchDatasetSnapshotCanonicalInput(fixture().input);
+    expect(JSON.parse(canonicalInput)).toHaveProperty("artifactSeriesLinks");
+    expect(createResearchDatasetSnapshot(fixture().input).artifactSeriesLinks.every(
+      (link) => link.researchSeriesIds.length > 0
+    )).toBe(true);
+  });
+
+  it("changes snapshot identity when canonical artifact linkage changes", () => {
+    const base = fixture();
+    const changed = replaceSource(base.input, "FOMC_RATE_DECISION", {
+      provenance: canonicalJson({ artifactId: base.artifactsByLabel.fomc.artifactId }),
+    });
+    expect(computeResearchDatasetSnapshotHash(changed))
+      .not.toBe(computeResearchDatasetSnapshotHash(base.input));
+  });
+
+  it("changes snapshot identity when source artifact identity changes", () => {
+    const base = fixture();
+    const changedArtifact = makeArtifact(
+      "US_FED_FUNDS_TARGET_UPPER",
+      "FEDERAL_RESERVE_BOARD",
+      "fomc"
+    );
+    let changed: ResearchDatasetSnapshotInput = {
+      ...clone(base.input),
+      rawArtifacts: base.input.rawArtifacts.map((artifact) =>
+        artifact.artifactId === base.artifactsByLabel.fomc.artifactId ? changedArtifact : artifact
+      ),
+    };
+    for (const seriesId of ["FOMC_RATE_DECISION", "US_FED_FUNDS_TARGET_UPPER"] as const) {
+      changed = replaceSource(changed, seriesId, {
+        provenance: canonicalJson({
+          artifactIds: [changedArtifact.artifactId, base.artifactsByLabel.target.artifactId].sort(),
+        }),
+      });
+    }
+    expect(changedArtifact.rawSha256).toBe(base.artifactsByLabel.fomc.rawSha256);
+    expect(changedArtifact.sourceArtifactType).not.toBe(base.artifactsByLabel.fomc.sourceArtifactType);
+    expect(computeResearchDatasetSnapshotHash(changed))
+      .not.toBe(computeResearchDatasetSnapshotHash(base.input));
+  });
+
+  it("does not confuse a source artifact type with a canonical research series", () => {
+    const snapshot = createResearchDatasetSnapshot(fixtureWithRealBlsCpiOutput());
+    const artifact = snapshot.rawArtifacts.find(
+      (item) => item.sourceArtifactType === "BLS_CPI_ARCHIVED_NEWS_RELEASE"
+    );
+    expect(artifact?.sourceArtifactType).toBe("BLS_CPI_ARCHIVED_NEWS_RELEASE");
+    expect(snapshot.manifest.sources.some((source) => source.seriesId === "US_CPI_INDEX")).toBe(true);
+    expect(snapshot.manifest.sources.some((source) => source.seriesId === "US_CPI_YOY")).toBe(true);
+  });
+
+  it("makes source artifact type part of immutable raw identity", () => {
+    const common = {
+      provider: "FEDERAL_RESERVE_BOARD",
+      instrument: "FOMC",
+      archiveUrl: "https://www.federalreserve.gov/test.htm",
+      partition: "2024-01-31",
+      retrievedAt: "2026-09-24T00:00:00.000Z",
+      rawBytes: new TextEncoder().encode("same official bytes"),
+      parserVersion: "TEST-V1",
+      licensingClassification: "OFFICIAL_TEST_FIXTURE",
+      providerChecksumPolicy: "NOT_PUBLISHED" as const,
+      checksumUrl: null,
+    };
+    const statement = verifyRawArtifact({ ...common, sourceArtifactType: "FOMC_POLICY_STATEMENT" });
+    const note = verifyRawArtifact({ ...common, sourceArtifactType: "FOMC_IMPLEMENTATION_NOTE" });
+    expect(statement.artifactId).not.toBe(note.artifactId);
+  });
+
+  it("rejects an unapproved provider and source-artifact-type pair", () => {
+    expect(() => verifyRawArtifact({
+      provider: "FEDERAL_RESERVE_BOARD",
+      sourceArtifactType: "BLS_CPI_ARCHIVED_NEWS_RELEASE",
+      instrument: "CPI",
+      archiveUrl: "https://www.federalreserve.gov/not-cpi.htm",
+      partition: "2024-01",
+      retrievedAt: "2026-09-24T00:00:00.000Z",
+      rawBytes: new TextEncoder().encode("invalid provider/type pair"),
+      parserVersion: "TEST-V1",
+      licensingClassification: "OFFICIAL_TEST_FIXTURE",
+      providerChecksumPolicy: "NOT_PUBLISHED",
+      checksumUrl: null,
+    })).toThrow(/not approved for provider/i);
+  });
+
   it("never creates executable assetBars", () => {
     const snapshot = createResearchDatasetSnapshot(fixture().input) as unknown as Record<string, unknown>;
     expect(snapshot.assetBars).toBeUndefined();
@@ -553,16 +871,15 @@ describe("Gate M13B-2 B2-C — immutable research dataset snapshots", () => {
 
   it("rejects a Binance artifact without its provider checksum", () => {
     const base = fixture();
-    const invalid = makeArtifact("BTC", "OTHER_PROVIDER", "btc-no-checksum");
-    const forged = { ...invalid, provider: "BINANCE_PUBLIC_DATA" };
-    expect(() => createResearchDatasetSnapshot({ ...base.input, rawArtifacts: [forged, ...base.input.rawArtifacts.slice(1)] }))
+    const invalid = makeArtifact("BTC", "BINANCE_PUBLIC_DATA", "btc-no-checksum");
+    expect(() => createResearchDatasetSnapshot({ ...base.input, rawArtifacts: [invalid, ...base.input.rawArtifacts.slice(1)] }))
       .toThrow(/immutable artifact metadata|require.*checksum/i);
   });
 
   it("preserves H.15 witnessed availability and NOT_PUBLISHED checksum semantics", () => {
     const snapshot = createResearchDatasetSnapshot(fixture().input);
     const us2y = snapshot.manifest.sources.find((source) => source.seriesId === "US2Y");
-    const artifact = snapshot.rawArtifacts.find((item) => item.seriesId === "US2Y");
+    const artifact = snapshot.rawArtifacts.find((item) => item.sourceArtifactType === "FRED_ALFRED_H15_INITIAL_RELEASE_OBSERVATIONS");
     expect(us2y?.availabilityRule).toMatch(/witnessed/i);
     expect(artifact?.providerChecksumPolicy).toBe("NOT_PUBLISHED");
   });
@@ -634,6 +951,19 @@ describe("Gate M13B-2 B2-C — immutable research dataset snapshots", () => {
   it("rejects a manifest with no linked raw artifact", () => {
     expect(() => createResearchDatasetSnapshot(replaceSource(fixture().input, "BTC", { provenance: canonicalJson({ artifactIds: [] }) })))
       .toThrow(/not linked|does not link a raw artifact/i);
+  });
+
+  it("rejects an unknown artifact identity declared by structured provenance", () => {
+    expect(() => createResearchDatasetSnapshot(replaceSource(fixture().input, "BTC", {
+      provenance: canonicalJson({ artifactId: digest("unknown-artifact") }),
+    }))).toThrow(/unknown raw artifact/i);
+  });
+
+  it("does not accept an artifact ID merely embedded in unstructured provenance text", () => {
+    const base = fixture();
+    expect(() => createResearchDatasetSnapshot(replaceSource(base.input, "BTC", {
+      provenance: canonicalJson({ note: `downloaded ${base.artifactsByLabel.btc.artifactId}` }),
+    }))).toThrow(/does not link a raw artifact identity/i);
   });
 
   it("deduplicates identical artifact identity across retrieval times deterministically", () => {

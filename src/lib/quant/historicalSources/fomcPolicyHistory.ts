@@ -284,7 +284,7 @@ function makeArtifact(
 ): VerifiedRawArtifact {
   return verifyRawArtifact({
     provider: "FEDERAL_RESERVE_BOARD",
-    seriesId: kind === "STATEMENT" ? "FOMC_RATE_DECISION" : "US_FED_FUNDS_TARGET_UPPER",
+    sourceArtifactType: kind === "STATEMENT" ? "FOMC_POLICY_STATEMENT" : "FOMC_IMPLEMENTATION_NOTE",
     instrument: kind,
     archiveUrl: sourceUrl,
     providerChecksumPolicy: "NOT_PUBLISHED",

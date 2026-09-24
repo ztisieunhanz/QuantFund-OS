@@ -452,7 +452,7 @@ export function processBlsCpiHistory(input: ProcessBlsCpiHistoryInput): BlsCpiHi
     sourceUrls.add(sourceUrl);
     const artifact = verifyRawArtifact({
       provider: "US_BUREAU_OF_LABOR_STATISTICS",
-      seriesId: "BLS_CPI_RELEASE",
+      sourceArtifactType: "BLS_CPI_ARCHIVED_NEWS_RELEASE",
       instrument: "CUUR0000SA0",
       archiveUrl: sourceUrl,
       providerChecksumPolicy: "NOT_PUBLISHED",

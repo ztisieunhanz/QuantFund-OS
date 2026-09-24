@@ -328,7 +328,7 @@ export function processH15TreasuryInitialRelease(
   );
   const artifact = verifyRawArtifact({
     provider: "FEDERAL_RESERVE_FRED_ALFRED",
-    seriesId: identity.seriesId,
+    sourceArtifactType: "FRED_ALFRED_H15_INITIAL_RELEASE_OBSERVATIONS",
     instrument: identity.instrument,
     archiveUrl: identity.sourceUrl,
     providerChecksumPolicy: "NOT_PUBLISHED",

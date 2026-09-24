@@ -13,13 +13,16 @@ import {
   type HistoricalDataset,
 } from "../historicalPit";
 import {
+  APPROVED_RESEARCH_SOURCE_ARTIFACT_SERIES,
+  APPROVED_RESEARCH_SOURCE_ARTIFACT_TYPES,
   RAW_ARTIFACT_IDENTITY_VERSION,
   canonicalJson,
   sha256Hex,
+  type ResearchSourceArtifactType,
   type VerifiedRawArtifact,
 } from "./immutableAcquisition";
 
-export const RESEARCH_DATASET_SNAPSHOT_SCHEMA_VERSION = "M13B2-DATASET-SNAPSHOT-V1";
+export const RESEARCH_DATASET_SNAPSHOT_SCHEMA_VERSION = "M13B2-DATASET-SNAPSHOT-V2";
 
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const HEX_SHA256_PATTERN = /^[0-9a-f]{64}$/u;
@@ -61,6 +64,11 @@ export interface SnapshotRawArtifact extends VerifiedRawArtifact {
   readonly providerChecksumPolicy: "REQUIRED" | "NOT_PUBLISHED";
 }
 
+export interface ResearchArtifactSeriesLink {
+  readonly artifactId: string;
+  readonly researchSeriesIds: readonly ResearchSeriesId[];
+}
+
 export type ResearchDatasetSnapshotManifestInput = Omit<ResearchDatasetManifest, "snapshotHash">;
 
 export interface ResearchDatasetSnapshotInput {
@@ -85,6 +93,7 @@ export interface ResearchDatasetSnapshot {
   readonly manifest: ResearchDatasetManifest;
   readonly dataset: HistoricalDataset;
   readonly rawArtifacts: readonly SnapshotRawArtifact[];
+  readonly artifactSeriesLinks: readonly ResearchArtifactSeriesLink[];
   readonly seriesStatuses: readonly ResearchSeriesSnapshotStatus[];
 }
 
@@ -127,7 +136,7 @@ function artifactIdentityWithoutRetrieval(artifact: VerifiedRawArtifact): Omit<V
   return {
     identityVersion: artifact.identityVersion,
     provider: artifact.provider,
-    seriesId: artifact.seriesId,
+    sourceArtifactType: artifact.sourceArtifactType,
     instrument: artifact.instrument,
     request: artifact.request,
     providerChecksum: artifact.providerChecksum,
@@ -138,15 +147,10 @@ function artifactIdentityWithoutRetrieval(artifact: VerifiedRawArtifact): Omit<V
   };
 }
 
-function validateAndNormalizeArtifacts(
-  artifacts: readonly VerifiedRawArtifact[],
-  manifest: ResearchDatasetManifest
-): readonly SnapshotRawArtifact[] {
+function validateAndNormalizeArtifacts(artifacts: readonly VerifiedRawArtifact[]): readonly SnapshotRawArtifact[] {
   if (!Array.isArray(artifacts) || artifacts.length === 0) fail("rawArtifacts must contain at least one artifact.");
   const byArtifactId = new Map<string, SnapshotRawArtifact>();
   const byRequest = new Map<string, SnapshotRawArtifact>();
-  const manifestProvenance = manifest.sources.map((source) => source.provenance);
-
   for (const sourceArtifact of artifacts) {
     const artifact = deepCopy(sourceArtifact);
     if (artifact.identityVersion !== RAW_ARTIFACT_IDENTITY_VERSION) {
@@ -162,8 +166,12 @@ function validateAndNormalizeArtifacts(
     if (!Number.isFinite(Date.parse(artifact.retrievedAt))) {
       fail(`${artifact.artifactId}.retrievedAt must be a valid ISO date-time string.`);
     }
-    if (!Object.prototype.hasOwnProperty.call(RESEARCH_SERIES_SPECS, artifact.seriesId)) {
-      fail(`${artifact.artifactId} names unsupported series ${artifact.seriesId}.`);
+    const approvedTypes = APPROVED_RESEARCH_SOURCE_ARTIFACT_TYPES[artifact.provider];
+    if (!approvedTypes?.includes(artifact.sourceArtifactType as ResearchSourceArtifactType)) {
+      fail(
+        `${artifact.artifactId} uses sourceArtifactType ${artifact.sourceArtifactType} ` +
+        `that is not approved for provider ${artifact.provider}.`
+      );
     }
     for (const [field, value] of [
       ["provider", artifact.provider],
@@ -221,7 +229,7 @@ function validateAndNormalizeArtifacts(
 
     const requestKey = canonicalJson({
       provider: artifact.provider,
-      seriesId: artifact.seriesId,
+      sourceArtifactType: artifact.sourceArtifactType,
       instrument: artifact.instrument,
       request: artifact.request,
       parserVersion: artifact.parserVersion,
@@ -233,18 +241,78 @@ function validateAndNormalizeArtifacts(
     byRequest.set(requestKey, normalized);
   }
 
-  const normalized = [...byArtifactId.values()].sort((left, right) => left.artifactId.localeCompare(right.artifactId));
-  for (const artifact of normalized) {
-    if (!manifestProvenance.some((provenance) => provenance.includes(artifact.artifactId))) {
-      fail(`raw artifact ${artifact.artifactId} is not linked by any series manifest provenance.`);
-    }
+  return [...byArtifactId.values()].sort((left, right) => left.artifactId.localeCompare(right.artifactId));
+}
+
+function collectDeclaredArtifactIds(value: unknown, key: string | null, output: string[]): void {
+  if (Array.isArray(value)) {
+    for (const item of value) collectDeclaredArtifactIds(item, key, output);
+    return;
   }
+  if (value !== null && typeof value === "object") {
+    for (const [childKey, childValue] of Object.entries(value)) {
+      collectDeclaredArtifactIds(childValue, childKey, output);
+    }
+    return;
+  }
+  if (typeof value !== "string" || key === null) return;
+  const normalizedKey = key.toLowerCase();
+  if (normalizedKey === "artifactid" || normalizedKey === "artifactids") {
+    output.push(value);
+  }
+}
+
+function deriveArtifactSeriesLinks(
+  artifacts: readonly SnapshotRawArtifact[],
+  manifest: ResearchDatasetManifest
+): readonly ResearchArtifactSeriesLink[] {
+  const artifactsById = new Map(artifacts.map((artifact) => [artifact.artifactId, artifact]));
+  const seriesByArtifact = new Map<string, Set<ResearchSeriesId>>(
+    artifacts.map((artifact) => [artifact.artifactId, new Set<ResearchSeriesId>()])
+  );
+
   for (const source of manifest.sources) {
-    if (!normalized.some((artifact) => source.provenance.includes(artifact.artifactId))) {
-      fail(`${source.seriesId} manifest provenance does not link a raw artifact.`);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(source.provenance) as unknown;
+    } catch {
+      fail(`${source.seriesId} manifest provenance must be structured JSON with artifact identity links.`);
+    }
+    const declaredIds: string[] = [];
+    collectDeclaredArtifactIds(parsed, null, declaredIds);
+    const uniqueIds = [...new Set(declaredIds)];
+    if (uniqueIds.length === 0) {
+      fail(`${source.seriesId} manifest provenance does not link a raw artifact identity.`);
+    }
+    for (const artifactId of uniqueIds) {
+      assertSha256(artifactId, `${source.seriesId}.provenance.artifactId`);
+      const artifact = artifactsById.get(artifactId);
+      if (!artifact) {
+        fail(`${source.seriesId} manifest provenance references unknown raw artifact ${artifactId}.`);
+      }
+      const approvedSeries: readonly ResearchSeriesId[] =
+        APPROVED_RESEARCH_SOURCE_ARTIFACT_SERIES[artifact.sourceArtifactType];
+      if (!approvedSeries.includes(source.seriesId)) {
+        fail(
+          `raw artifact ${artifactId} (${artifact.sourceArtifactType}) is not approved to support ` +
+          `canonical research series ${source.seriesId}.`
+        );
+      }
+      seriesByArtifact.get(artifactId)?.add(source.seriesId);
     }
   }
-  return normalized;
+
+  return [...seriesByArtifact.entries()]
+    .map(([artifactId, researchSeriesIds]): ResearchArtifactSeriesLink => {
+      if (researchSeriesIds.size === 0) {
+        fail(`raw artifact ${artifactId} is not linked by any series manifest provenance.`);
+      }
+      return {
+        artifactId,
+        researchSeriesIds: [...researchSeriesIds].sort((left, right) => left.localeCompare(right)),
+      };
+    })
+    .sort((left, right) => left.artifactId.localeCompare(right.artifactId));
 }
 
 function eventSeriesId(eventType: string): ResearchSeriesId {
@@ -319,6 +387,7 @@ function validateBaseInput(input: ResearchDatasetSnapshotInput): {
   readonly manifest: ResearchDatasetManifest;
   readonly dataset: HistoricalDataset;
   readonly rawArtifacts: readonly SnapshotRawArtifact[];
+  readonly artifactSeriesLinks: readonly ResearchArtifactSeriesLink[];
   readonly seriesStatuses: readonly ResearchSeriesSnapshotStatus[];
 } {
   validateHistoricalDataset(input.dataset);
@@ -335,12 +404,14 @@ function validateBaseInput(input: ResearchDatasetSnapshotInput): {
   const manifest: ResearchDatasetManifest = { ...deepCopy(input.manifest), snapshotHash: placeholderHash };
   validateResearchDatasetManifest(manifest);
   validateDatasetManifestLinkage(input.dataset, manifest);
-  const rawArtifacts = validateAndNormalizeArtifacts(input.rawArtifacts, manifest);
+  const rawArtifacts = validateAndNormalizeArtifacts(input.rawArtifacts);
+  const artifactSeriesLinks = deriveArtifactSeriesLinks(rawArtifacts, manifest);
   const seriesStatuses = deriveSeriesStatuses(manifest);
   return {
     manifest,
     dataset: normalizeHistoricalDataset(deepCopy(input.dataset)),
     rawArtifacts,
+    artifactSeriesLinks,
     seriesStatuses,
   };
 }
@@ -361,6 +432,7 @@ function buildCanonicalInputFromValidated(validated: ReturnType<typeof validateB
     snapshotSchemaVersion: RESEARCH_DATASET_SNAPSHOT_SCHEMA_VERSION,
     protocolIdentity,
     rawArtifacts: validated.rawArtifacts.map(artifactHashIdentity),
+    artifactSeriesLinks: validated.artifactSeriesLinks,
     seriesStatuses: validated.seriesStatuses,
     readinessAssessment: "NOT_EVALUATED",
     windowSemantics: "REQUESTED_WINDOW",
@@ -397,6 +469,7 @@ export function createResearchDatasetSnapshot(input: ResearchDatasetSnapshotInpu
     manifest,
     dataset: validated.dataset,
     rawArtifacts: validated.rawArtifacts,
+    artifactSeriesLinks: validated.artifactSeriesLinks,
     seriesStatuses: validated.seriesStatuses,
   };
   const immutable = deepFreeze(deepCopy(snapshot));
@@ -443,6 +516,9 @@ export function validateResearchDatasetSnapshot(snapshot: ResearchDatasetSnapsho
   const expectedStatuses = canonicalJson(validated.seriesStatuses);
   if (canonicalJson(snapshot.seriesStatuses) !== expectedStatuses) {
     fail("seriesStatuses do not match acquired and unresolved series truth.");
+  }
+  if (canonicalJson(snapshot.artifactSeriesLinks) !== canonicalJson(validated.artifactSeriesLinks)) {
+    fail("artifactSeriesLinks do not match structured manifest provenance.");
   }
   const expectedHash = `sha256:${sha256Hex(buildCanonicalInputFromValidated(validated))}`;
   if (snapshot.snapshotHash !== expectedHash) {

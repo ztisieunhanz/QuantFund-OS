@@ -374,7 +374,7 @@ export function processBinanceMonthlyArchive(
   const identity = createBinanceMonthlyArchiveIdentity(input.seriesId, input.partition);
   const artifact = verifyRawArtifact({
     provider: "BINANCE_PUBLIC_DATA",
-    seriesId: identity.seriesId,
+    sourceArtifactType: "BINANCE_SPOT_MONTHLY_KLINES_1H",
     instrument: identity.instrument,
     archiveUrl: identity.archiveUrl,
     providerChecksumPolicy: "REQUIRED",

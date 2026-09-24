@@ -207,7 +207,7 @@ describe("Gate M13B-2/B2-B1 — immutable Binance monthly archive acquisition", 
     const base = fixture();
     const common = {
       provider: "BINANCE_PUBLIC_DATA",
-      seriesId: "BTC",
+      sourceArtifactType: "BINANCE_SPOT_MONTHLY_KLINES_1H",
       instrument: "BTCUSDT",
       archiveUrl: base.identity.archiveUrl,
       providerChecksumPolicy: "REQUIRED",
@@ -228,8 +228,8 @@ describe("Gate M13B-2/B2-B1 — immutable Binance monthly archive acquisition", 
   it("represents an unpublished provider checksum truthfully as null", () => {
     const rawBytes = new TextEncoder().encode("provider artifact without a published checksum");
     const artifact = verifyRawArtifact({
-      provider: "TEST_PROVIDER",
-      seriesId: "TEST_SERIES",
+      provider: "US_BUREAU_OF_LABOR_STATISTICS",
+      sourceArtifactType: "BLS_CPI_ARCHIVED_NEWS_RELEASE",
       instrument: "TEST_INSTRUMENT",
       archiveUrl: "https://example.test/history.csv",
       providerChecksumPolicy: "NOT_PUBLISHED",
