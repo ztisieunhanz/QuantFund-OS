@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `3894a1308bfc66e647b75e2ceb9428519ba4595a`
-- **Checkpoint Message**: `M13D D-A-R1: preregister stateful OOS boundary policy`
+- **Last Verified Code Checkpoint**: `2e3474f8640cf9abbfaa70388d3fcaec137aa9be`
+- **Checkpoint Message**: `M13D D-A: add fixed-rule held-out OOS evidence evaluation`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -59,16 +59,18 @@ Do not rely only on AI memory or previous agent reports.
   - **M13C / C-D** (Hypothesis Registry + Anti-Data-Mining Governance): **COMPLETE** at `096297f28574518614a07eb46fde75bbf5da8da5`; predictive validity remains unassessed and no hypothesis is approved for paper action
   - **M13C / C-E** (PIT-Safe Macro + Technical Feature Builder): **COMPLETE** at `a8bc389b86149cf0d64eb48f91e65872044e7e83`; research features grant no action or execution authority
   - **M13C / C-F** (PIT-Safe Shadow Research Harness): **COMPLETE** at `9b36758cae3b6e33dbc1005a84e1fe007e9c9d11`; observations remain research-only and grant no action or execution authority
-  - **M13D / D-A** (Fixed-Rule Held-Out OOS Evaluation): **IMPLEMENTED — NOT CHECKPOINTED**; evidence-only aggregation does not assess predictive validity or economic performance
+  - **M13D / D-A** (Fixed-Rule Held-Out OOS Evaluation): **COMPLETE** at `2e3474f8640cf9abbfaa70388d3fcaec137aa9be`; evidence-only aggregation does not assess predictive validity or economic performance
   - **M13D / D-A-R1** (Preregistered Stateful OOS Boundary Policy): **COMPLETE** at `3894a1308bfc66e647b75e2ceb9428519ba4595a`
-  - **M13D / D-A-R2** (CARRY State Lineage Integrity): **IMPLEMENTED — NOT CHECKPOINTED**; isolated unknown-origin witnesses are rejected in favor of a canonically anchored pre-OOS transition chain
+  - **M13D / D-A-R2** (CARRY State Lineage Integrity): **COMPLETE** at `2e3474f8640cf9abbfaa70388d3fcaec137aa9be`; isolated unknown-origin witnesses are rejected in favor of a canonically anchored pre-OOS transition chain
+  - **M13D / D-B** (Robustness & Sensitivity): **BLOCKED — NOT IMPLEMENTED** pending independent review and checkpoint of D-B-R1
+  - **M13D / D-B-R1** (Robustness Family Preregistration Contract Repair): **IMPLEMENTED — NOT REVIEWED / NOT CHECKPOINTED**; preregistration only, with no robustness evaluation or selection
 - **Validation Baseline**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (991/991 tests across 36 test files at the last verified checkpoint)
+  - `npx vitest run`: **PASS** (1032/1032 tests at the last verified checkpoint)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
-  - **CI status**: The D-A-R1 checkpoint at `3894a1308bfc66e647b75e2ceb9428519ba4595a` passed the required remote workflow.
-- **Current Documented Phase**: M13B, M13C/C-A through C-F, and D-A-R1 are **COMPLETE**. D-A fixed-trial held-out OOS evidence aggregation is implemented but not checkpointed; it grants no predictive or trading authority.
+  - **CI status**: The D-A checkpoint at `2e3474f8640cf9abbfaa70388d3fcaec137aa9be` passed the required remote workflow.
+- **Current Documented Phase**: M13B, M13C/C-A through C-F, and D-A are **COMPLETE**. D-B-R1 robustness-family preregistration is implemented for review; D-B evaluation remains blocked and unimplemented. No research component grants predictive or trading authority.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -405,7 +407,8 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - C-D's deterministic Hypothesis Registry and anti-data-mining controls are checkpointed. Predictive validity remains unassessed and no hypothesis is approved for paper action.
 - C-E's PIT-safe technical and macro/event feature builder is checkpointed. Missing evidence remains explicit and no feature is action-eligible.
 - C-F's PIT-safe shadow research harness is checkpointed. It binds preregistered hypotheses, explicit parameter configurations, C-E feature evidence, and C-B/C-C evaluation without creating action authority.
-- D-A-R1 checkpointed stateful OOS boundary handling as an explicit identity-bearing hypothesis policy (`RESET_AT_OOS_START` or `CARRY_PIT_STATE_FROM_PRE_OOS`; stateless rules use `NOT_APPLICABLE`). D-A evidence-only aggregation is implemented but not checkpointed; it validates C-F observation identity, fixed-trial binding, OOS isolation, chronology, and reset/carry state continuity without economic metrics or promotion.
+- D-A is checkpointed at `2e3474f8640cf9abbfaa70388d3fcaec137aa9be`. Its evidence-only aggregation validates C-F observation identity, fixed-trial binding, OOS isolation, chronology, and reset/carry state continuity without economic metrics or promotion.
+- D-B methodology identified that the existing hypothesis parameter-space declaration could not safely represent a complete shared-OOS sensitivity family because C-F correctly binds one exact rule identity and configuration. D-B-R1 implements only the missing immutable family preregistration relationship over existing exact fixed trials; D-B evaluation remains blocked pending review/checkpoint.
 
 ---
 
@@ -419,7 +422,7 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - Historical macro alpha & regime strategy models (mapping PIT macro context to quant signals).
 - Historical event consensus provider integration & verified surprise calculation.
 - Historical factor freshness thresholds calibrated for daily/monthly series.
-- **M13D and later**: OOS/robustness work and later roadmap gates.
+- **M13D and later**: D-B robustness evaluation, evidence classification, and later roadmap gates.
 - **Post-v1 unless explicitly approved**: Additional executable time domains or a true multi-timeframe execution engine.
 - Short-selling support and margin semantics.
 - Train-set hyperparameter optimization & grid search engine.
@@ -453,6 +456,12 @@ For every major engineering gate:
 
 ### M13D / D-A — Fixed-Rule Held-Out OOS Evaluation
 
-**Status**: **IMPLEMENTED — NOT CHECKPOINTED**
+**Status**: **COMPLETE** at `2e3474f8640cf9abbfaa70388d3fcaec137aa9be`
 
-D-A-R1 is complete at `3894a1308bfc66e647b75e2ceb9428519ba4595a`. D-A consumes existing integrity-validated C-F observations for one exact preregistered hypothesis, rule, parameter configuration, trial identity, asset, OOS interval, and state-boundary policy. It rejects mixed identities, TRAIN/outside contamination, malformed chronology, and forged observations rather than sorting or filtering them. Stateful RESET proves the first prior state is canonical initial state. D-A-R2 removes acceptance of an isolated unknown-origin CARRY witness: CARRY requires a strictly chronological pre-OOS C-F transition chain anchored at the same rule/asset canonical initial state, continuous across every prior/next state identity and decision time, and linked exactly into the first OOS prior state; ordered witness identities remain summary-identity audit evidence and are excluded from OOS totals. Every later OOS transition must chain from the immediately preceding OOS next state. The immutable summary counts `MATCH`, `NO_MATCH`, and `INSUFFICIENT_EVIDENCE` separately. It calculates no return, PnL, hit/win rate, Sharpe, drawdown, profitability, or direction metric; predictive assessment, robustness, evidence promotion, and all trading/action authority remain unimplemented.
+D-A consumes existing integrity-validated C-F observations for one exact preregistered hypothesis, rule, parameter configuration, trial identity, asset, OOS interval, and state-boundary policy. It rejects mixed identities, TRAIN/outside contamination, malformed chronology, and forged observations rather than sorting or filtering them. Stateful RESET proves the first prior state is canonical initial state. D-A-R2 removes acceptance of an isolated unknown-origin CARRY witness: CARRY requires a strictly chronological pre-OOS C-F transition chain anchored at the same rule/asset canonical initial state, continuous across every prior/next state identity and decision time, and linked exactly into the first OOS prior state; ordered witness identities remain summary-identity audit evidence and are excluded from OOS totals. Every later OOS transition must chain from the immediately preceding OOS next state. The immutable summary counts `MATCH`, `NO_MATCH`, and `INSUFFICIENT_EVIDENCE` separately. It calculates no return, PnL, hit/win rate, Sharpe, drawdown, profitability, or direction metric; predictive assessment, robustness, evidence promotion, and all trading/action authority remain unimplemented.
+
+### M13D / D-B-R1 — Robustness Family Preregistration Contract Repair
+
+**Status**: **IMPLEMENTED — NOT REVIEWED / NOT CHECKPOINTED**
+
+D-B methodology review found that C-D can declare finite candidate parameter spaces while C-F correctly requires one exact registered rule semantic identity and matching parameter configuration. D-B-R1 does not weaken that boundary. It preregisters a finite family of separately valid exact fixed C-D trials and fixes the baseline, scientifically described perturbation axes, member count, one common asset, identical TRAIN/OOS intervals, one stateful OOS-boundary policy, and an exact expected OOS decision-time grid. Every family member resolves to a registered single-asset, fixed-parameter, one-trial hypothesis. The identity-bearing contract fixes `PREREGISTERED_SHARED_OOS_SENSITIVITY`, `NO_POST_OOS_VARIANT_SELECTION`, and `independentConfirmation = false`; it contains no interpretation threshold and cannot assert robustness. D-B evaluation remains blocked until this repair passes independent review and checkpoint. No predictive validity, paper action, price authority, execution authority, or accounting authority is introduced.
