@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `2aaee91e9f36511060687106470c4378d68081e9`
-- **Checkpoint Message**: `Gate M13B-2: finalize research dataset readiness policy`
+- **Last Verified Code Checkpoint**: `6e350f29e3d941a280322a23ee2db709aa90701a`
+- **Checkpoint Message**: `Gate M13C: add PIT-safe derived 4H and 1D context`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -53,14 +53,15 @@ Do not rely only on AI memory or previous agent reports.
   - **M13B-2 / B2-C-R2** (Artifact-Type ↔ Canonical-Series Link Validation): **COMPLETE** at `700fd05aa9fdf556c7e49e9bece94387440ce6d0`
   - **M13B-2 / B2-D** (Coverage / Missingness / Revision / Dataset Readiness): **COMPLETE** at `3ffdc42701ac480f69f438114dcccd996db7fec6`
   - **M13B-2 / B2-E** (Final Data Policy + M13B Checkpoint Gate): **COMPLETE** at `2aaee91e9f36511060687106470c4378d68081e9`
-  - **M13C / C-A** (Derived PIT-Safe 4H + 1D Research Context): **IMPLEMENTED — NOT CHECKPOINTED**; ready for independent review
+  - **M13C / C-A** (Derived PIT-Safe 4H + 1D Research Context): **COMPLETE** at `6e350f29e3d941a280322a23ee2db709aa90701a`
+  - **M13C / C-B** (ResearchRule Interface + Combinators): **IMPLEMENTED — NOT CHECKPOINTED**; ready for independent review
 - **Validation Baseline**:
   - `npm run build`: **PASS**
-  - `npx vitest run`: **PASS** (804/804 tests across 30 test files at the last verified checkpoint)
+  - `npx vitest run`: **PASS** (827/827 tests across 31 test files at the last verified checkpoint)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
-  - **CI status**: The final M13B checkpoint at `2aaee91e9f36511060687106470c4378d68081e9` passed the required remote workflow.
-- **Current Documented Phase**: M13B is **COMPLETE**. M13C has started at C-A with a pure research-only derivation of complete UTC-aligned 4H and 1D candles from eligible canonical 1H bars. C-B and later gates have **NOT STARTED**.
+  - **CI status**: The C-A checkpoint at `6e350f29e3d941a280322a23ee2db709aa90701a` passed the required remote workflow.
+- **Current Documented Phase**: M13B and M13C/C-A are **COMPLETE**. C-B implements a stateless research-only `ResearchRule` contract with declared PIT dependencies and deterministic three-valued AND/OR/NOT composition. C-C and later gates have **NOT STARTED**.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -391,7 +392,8 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - B2-E resolves the B2-D policy limitation with an explicit nine-series required minimum and four-series optional classification; optional dependencies remain fail-closed at future rule level.
 - No historical macro model or macro action evidence is approved.
 - No action layer or `ActionDecision` is implemented.
-- C-A derived 4H/1D research context is implemented but not checkpointed; it is not connected to trading authority.
+- C-A derived 4H/1D research context is checkpointed and remains disconnected from trading authority.
+- C-B's stateless ResearchRule contract and combinators are implemented but not checkpointed; no rule is action-eligible.
 
 ---
 
@@ -405,7 +407,7 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - Historical macro alpha & regime strategy models (mapping PIT macro context to quant signals).
 - Historical event consensus provider integration & verified surprise calculation.
 - Historical factor freshness thresholds calibrated for daily/monthly series.
-- **M13C C-B and later**: Research features/rules that may consume the C-A derived 4H/1D context.
+- **M13C C-C and later**: Stateful/sequence rules, hypothesis registry, feature builder, and shadow research harness.
 - **Post-v1 unless explicitly approved**: Additional executable time domains or a true multi-timeframe execution engine.
 - Short-selling support and margin semantics.
 - Train-set hyperparameter optimization & grid search engine.
@@ -443,8 +445,8 @@ For every major engineering gate:
 
 SYNC-02 adds the proposed repository CI contract and product-independent handoff rules. The workflow must not be described as active or passing until it is committed, pushed, and observed on the remote CI provider.
 
-### M13C / C-A — Derived PIT-Safe 4H + 1D Research Context
+### M13C / C-B — ResearchRule Interface + Combinators
 
 **Status**: **IMPLEMENTED — NOT CHECKPOINTED**
 
-M13B is complete at `2aaee91e9f36511060687106470c4378d68081e9`. C-A derives deterministic UTC-aligned 4H and 1D research candles only from complete canonical 1H intervals whose close boundary is eligible at `decisionTime`. Missing hours and duplicate timestamps fail closed or suppress the affected incomplete bucket; current partial 4H/day buckets remain invisible. The API is pure, asset-scoped, immutable, and explicitly grants no executable-price, allocation, execution, or accounting authority. C-B and later M13C gates have not started.
+M13B is complete, and C-A is complete at `6e350f29e3d941a280322a23ee2db709aa90701a`. C-B adds stateless, parameterized ResearchRules with explicit stable identity, declared canonical-series/1H/4H/1D dependencies, structured `MATCH` / `NO_MATCH` / `INSUFFICIENT_EVIDENCE` results, and fail-closed three-valued AND/OR/NOT composition. Leaf evaluators receive only declared dependencies. Results are research evidence only and grant no Permission, Risk, Omega, execution, accounting, or ActionDecision authority. C-C and later M13C gates have not started.

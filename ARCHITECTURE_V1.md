@@ -57,6 +57,8 @@ Required evidence states are:
 
 The target rule system must allow complex moving-average stacks, multiple indicators, sequential/stateful rules, parameterized rules, derived 4H/1D conditions, and macro-conditioned technical hypotheses without modifying canonical execution or accounting architecture. A rule does not directly decide final size, and a candidate does not automatically become actionable.
 
+The implemented C-B `ResearchRule` foundation is stateless and research-only. Each rule has explicit ID/version/parameters, receives only its declared PIT-safe canonical-series or 1H/4H/1D dependencies, and returns structured `MATCH`, `NO_MATCH`, or `INSUFFICIENT_EVIDENCE`. AND/OR/NOT use explicit three-valued fail-closed semantics. These results are evidence, not `SignalOutput`, permission, allocation, execution, or action authority.
+
 These research-plane components are target architecture unless separately identified as implemented. Historical context remains audit-first today.
 
 ## Decision plane target
@@ -101,4 +103,4 @@ The chatbot must not independently invent trading actions. It may explain ground
 
 ## Current implementation boundary
 
-Derived 4H/1D research context is implemented as a pure, asset-scoped view over canonical 1H bars and is not connected to trading behavior. StrategyEligibility, the extensible rule registry, evidence-gated action policy, and ActionDecision do not yet exist. Their implementation belongs to later roadmap gates and must preserve baseline replay, execution, and accounting parity.
+Derived 4H/1D research context and the stateless ResearchRule/combinator foundation are implemented without connection to trading behavior. Stateful rules, StrategyEligibility, the Hypothesis Registry, evidence-gated action policy, and ActionDecision do not yet exist. Their implementation belongs to later roadmap gates and must preserve baseline replay, execution, and accounting parity.
