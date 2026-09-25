@@ -286,9 +286,9 @@ export function runBacktest(
 
     // D. PERMISSION GATE
     const permissions = [
-      evaluatePermission("ADAPTIVE_TREND", macroState, strategyConfigs.permission),
-      evaluatePermission("EVENT_REACTION", macroState, strategyConfigs.permission),
-      evaluatePermission("MEAN_REVERSION", macroState, strategyConfigs.permission),
+      evaluatePermission("ADAPTIVE_TREND", macroState, strategyConfigs.permission, timestamp),
+      evaluatePermission("EVENT_REACTION", macroState, strategyConfigs.permission, timestamp),
+      evaluatePermission("MEAN_REVERSION", macroState, strategyConfigs.permission, timestamp),
     ];
 
     // E. RISK ENGINE (HYSTERESIS & VOL FLOOR)
@@ -304,7 +304,8 @@ export function runBacktest(
       peakNav,
       benchmarkSlice,
       riskState,
-      strategyConfigs.risk
+      strategyConfigs.risk,
+      timestamp
     );
     riskState = updatedRiskState;
 

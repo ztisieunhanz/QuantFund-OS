@@ -93,9 +93,9 @@ export function ingestLiveBar(
 
     // 2. Permission Gate
     const permissions = [
-      evaluatePermission("ADAPTIVE_TREND", null, DEFAULT_PERMISSION_CONFIG),
-      evaluatePermission("EVENT_REACTION", null, DEFAULT_PERMISSION_CONFIG),
-      evaluatePermission("MEAN_REVERSION", null, DEFAULT_PERMISSION_CONFIG),
+      evaluatePermission("ADAPTIVE_TREND", null, DEFAULT_PERMISSION_CONFIG, timestamp),
+      evaluatePermission("EVENT_REACTION", null, DEFAULT_PERMISSION_CONFIG, timestamp),
+      evaluatePermission("MEAN_REVERSION", null, DEFAULT_PERMISSION_CONFIG, timestamp),
     ];
 
     // 3. Risk Engine
@@ -105,7 +105,7 @@ export function ingestLiveBar(
     }
     if (nav > engineState.peakNav) engineState.peakNav = nav;
 
-    const { risk, nextState } = evaluatePortfolioRisk(nav, engineState.peakNav, benchmarkSlice, engineState.riskState, DEFAULT_RISK_ENGINE_CONFIG);
+    const { risk, nextState } = evaluatePortfolioRisk(nav, engineState.peakNav, benchmarkSlice, engineState.riskState, DEFAULT_RISK_ENGINE_CONFIG, timestamp);
     engineState.riskState = nextState;
 
     // 4. Omega Allocator

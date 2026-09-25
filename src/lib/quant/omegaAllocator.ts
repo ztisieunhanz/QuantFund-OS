@@ -11,7 +11,16 @@ import type {
   PermissionOutput,
   RiskOutput,
   TargetPortfolioWeight,
+  ProvenancedTargetPortfolioWeight,
 } from "@/lib/quant/types";
+import {
+  canonicalProducerJson,
+  immutableProducerCopy,
+  producerIdentity,
+  validatePermissionOutput,
+  validateRiskOutput,
+  validateSignalOutput,
+} from "@/lib/quant/producerProvenance";
 
 export interface OmegaAllocatorConfig {
   readonly baseStrategyWeights: Readonly<Record<StrategyId, number>>;
@@ -29,6 +38,55 @@ export const DEFAULT_OMEGA_CONFIG: OmegaAllocatorConfig = {
   maxAssetWeightCap: 0.40,
 };
 
+type TargetMaterial = Omit<TargetPortfolioWeight, "provenance">;
+
+function targetContentMaterial(target: TargetMaterial) {
+  const { asOfTimestamp: _decisionTime, ...content } = target;
+  return content;
+}
+
+function validateTargetMaterial(target: TargetMaterial): void {
+  const expectedKeys = ["asOfTimestamp", "assetWeights", "cashWeight", "grossExposure", "netExposure", "rationale", "riskAdjustmentRatio", "strategyAllocations"].sort();
+  if (canonicalProducerJson(Object.keys(target).sort()) !== canonicalProducerJson(expectedKeys)) throw new Error("Unsupported target portfolio content");
+  if (!Number.isFinite(target.asOfTimestamp)) throw new Error("Target decision time must be finite");
+  const assetWeights = Object.values(target.assetWeights);
+  if (assetWeights.some((weight) => !Number.isFinite(weight) || weight < 0)) throw new Error("Target asset weights must be finite and long-only");
+  const numericFields = [target.cashWeight, target.grossExposure, target.netExposure, target.riskAdjustmentRatio, ...Object.values(target.strategyAllocations)];
+  if (numericFields.some((value) => !Number.isFinite(value))) throw new Error("Target portfolio content must be finite");
+  if (target.cashWeight < 0 || target.grossExposure < 0 || target.netExposure < 0) throw new Error("Target portfolio content violates long-only invariants");
+  const gross = assetWeights.reduce((sum, weight) => sum + Math.abs(weight), 0);
+  const net = assetWeights.reduce((sum, weight) => sum + weight, 0);
+  const expectedCash = Math.max(0, Math.round((1 - gross) * 1000) / 1000);
+  if (Math.abs(gross - target.grossExposure) > 1e-9 || Math.abs(net - target.netExposure) > 1e-9 || Math.abs(expectedCash - target.cashWeight) > 1e-9) throw new Error("Target portfolio aggregate fields are inconsistent");
+}
+
+function createOmegaTargetPortfolioWeight(target: TargetMaterial, signals: readonly SignalOutput[], permissions: readonly PermissionOutput[], risk: RiskOutput, correlations: unknown, config: OmegaAllocatorConfig): ProvenancedTargetPortfolioWeight {
+  validateTargetMaterial(target);
+  signals.forEach((signal) => validateSignalOutput(signal));
+  permissions.forEach((permission) => validatePermissionOutput(permission));
+  validateRiskOutput(risk);
+  const targetContentIdentity = producerIdentity(targetContentMaterial(target));
+  const signalIdentities = signals.map((item) => { validateSignalOutput(item); return item.provenance.semanticIdentity; }).sort();
+  const permissionIdentities = permissions.map((item) => { validatePermissionOutput(item); return item.provenance.semanticIdentity; }).sort();
+  const base = {
+    schemaVersion: "M14_A04_TARGET_PROVENANCE_V1" as const,
+    targetContentIdentity,
+    signalIdentities,
+    permissionIdentities,
+    riskIdentity: risk.provenance.semanticIdentity,
+    omegaConfigIdentity: producerIdentity(config),
+    correlationsIdentity: correlations === null ? "NONE" as const : producerIdentity(correlations),
+  };
+  return immutableProducerCopy({ ...target, provenance: { ...base, targetDecisionIdentity: producerIdentity({ ...base, asOfTimestamp: target.asOfTimestamp }) } });
+}
+
+export function validateTargetPortfolioWeight(target: TargetPortfolioWeight, signals: readonly SignalOutput[], permissions: readonly PermissionOutput[], risk: RiskOutput, correlations: unknown, config: OmegaAllocatorConfig): void {
+  const { provenance, ...material } = target;
+  if (!provenance || provenance.schemaVersion !== "M14_A04_TARGET_PROVENANCE_V1") throw new Error("Invalid target provenance contract");
+  const rebuilt = createOmegaTargetPortfolioWeight(material, signals, permissions, risk, correlations, config);
+  if (canonicalProducerJson(rebuilt.provenance) !== canonicalProducerJson(provenance)) throw new Error("Target portfolio provenance mismatch");
+}
+
 export function evaluateOmegaAllocation(
   signals: readonly SignalOutput[],
   permissions: readonly PermissionOutput[],
@@ -36,7 +94,7 @@ export function evaluateOmegaAllocation(
   strategyCorrelations: Readonly<Record<StrategyId, Readonly<Record<StrategyId, number>>>> | null,
   asOfTimestamp: number,
   config: OmegaAllocatorConfig = DEFAULT_OMEGA_CONFIG
-): TargetPortfolioWeight {
+): ProvenancedTargetPortfolioWeight {
   // 1. TÍNH TOÁN ALPHA HIỆU DỤNG: EffectiveAlpha = AlphaScore * Permission * Confidence
   const permissionMap = new Map<StrategyId, number>();
   for (const p of permissions) {
@@ -137,7 +195,7 @@ export function evaluateOmegaAllocation(
 
   const rationale = `OmegaAlloc: TargetExposure=${maxAllowedGross.toFixed(2)}, GrossAllocated=${finalGross.toFixed(2)}, Cash=${cashWeight.toFixed(2)}, CorrDiscount=${riskAdjustmentRatio.toFixed(2)}`;
 
-  return {
+  return createOmegaTargetPortfolioWeight({
     asOfTimestamp,
     assetWeights: finalAssetWeights,
     cashWeight,
@@ -146,5 +204,5 @@ export function evaluateOmegaAllocation(
     strategyAllocations,
     riskAdjustmentRatio: Math.round(riskAdjustmentRatio * 100) / 100,
     rationale,
-  };
+  }, signals, permissions, risk, strategyCorrelations, config);
 }

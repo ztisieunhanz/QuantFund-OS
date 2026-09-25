@@ -12,6 +12,7 @@ import { executeRebalance } from "../executionEngine";
 import { PaperEngine, STARTING_EQUITY, mapSourceToDataQuality, buildPaperEngineDataset } from "../../paperEngine";
 import { BAR_DURATION_MS, QUANT_BAR_INTERVAL, type QuantReplayMarketContext } from "../timeDomain";
 import { useTradingStore } from "../../../stores/tradingStore";
+import { createPermissionOutput, createRiskOutput, createSignalOutput } from "../producerProvenance";
 import type {
   BacktestConfig,
   PointInTimeBar,
@@ -108,7 +109,7 @@ function hashString(str: string): string {
 
 // Helper: build a minimal stub RiskOutput for Omega direct tests
 function stubRisk(targetExposure = 1.0): RiskOutput {
-  return {
+  const material: Omit<RiskOutput, "provenance"> = {
     scope: "PORTFOLIO_AGGREGATE",
     targetExposure,
     grossExposure: targetExposure,
@@ -119,11 +120,12 @@ function stubRisk(targetExposure = 1.0): RiskOutput {
     circuitBreakerStatus: "NORMAL",
     circuitBreakerReason: null,
   };
+  return createRiskOutput(material, 0, 1, 1, [], { circuitBreakerStatus: "NORMAL", cooldownRemainingBars: 0 }, { circuitBreakerStatus: "NORMAL", cooldownRemainingBars: 0 }, { fixture: true });
 }
 
 // Helper: build a SignalOutput with given alphaScore
 function stubSignal(strategyId: "ADAPTIVE_TREND" | "EVENT_REACTION" | "MEAN_REVERSION", alphaScore: number): SignalOutput {
-  return {
+  return createSignalOutput({
     strategyId,
     assetId: "BTC",
     timestamp: 0,
@@ -136,19 +138,19 @@ function stubSignal(strategyId: "ADAPTIVE_TREND" | "EVENT_REACTION" | "MEAN_REVE
     validUntil: null,
     rationale: `STUB_SIGNAL(${alphaScore})`,
     metadata: null,
-  };
+  }, { fixture: true, strategyId, alphaScore }, { fixture: true });
 }
 
 // Helper: build a PermissionOutput (fully permitted)
 function stubPermission(strategyId: "ADAPTIVE_TREND" | "EVENT_REACTION" | "MEAN_REVERSION"): PermissionOutput {
-  return {
+  return createPermissionOutput({
     strategyId,
     permission: 1.0,
     isPermitted: true,
     reason: "STUB",
     regime: "Risk-On Expansion",
     liquidityStatus: "NORMAL",
-  };
+  }, 0, null, { fixture: true });
 }
 
 // Helper: build a minimal StrategyContext for evaluateEventReaction tests

@@ -8,8 +8,9 @@ import type {
   MacroRegime,
   LiquidityStatus,
   PointInTimeMacro,
-  PermissionOutput,
+  ProvenancedPermissionOutput,
 } from "@/lib/quant/types";
+import { createPermissionOutput } from "@/lib/quant/producerProvenance";
 
 export interface PermissionGateConfig {
   readonly regimeMatrix: Readonly<Record<MacroRegime, Readonly<Record<StrategyId, number>>>>;
@@ -55,8 +56,9 @@ export const DEFAULT_PERMISSION_CONFIG: PermissionGateConfig = {
 export function evaluatePermission(
   strategyId: StrategyId,
   macro: PointInTimeMacro | null,
-  config: PermissionGateConfig = DEFAULT_PERMISSION_CONFIG
-): PermissionOutput {
+  config: PermissionGateConfig = DEFAULT_PERMISSION_CONFIG,
+  decisionTime: number = macro?.asOfTimestamp ?? 0,
+): ProvenancedPermissionOutput {
   const regime: MacroRegime = macro?.regime ?? "Transitional Mixed";
 
   let liquidityStatus: LiquidityStatus = "NORMAL";
@@ -79,12 +81,12 @@ export function evaluatePermission(
   const finalPermission = Math.max(0.0, Math.min(1.0, basePermission * liquidityMultiplier));
   const isPermitted = finalPermission >= config.minPermissionThreshold;
 
-  return {
+  return createPermissionOutput({
     strategyId,
     permission: Math.round(finalPermission * 100) / 100,
     isPermitted,
     reason: `Regime[${regime}]=${basePermission.toFixed(2)}, Liq[${liquidityStatus}]=${liquidityMultiplier.toFixed(2)}`,
     regime,
     liquidityStatus,
-  };
+  }, decisionTime, macro, config);
 }

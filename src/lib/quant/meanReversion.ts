@@ -8,9 +8,11 @@ import type {
   StrategyContext,
   StrategyState,
   SignalOutput,
+  ProvenancedSignalOutput,
   PointInTimeBar,
 } from "@/lib/quant/types";
 import { BAR_DURATION_MS, BARS_PER_YEAR } from "@/lib/quant/timeDomain";
+import { createSignalOutput } from "@/lib/quant/producerProvenance";
 
 // ----------------------------------------------------------------------------
 // 1. CONFIGURATION INTERFACE & DEFAULT PARAMETERS
@@ -87,13 +89,14 @@ export function evaluateMeanReversion(
   context: StrategyContext,
   _state: StrategyState,
   config: MeanReversionConfig = DEFAULT_MEAN_REVERSION_CONFIG
-): SignalOutput {
+): ProvenancedSignalOutput {
   const { priceHistory, currentPrice, currentBarTimestamp, strategyId, assetId } = context;
+  const produce = (signal: Omit<SignalOutput, "provenance">) => createSignalOutput(signal, { context, state: _state }, config);
 
   // WARM-UP GUARD: Bắt buộc tối thiểu (lookback + 5) nến để tính ổn định các chỉ số
   const requiredBars = config.zScoreLookbackBars + 5;
   if (priceHistory.length < requiredBars) {
-    return {
+    return produce({
       strategyId,
       assetId,
       timestamp: currentBarTimestamp,
@@ -106,7 +109,7 @@ export function evaluateMeanReversion(
       validUntil: null,
       rationale: `INSUFFICIENT_WARMUP: History length (${priceHistory.length}) < Required (${requiredBars})`,
       metadata: null,
-    };
+    });
   }
 
   const len = priceHistory.length;
@@ -116,7 +119,7 @@ export function evaluateMeanReversion(
   // 1. TÍNH TOÁN Z-SCORE ĐỘ LỆCH CHUẨN SO VỚI FAIR VALUE (SMA20)
   const stats = calculateMeanAndStdDev(priceHistory, config.zScoreLookbackBars);
   if (!stats || stats.stdDev <= 0) {
-    return {
+    return produce({
       strategyId,
       assetId,
       timestamp: currentBarTimestamp,
@@ -129,7 +132,7 @@ export function evaluateMeanReversion(
       validUntil: null,
       rationale: "DEVIATION_CALCULATION_FAILED: Zero or null standard deviation",
       metadata: null,
-    };
+    });
   }
 
   const { mean: smaPrice, stdDev } = stats;
@@ -157,7 +160,7 @@ export function evaluateMeanReversion(
   // 4. ĐÁNH GIÁ ĐIỀU KIỆN KÍCH HOẠT MEAN REVERSION
   // Nếu độ lệch chưa chạm ngưỡng, hoặc đang trong pha trend mạnh với volume bung lớn -> HỦY LỆNH
   if (absZ < config.deviationThresholdZ || (isStrongTrend && !isVolumeExhausted)) {
-    return {
+    return produce({
       strategyId,
       assetId,
       timestamp: currentBarTimestamp,
@@ -172,7 +175,7 @@ export function evaluateMeanReversion(
         ? `INSIGNIFICANT_Z_SCORE: |Z| (${absZ.toFixed(2)}) < Threshold (${config.deviationThresholdZ})`
         : `TREND_EXPANSION_BLOCK: TrendSlope (${(trendSlopePct * 10000).toFixed(1)} bps) > Threshold with expanding volume (${volumeRatio.toFixed(2)}x)`,
       metadata: { rawZScore, trendSlopePct, volumeRatio },
-    };
+    });
   }
 
   // 5. TỔNG HỢP ALPHA SCORE [-1.0 .. +1.0]
@@ -207,7 +210,7 @@ export function evaluateMeanReversion(
   // validUntil uses 1H BAR_DURATION_MS, not 86_400_000 (1 day)
   const validUntilTimestamp = currentBarTimestamp + holdingPeriod * BAR_DURATION_MS;
 
-  return {
+  return produce({
     strategyId,
     assetId,
     timestamp: currentBarTimestamp,
@@ -229,7 +232,7 @@ export function evaluateMeanReversion(
       isStrongTrend,
       currentPrice: pCurrent,
     },
-  };
+  });
 }
 
 // ----------------------------------------------------------------------------

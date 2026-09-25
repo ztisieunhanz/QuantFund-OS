@@ -8,9 +8,11 @@ import type {
   StrategyContext,
   StrategyState,
   SignalOutput,
+  ProvenancedSignalOutput,
   PointInTimeBar,
 } from "@/lib/quant/types";
 import { BAR_DURATION_MS, BARS_PER_YEAR } from "@/lib/quant/timeDomain";
+import { createSignalOutput } from "@/lib/quant/producerProvenance";
 
 // ----------------------------------------------------------------------------
 // 1. CONFIGURATION INTERFACE & DEFAULT PARAMETERS
@@ -94,8 +96,9 @@ export function evaluateAdaptiveTrend(
   context: StrategyContext,
   _state: StrategyState,
   config: AdaptiveTrendConfig = DEFAULT_ADAPTIVE_TREND_CONFIG
-): SignalOutput {
+): ProvenancedSignalOutput {
   const { priceHistory, currentPrice, currentBarTimestamp, strategyId, assetId } = context;
+  const produce = (signal: Omit<SignalOutput, "provenance">) => createSignalOutput(signal, { context, state: _state }, config);
 
   // Khắc phục Lỗi 1: Bắt buộc tối thiểu (lookbackLongBars + 1) nến để tránh index âm (-1)
   const requiredBars = Math.max(
@@ -106,7 +109,7 @@ export function evaluateAdaptiveTrend(
   );
 
   if (priceHistory.length < requiredBars) {
-    return {
+    return produce({
       strategyId,
       assetId,
       timestamp: currentBarTimestamp,
@@ -119,7 +122,7 @@ export function evaluateAdaptiveTrend(
       validUntil: null,
       rationale: `INSUFFICIENT_WARMUP: History length (${priceHistory.length}) < Required (${requiredBars})`,
       metadata: { warmupRemainingBars: requiredBars - priceHistory.length },
-    };
+    });
   }
 
   const len = priceHistory.length;
@@ -199,7 +202,7 @@ export function evaluateAdaptiveTrend(
     ? Math.round(config.baseHoldingPeriodBars * 1.5)
     : config.baseHoldingPeriodBars;
 
-  return {
+  return produce({
     strategyId,
     assetId,
     timestamp: currentBarTimestamp,
@@ -222,7 +225,7 @@ export function evaluateAdaptiveTrend(
       chandelierExitTriggered,
       currentPrice: pCurrent,
     },
-  };
+  });
 }
 
 // ----------------------------------------------------------------------------

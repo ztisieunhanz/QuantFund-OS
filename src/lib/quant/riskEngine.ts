@@ -5,10 +5,12 @@
 
 import type {
   RiskOutput,
+  ProvenancedRiskOutput,
   CircuitBreakerStatus,
   PointInTimeBar,
 } from "@/lib/quant/types";
 import { BARS_PER_YEAR } from "@/lib/quant/timeDomain";
+import { createRiskOutput } from "@/lib/quant/producerProvenance";
 
 export interface RiskEngineConfig {
   readonly targetAnnualVolatility: number;  // Giả định chính sách (mặc định 12%)
@@ -77,8 +79,9 @@ export function evaluatePortfolioRisk(
   peakNav: number,
   benchmarkBars: readonly PointInTimeBar[],
   state: RiskEngineState,
-  config: RiskEngineConfig = DEFAULT_RISK_ENGINE_CONFIG
-): { risk: RiskOutput; nextState: RiskEngineState } {
+  config: RiskEngineConfig = DEFAULT_RISK_ENGINE_CONFIG,
+  decisionTime: number = benchmarkBars.at(-1)?.timestamp ?? 0,
+): { risk: ProvenancedRiskOutput; nextState: RiskEngineState } {
   const riskFlags: string[] = [];
 
   // 1. BIẾN ĐỘNG THỰC TẾ (CÓ SÀN BIẾN ĐỘNG BẢO VỆ)
@@ -144,7 +147,7 @@ export function evaluatePortfolioRisk(
     riskFlags.push(`HIGH_VOLATILITY: Realized ${(realizedVol * 100).toFixed(1)}% > 1.5x Target`);
   }
 
-  const riskOutput: RiskOutput = {
+  const riskMaterial: Omit<RiskOutput, "provenance"> = {
     scope: "PORTFOLIO_AGGREGATE",
     targetExposure: Math.round(targetExposure * 1000) / 1000,
     grossExposure: Math.round(targetExposure * 1000) / 1000,
@@ -156,11 +159,13 @@ export function evaluatePortfolioRisk(
     circuitBreakerReason,
   };
 
-  return {
-    risk: riskOutput,
-    nextState: {
+  const nextState = {
       circuitBreakerStatus: nextStatus,
       cooldownRemainingBars: nextCooldown,
-    },
+  };
+
+  return {
+    risk: createRiskOutput(riskMaterial, decisionTime, currentNav, peakNav, benchmarkBars, state, nextState, config),
+    nextState,
   };
 }

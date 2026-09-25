@@ -131,7 +131,17 @@ export interface SignalOutput {
   readonly validUntil?: number | null;
   readonly rationale: string;
   readonly metadata?: Readonly<Record<string, number | string | boolean | null>> | null;
+  readonly provenance?: SignalOutputProvenance;
 }
+
+export interface SignalOutputProvenance {
+  readonly schemaVersion: "M14_A04_SIGNAL_PROVENANCE_V1";
+  readonly producer: "ADAPTIVE_TREND" | "EVENT_REACTION" | "MEAN_REVERSION";
+  readonly inputIdentity: string;
+  readonly configIdentity: string;
+  readonly semanticIdentity: string;
+}
+export type ProvenancedSignalOutput = SignalOutput & { readonly provenance: SignalOutputProvenance };
 
 // ----------------------------------------------------------------------------
 // 3. STRATEGY STATE
@@ -155,7 +165,18 @@ export interface PermissionOutput {
   readonly reason: string;
   readonly regime: MacroRegime;
   readonly liquidityStatus: LiquidityStatus;
+  readonly provenance?: PermissionOutputProvenance;
 }
+
+export interface PermissionOutputProvenance {
+  readonly schemaVersion: "M14_A04_PERMISSION_PROVENANCE_V1";
+  readonly decisionTime: number;
+  readonly macroInputIdentity: string | "NONE";
+  readonly macroAsOfTimestamp: number | null;
+  readonly configIdentity: string;
+  readonly semanticIdentity: string;
+}
+export type ProvenancedPermissionOutput = PermissionOutput & { readonly provenance: PermissionOutputProvenance };
 
 // ----------------------------------------------------------------------------
 // 5. RISK ENGINE OUTPUT
@@ -171,7 +192,22 @@ export interface RiskOutput {
   readonly riskFlags: readonly string[];
   readonly circuitBreakerStatus: CircuitBreakerStatus;
   readonly circuitBreakerReason?: string | null;
+  readonly provenance?: RiskOutputProvenance;
 }
+
+export interface RiskOutputProvenance {
+  readonly schemaVersion: "M14_A04_RISK_PROVENANCE_V1";
+  readonly decisionTime: number;
+  readonly valuationIdentity: null;
+  readonly valuationBindingStatus: "DEFERRED_TO_A04_STEP_2";
+  readonly navInputIdentity: string;
+  readonly benchmarkPrefixIdentity: string;
+  readonly priorStateIdentity: string;
+  readonly configIdentity: string;
+  readonly nextStateIdentity: string;
+  readonly semanticIdentity: string;
+}
+export type ProvenancedRiskOutput = RiskOutput & { readonly provenance: RiskOutputProvenance };
 
 // ----------------------------------------------------------------------------
 // 6. TARGET POSITIONS & OMEGA ALLOCATOR
@@ -200,7 +236,20 @@ export interface TargetPortfolioWeight {
   readonly strategyAllocations: Readonly<Record<StrategyId, number>>;
   readonly riskAdjustmentRatio: number;
   readonly rationale: string;
+  readonly provenance?: TargetPortfolioWeightProvenance;
 }
+
+export interface TargetPortfolioWeightProvenance {
+  readonly schemaVersion: "M14_A04_TARGET_PROVENANCE_V1";
+  readonly targetContentIdentity: string;
+  readonly targetDecisionIdentity: string;
+  readonly signalIdentities: readonly string[];
+  readonly permissionIdentities: readonly string[];
+  readonly riskIdentity: string;
+  readonly omegaConfigIdentity: string;
+  readonly correlationsIdentity: string | "NONE";
+}
+export type ProvenancedTargetPortfolioWeight = TargetPortfolioWeight & { readonly provenance: TargetPortfolioWeightProvenance };
 
 // ----------------------------------------------------------------------------
 // 7. EXECUTION RECORD

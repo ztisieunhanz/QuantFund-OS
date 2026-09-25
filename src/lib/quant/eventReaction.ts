@@ -8,10 +8,12 @@ import type {
   StrategyContext,
   StrategyState,
   SignalOutput,
+  ProvenancedSignalOutput,
   PointInTimeBar,
   AssetId,
 } from "@/lib/quant/types";
 import { BAR_DURATION_MS, BARS_PER_YEAR } from "@/lib/quant/timeDomain";
+import { createSignalOutput } from "@/lib/quant/producerProvenance";
 
 // ----------------------------------------------------------------------------
 // 1. CONFIGURATION INTERFACE & DEFAULT PARAMETERS
@@ -106,13 +108,14 @@ export function evaluateEventReaction(
   context: StrategyContext,
   _state: StrategyState,
   config: EventReactionConfig = DEFAULT_EVENT_REACTION_CONFIG
-): SignalOutput {
+): ProvenancedSignalOutput {
   const { latestEvent, decisionTimestamp, currentBarTimestamp, currentPrice, priceHistory, strategyId, assetId, macro } = context;
+  const produce = (signal: Omit<SignalOutput, "provenance">) => createSignalOutput(signal, { context, state: _state }, config);
 
   // RULE A: LOOK-AHEAD BIAS GUARD
   // Nếu không có sự kiện, hoặc sự kiện chưa tới giờ công bố chính thức tại thời điểm quyết định T
   if (!latestEvent || decisionTimestamp < latestEvent.publicationTimestamp) {
-    return {
+    return produce({
       strategyId,
       assetId,
       timestamp: currentBarTimestamp,
@@ -127,13 +130,13 @@ export function evaluateEventReaction(
         ? "NO_EVENT_PRESENT" 
         : `EVENT_UNPUBLISHED: DecisionTime (${decisionTimestamp}) < PublicationTime (${latestEvent.publicationTimestamp})`,
       metadata: null,
-    };
+    });
   }
 
   // RULE B: SURPRISE INTEGRITY CHECK
   // Bắt buộc phải có Actual và Consensus để tính Surprise
   if (latestEvent.actual === null || latestEvent.consensus === null || latestEvent.surprise === null) {
-    return {
+    return produce({
       strategyId,
       assetId,
       timestamp: currentBarTimestamp,
@@ -146,7 +149,7 @@ export function evaluateEventReaction(
       validUntil: null,
       rationale: "EVENT_MISSING_SURPRISE_DATA: Actual or Consensus is null",
       metadata: null,
-    };
+    });
   }
 
   // RULE C: TUỔI CỦA SỰ KIỆN & CHU KỲ NẮM GIỮ TỐI ĐA (EXPIRY)
@@ -155,7 +158,7 @@ export function evaluateEventReaction(
   const elapsedBars = Math.floor(elapsedMs / BAR_DURATION_MS);
 
   if (elapsedBars >= config.maxHoldingPeriodBars) {
-    return {
+    return produce({
       strategyId,
       assetId,
       timestamp: currentBarTimestamp,
@@ -168,7 +171,7 @@ export function evaluateEventReaction(
       validUntil: null,
       rationale: `EVENT_EXPIRED: Elapsed bars (${elapsedBars}) >= MaxHoldingPeriod (${config.maxHoldingPeriodBars})`,
       metadata: { elapsedBars },
-    };
+    });
   }
 
   // 1. TÍNH TOÁN ĐỘ LỆCH TƯƠNG ĐỐI CỦA SURPRISE
@@ -176,7 +179,7 @@ export function evaluateEventReaction(
   const relativeSurprise = Math.abs(latestEvent.surprise) / consensusAbs;
 
   if (relativeSurprise < config.minSurpriseRelativeThreshold) {
-    return {
+    return produce({
       strategyId,
       assetId,
       timestamp: currentBarTimestamp,
@@ -189,13 +192,13 @@ export function evaluateEventReaction(
       validUntil: null,
       rationale: `INSIGNIFICANT_SURPRISE: Relative surprise (${(relativeSurprise * 100).toFixed(2)}%) < Threshold (${(config.minSurpriseRelativeThreshold * 100).toFixed(2)}%)`,
       metadata: { relativeSurprise },
-    };
+    });
   }
 
   // 2. THIẾT LẬP GIẢ THUYẾT HƯỚNG TÁC ĐỘNG (THEORETICAL TRANSMISSION)
   const expectedDirection = getExpectedDirectionHypothesis(latestEvent.eventType, assetId, latestEvent.surprise);
   if (expectedDirection === 0) {
-    return {
+    return produce({
       strategyId,
       assetId,
       timestamp: currentBarTimestamp,
@@ -208,7 +211,7 @@ export function evaluateEventReaction(
       validUntil: null,
       rationale: `ASSET_EVENT_NEUTRAL: ${assetId} has no systematic exposure to ${latestEvent.eventType}`,
       metadata: null,
-    };
+    });
   }
 
   // 3. XÁC NHẬN TỪ PHẢN ỨNG CỦA THỊ TRƯỜNG (MARKET CONFIRMATION CHECK)
@@ -270,7 +273,7 @@ export function evaluateEventReaction(
   // validUntil uses 1H BAR_DURATION_MS, not 86_400_000 (1 day)
   const validUntilTimestamp = latestEvent.publicationTimestamp + config.maxHoldingPeriodBars * BAR_DURATION_MS;
 
-  return {
+  return produce({
     strategyId,
     assetId,
     timestamp: currentBarTimestamp,
@@ -294,7 +297,7 @@ export function evaluateEventReaction(
       decayMultiplier,
       sourceQuality: latestEvent.sourceQuality,
     },
-  };
+  });
 }
 
 // ----------------------------------------------------------------------------

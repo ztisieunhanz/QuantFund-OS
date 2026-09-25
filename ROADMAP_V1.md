@@ -12,7 +12,7 @@ This is the finite pre-release roadmap for the public research and paper-trading
 
 Integrate integrity-validated evidence through `StrategyEligibility`, candidate intent, Permission, Risk, Omega, target allocation, and the product-facing `ActionDecision`. StrategyEligibility is paper-evaluation admission, not predictive validation or paper-action approval. Scope is paper-only and must prove replay/OOS parity with the canonical pipeline.
 
-A-01 StrategyEligibility and the partial A-02 `ActionDecision` contract are checkpointed. A-03 freezes the six long-only lifecycle meanings but remains partial: `WAIT` is the only constructible action, while canonical current/target/gate binding, comparison tolerance, pending-execution lifecycle, and all non-WAIT derivation remain deferred to A-04. This does not alter the M14 authority chain or authorize execution.
+A-01 StrategyEligibility, the partial A-02 `ActionDecision` contract, and the partial A-03 lifecycle methodology are checkpointed. A-04 Step 1/6 adds deterministic producer provenance for Signal, Permission, Risk, and Omega target artifacts without changing calculations or authority. `WAIT` remains the only constructible action; canonical valuation/current-weight binding, durable lifecycle state, comparison tolerance, pending-execution lifecycle, and all non-WAIT derivation remain deferred to A-04 Steps 2-6. This does not alter the M14 authority chain or authorize execution.
 
 ## M15 — Production data, backend, and reliability
 
