@@ -12,6 +12,8 @@ This is the finite pre-release roadmap for the public research and paper-trading
 
 Integrate integrity-validated evidence through `StrategyEligibility`, candidate intent, Permission, Risk, Omega, target allocation, and the product-facing `ActionDecision`. StrategyEligibility is paper-evaluation admission, not predictive validation or paper-action approval. Scope is paper-only and must prove replay/OOS parity with the canonical pipeline.
 
+A-01 StrategyEligibility is checkpointed. A-02 currently defines only a fail-closed partial `ActionDecision` contract: `WAIT` is constructible, while current/target/gate binding and all non-WAIT derivation remain deferred to A-03/A-04. This does not alter the M14 authority chain or authorize execution.
+
 ## M15 — Production data, backend, and reliability
 
 Implement provider adapters, same-origin/server gateways, secrets handling, caching, freshness, retries, outage behavior, persistence, recovery, monitoring, immutable research snapshots, and backup/restore foundations.
