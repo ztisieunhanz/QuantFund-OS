@@ -6,7 +6,7 @@ This is the finite pre-release roadmap for the public research and paper-trading
 
 - **M13B — Data foundation and acquisition**: research-data protocol, provider acquisition, immutable PIT snapshots, provenance, coverage, and readiness.
 - **M13C — Extensible rule engine and derived multi-timeframe research**: modular hypotheses, parameterized/stateful rules, and 4H/1D context derived only from closed eligible 1H bars.
-- **M13D — OOS, robustness, and evidence classification**: held-out evaluation, robustness checks, and evidence status assignment.
+- **M13D — OOS, robustness, and evidence classification**: held-out evaluation, robustness checks, and evidence status assignment. The D-C audit found no current v1 component that learns or calibrates parameters from TRAIN data, so a separate training/calibration lane is intentionally not required unless a future preregistered methodology introduces genuine TRAIN-only fitting with frozen outputs before OOS.
 
 ## M14 — Action layer integration
 
