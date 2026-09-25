@@ -67,14 +67,15 @@ Do not rely only on AI memory or previous agent reports.
   - **M13D / D-C** (Training / Calibration Lane Necessity Audit): **COMPLETE — NOT REQUIRED FOR CURRENT V1** at `14ac61c888e5ba5b34070a455cdda98c005af31e`; no implemented component performs genuine TRAIN-only fitting
   - **M13D / D-D** (Evidence Registry & Research Evidence Classification): **COMPLETE** at `901c687a79a01b663d33c539fb6a6a9960c5430a`; current methodology supports `CANDIDATE` and `INSUFFICIENT_EVIDENCE` only
   - **M14 / A-01** (StrategyEligibility Methodology + Contract): **COMPLETE** at `d74adfd2c5b062b182a51c38922605b04b1901ee`; paper-evaluation admission is distinct from predictive validity, paper-action approval, Permission, Risk, allocation, execution, and ActionDecision
-  - **M14 / A-02** (ActionDecision Contract): **PARTIAL CONTRACT IMPLEMENTED — INDEPENDENT REVIEW PENDING**; only fail-closed `WAIT` is constructible until canonical current/target/gate and lifecycle bindings are supplied by later M14 work
+  - **M14 / A-02** (ActionDecision Contract): **COMPLETE AS PARTIAL CONTRACT** at `761353b59f092ac3511781f9de5e0538264bd755`; only fail-closed `WAIT` is constructible
+  - **M14 / A-03** (Action Lifecycle Methodology + Contract): **PARTIAL CONTRACT IMPLEMENTED — INDEPENDENT REVIEW PENDING**; all six meanings are frozen while non-WAIT numeric derivation and execution lifecycle remain deferred to A-04
 - **Validation Baseline**:
   - `npm run build`: **PASS**
   - `npx vitest run`: **PASS** (1032/1032 tests at the recorded D-A validation checkpoint; later exact-commit CI is authoritative for subsequent checkpoints)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
   - **CI status**: The D-D checkpoint at `901c687a79a01b663d33c539fb6a6a9960c5430a` passed the required remote workflow.
-- **Current Documented Phase**: M13B, M13C, and M13D are **COMPLETE**. M14/A-01 is **COMPLETE** and A-02 has a partial contract implemented for independent review. No research, eligibility, or ActionDecision component grants predictive, paper-action, Permission, Risk, allocation, target-weight, execution, or accounting authority.
+- **Current Documented Phase**: M13B, M13C, and M13D are **COMPLETE**. M14/A-01 and partial A-02 are **COMPLETE**; A-03 has a partial lifecycle contract implemented for independent review. No research, eligibility, ActionDecision, or lifecycle component grants predictive, paper-action, Permission, Risk, allocation, target-weight, execution, or accounting authority.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -416,7 +417,8 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - The D-C audit found no current v1 component that fits or calibrates parameters from TRAIN data. Current fixed trials and finite families remain preregistered evidence contracts, not optimization or winner-selection mechanisms. D-C is intentionally not required for current v1; checkpoint `14ac61c888e5ba5b34070a455cdda98c005af31e` completed.
 - D-D implements an immutable research-only Evidence Registry over validated hypothesis, held-out OOS, and optional shared-OOS sensitivity artifacts. Current methodology supports `CANDIDATE` and `INSUFFICIENT_EVIDENCE`; promotion and rejection remain explicitly unavailable pending separate preregistered methodology. D-D and D-D-R1 are complete at `901c687a79a01b663d33c539fb6a6a9960c5430a`.
 - A-01 implements an immutable StrategyEligibility admission contract over complete canonical D-D registry snapshots plus their C-D scientific-integrity witness. One fixed identity-bearing policy admits only integrity-validated `CANDIDATE` evidence with complete declared shared-OOS sensitivity evidence to later paper-only evaluation. It retains every evidence record, creates no performance threshold or winner selection, and leaves predictive validity, paper-action approval, Permission, Risk, allocation, execution, accounting, price, and ActionDecision authority false or absent. A-01 is complete at `d74adfd2c5b062b182a51c38922605b04b1901ee`.
-- A-02's versioned immutable contract records the intended `WAIT` / `ENTER` / `ADD` / `HOLD` / `REDUCE` / `EXIT` vocabulary but currently derives only `WAIT`. The ledger exposes units/cash rather than an identity-bearing current-weight snapshot, and the existing target object is not yet paired with reviewed target provenance, gate bindings, valuation time, and pending-execution semantics. A-02 therefore marks these sources unavailable and rejects caller-authored substitutes; A-03/A-04 must supply the missing canonical bindings before non-WAIT derivation.
+- A-02's versioned immutable contract records the intended `WAIT` / `ENTER` / `ADD` / `HOLD` / `REDUCE` / `EXIT` vocabulary but currently derives only `WAIT`. The ledger exposes units/cash rather than an identity-bearing current-weight snapshot, and the existing target object is not yet paired with reviewed target provenance, gate bindings, valuation time, and pending-execution semantics. A-02 therefore marks these sources unavailable and rejects caller-authored substitutes.
+- A-03 freezes the conceptual long-only meanings and explicitly distinguishes fail-closed `WAIT` from proven positive/equal-target `HOLD`. It does not create a numeric classifier: no canonical weight tolerance exists, the internal pending rebalance is absent from `DecisionState`, and repeated/partial/completed target lineage cannot be proven. All five non-WAIT actions remain deferred to A-04 canonical integration.
 
 ---
 
@@ -430,7 +432,7 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - Historical macro alpha & regime strategy models (mapping PIT macro context to quant signals).
 - Historical event consensus provider integration & verified surprise calculation.
 - Historical factor freshness thresholds calibrated for daily/monthly series.
-- **M14 and later**: A-01 StrategyEligibility is checkpointed. A-02's partial ActionDecision contract is implemented for review; canonical lifecycle and authority integration remain pending. D-C training/calibration infrastructure is not required unless a future approved methodology introduces genuine TRAIN-only fitting.
+- **M14 and later**: A-01 and partial A-02 are checkpointed. A-03's partial lifecycle methodology is implemented for review; canonical authority and execution-lifecycle integration remain pending in A-04. D-C training/calibration infrastructure is not required unless a future approved methodology introduces genuine TRAIN-only fitting.
 - **Post-v1 unless explicitly approved**: Additional executable time domains or a true multi-timeframe execution engine.
 - Short-selling support and margin semantics.
 - Train-set hyperparameter optimization & grid search engine.
@@ -508,8 +510,16 @@ Eligibility fixes `predictiveValidityEstablished = false`, `approvedForPaperActi
 
 ### M14 / A-02 — ActionDecision Contract
 
-**Status**: **PARTIAL CONTRACT IMPLEMENTED — INDEPENDENT REVIEW PENDING / NOT CHECKPOINTED**
+**Status**: **COMPLETE AS PARTIAL CONTRACT** at `761353b59f092ac3511781f9de5e0538264bd755`
 
 A-02 establishes a deterministic, immutable, product-explanatory contract without inserting `ActionDecision` into the canonical authority chain. The current schema accepts only asset and PIT boundary metadata. It rejects caller-authored current/target weights, eligibility, Permission/Risk state, reasons, contradictions, and lifecycle conditions. Because the repository lacks the reviewed canonical bindings needed to prove current weight, target provenance, gate state, and pending execution together, only `WAIT` is constructible; the other five action labels are vocabulary-only and cannot be fabricated.
 
-The contract fixes 1H as the executable domain, keeps derived 4H/1D context explanatory and unbound, preserves long-only v1, and makes every Permission/Risk/allocation/target/execution/accounting authority flag false. Execution continues to consume `TargetPortfolioWeight` directly. A-03/A-04 remain responsible for lifecycle methodology and canonical integration; they must not turn eligibility into action or make `ActionDecision` a target authority.
+The contract fixes 1H as the executable domain, keeps derived 4H/1D context explanatory and unbound, preserves long-only v1, and makes every Permission/Risk/allocation/target/execution/accounting authority flag false. Execution continues to consume `TargetPortfolioWeight` directly.
+
+### M14 / A-03 — Action Lifecycle Methodology + Contract
+
+**Status**: **PARTIAL CONTRACT IMPLEMENTED — INDEPENDENT REVIEW PENDING / NOT CHECKPOINTED**
+
+A-03 freezes the long-only lifecycle vocabulary without constructing a second action engine. `ENTER` means zero current exposure with a materially positive authorized target; `ADD` means positive exposure with a materially higher target; `HOLD` means positive exposure materially equal to target; `REDUCE` means a lower but still positive target; and `EXIT` means positive exposure with a zero target. These five meanings are methodology only and remain non-constructible. `WAIT` remains the sole constructible result and means that no authorized transition is currently provable; it is not an alias for `HOLD`.
+
+The policy deliberately defines no epsilon. The execution engine's default USD rebalance threshold is an execution-detail threshold, not a canonical portfolio-weight equality policy. The replay engine keeps `pendingRebalance` as internal transient state and clears it after the next-bar attempt; `DecisionState` does not preserve outstanding, partial, completed, repeated, or stale target lineage. A-03 records these gaps explicitly and defers numeric comparison and lifecycle derivation to A-04. StrategyEligibility remains admission only, Omega remains sole target-weight authority, Execution continues consuming `TargetPortfolioWeight` directly, and the ledger remains sole current-state authority.
