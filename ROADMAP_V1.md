@@ -10,7 +10,7 @@ This is the finite pre-release roadmap for the public research and paper-trading
 
 ## M14 — Action layer integration
 
-Integrate approved evidence through `StrategyEligibility`, candidate intent, Permission, Risk, Omega, target allocation, and the product-facing `ActionDecision`. Scope is paper-only and must prove replay/OOS parity with the canonical pipeline.
+Integrate integrity-validated evidence through `StrategyEligibility`, candidate intent, Permission, Risk, Omega, target allocation, and the product-facing `ActionDecision`. StrategyEligibility is paper-evaluation admission, not predictive validation or paper-action approval. Scope is paper-only and must prove replay/OOS parity with the canonical pipeline.
 
 ## M15 — Production data, backend, and reliability
 

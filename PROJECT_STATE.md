@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `14ac61c888e5ba5b34070a455cdda98c005af31e`
-- **Checkpoint Message**: `M13D D-C: record calibration lane not required for v1`
+- **Last Verified Code Checkpoint**: `901c687a79a01b663d33c539fb6a6a9960c5430a`
+- **Checkpoint Message**: `M13D D-D: add integrity-bound research evidence registry`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -65,14 +65,15 @@ Do not rely only on AI memory or previous agent reports.
   - **M13D / D-B** (Robustness & Sensitivity): **COMPLETE** at `61722d9639a49083ad052fccf5a286caaf95ad1a`; descriptive shared-OOS categorical sensitivity only, with no ranking, selection, threshold, economic metric, or authority
   - **M13D / D-B-R1** (Robustness Family Preregistration Contract Repair): **COMPLETE** at `5dfa01c0fbec51893293832c4ca7599c7b8f6490`; preregistration only, with no robustness evaluation or selection
   - **M13D / D-C** (Training / Calibration Lane Necessity Audit): **COMPLETE — NOT REQUIRED FOR CURRENT V1** at `14ac61c888e5ba5b34070a455cdda98c005af31e`; no implemented component performs genuine TRAIN-only fitting
-  - **M13D / D-D** (Evidence Registry & Research Evidence Classification): **IMPLEMENTED — NOT REVIEWED / NOT CHECKPOINTED**; current methodology supports `CANDIDATE` and `INSUFFICIENT_EVIDENCE` only
+  - **M13D / D-D** (Evidence Registry & Research Evidence Classification): **COMPLETE** at `901c687a79a01b663d33c539fb6a6a9960c5430a`; current methodology supports `CANDIDATE` and `INSUFFICIENT_EVIDENCE` only
+  - **M14 / A-01** (StrategyEligibility Methodology + Contract): **IMPLEMENTED — INDEPENDENT REVIEW PENDING**; paper-evaluation admission is distinct from predictive validity, paper-action approval, Permission, Risk, allocation, execution, and ActionDecision
 - **Validation Baseline**:
   - `npm run build`: **PASS**
   - `npx vitest run`: **PASS** (1032/1032 tests at the recorded D-A validation checkpoint; later exact-commit CI is authoritative for subsequent checkpoints)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
-  - **CI status**: The D-C checkpoint at `14ac61c888e5ba5b34070a455cdda98c005af31e` passed the required remote workflow.
-- **Current Documented Phase**: M13B, M13C/C-A through C-F, D-A, D-B-R1, D-B, and the D-C not-required audit are **COMPLETE**. D-D evidence classification is implemented for independent review but is not checkpointed. No research component grants predictive or trading authority.
+  - **CI status**: The D-D checkpoint at `901c687a79a01b663d33c539fb6a6a9960c5430a` passed the required remote workflow.
+- **Current Documented Phase**: M13B, M13C, and M13D are **COMPLETE**. M14/A-01 StrategyEligibility is implemented for independent review but is not checkpointed. No research or eligibility component grants predictive, paper-action, Permission, Risk, allocation, execution, accounting, or ActionDecision authority.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -412,7 +413,8 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - D-A is checkpointed at `2e3474f8640cf9abbfaa70388d3fcaec137aa9be`. Its evidence-only aggregation validates C-F observation identity, fixed-trial binding, OOS isolation, chronology, and reset/carry state continuity without economic metrics or promotion.
 - D-B methodology identified that the existing hypothesis parameter-space declaration could not safely represent a complete shared-OOS sensitivity family because C-F correctly binds one exact rule identity and configuration. D-B-R1 implements only the missing immutable family preregistration relationship over existing exact fixed trials; independent review approved it and checkpoint `5dfa01c0fbec51893293832c4ca7599c7b8f6490` completed. D-B revalidates supplied member evidence through D-A, enforces exact declared membership and OOS grids, retains missing/insufficient evidence, and emits descriptive categorical evidence only; checkpoint `61722d9639a49083ad052fccf5a286caaf95ad1a` completed.
 - The D-C audit found no current v1 component that fits or calibrates parameters from TRAIN data. Current fixed trials and finite families remain preregistered evidence contracts, not optimization or winner-selection mechanisms. D-C is intentionally not required for current v1; checkpoint `14ac61c888e5ba5b34070a455cdda98c005af31e` completed.
-- D-D implements an immutable research-only Evidence Registry over validated hypothesis, held-out OOS, and optional shared-OOS sensitivity artifacts. Current methodology supports `CANDIDATE` and `INSUFFICIENT_EVIDENCE`; promotion and rejection remain explicitly unavailable pending separate preregistered methodology. D-D is implemented for independent review and is not checkpointed.
+- D-D implements an immutable research-only Evidence Registry over validated hypothesis, held-out OOS, and optional shared-OOS sensitivity artifacts. Current methodology supports `CANDIDATE` and `INSUFFICIENT_EVIDENCE`; promotion and rejection remain explicitly unavailable pending separate preregistered methodology. D-D and D-D-R1 are complete at `901c687a79a01b663d33c539fb6a6a9960c5430a`.
+- A-01 implements an immutable StrategyEligibility admission contract over complete canonical D-D registry snapshots plus their C-D scientific-integrity witness. One fixed identity-bearing policy admits only integrity-validated `CANDIDATE` evidence with complete declared shared-OOS sensitivity evidence to later paper-only evaluation. It retains every evidence record, creates no performance threshold or winner selection, and leaves predictive validity, paper-action approval, Permission, Risk, allocation, execution, accounting, price, and ActionDecision authority false or absent. A-01 is implemented for independent review and is not checkpointed.
 
 ---
 
@@ -426,7 +428,7 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - Historical macro alpha & regime strategy models (mapping PIT macro context to quant signals).
 - Historical event consensus provider integration & verified surprise calculation.
 - Historical factor freshness thresholds calibrated for daily/monthly series.
-- **M13D and later**: D-D evidence classification is implemented for review; later roadmap gates remain pending. D-C training/calibration infrastructure is not required unless a future approved methodology introduces genuine TRAIN-only fitting.
+- **M14 and later**: A-01 StrategyEligibility is implemented for review; later action-layer gates remain pending. D-C training/calibration infrastructure is not required unless a future approved methodology introduces genuine TRAIN-only fitting.
 - **Post-v1 unless explicitly approved**: Additional executable time domains or a true multi-timeframe execution engine.
 - Short-selling support and margin semantics.
 - Train-set hyperparameter optimization & grid search engine.
@@ -486,8 +488,18 @@ Creating an optimizer or calibration engine now would invent methodology and wea
 
 ### M13D / D-D — Evidence Registry & Research Evidence Classification
 
-**Status**: **IMPLEMENTED — NOT REVIEWED / NOT CHECKPOINTED**
+**Status**: **COMPLETE** at `901c687a79a01b663d33c539fb6a6a9960c5430a`
 
 D-D registers already validated C-D hypotheses, D-A held-out summaries, and optional D-B family/evaluation evidence without creating another feature, rule, replay, OOS, or robustness engine. Every immutable entry binds exact hypothesis/scientific, rule, parameter-configuration, trial-accounting, asset, TRAIN/OOS, state-policy, D-A, optional D-B, and provenance identities. Stale identities, contradictory bindings, duplicate exact-trial entries, malformed authority, and forged output identities fail closed. Incomplete or non-evaluable required evidence is retained as `INSUFFICIENT_EVIDENCE`.
 
-Current M13 methodology permits complete evaluable evidence to remain `CANDIDATE`; this is a research lifecycle state, not action eligibility. The registry cannot emit `APPROVED_FOR_PAPER` because no preregistered promotion contract or validated predictive/economic threshold exists. It cannot infer `REJECTED` from counts or free-text falsification language because no machine-executable rejection contract exists. D-B remains shared-OOS descriptive sensitivity with `independentConfirmation = false` and no selection. The registry fixes `predictiveValidityEstablished = false`, `approvedForPaperAction = false`, `grantsExecutionAuthority = false`, and `priceAuthority = NONE`; M14 must introduce a separate `StrategyEligibility` boundary before any action-layer use.
+Current M13 methodology permits complete evaluable evidence to remain `CANDIDATE`; this is a research lifecycle state, not action eligibility. The registry cannot emit `APPROVED_FOR_PAPER` because no preregistered promotion contract or validated predictive/economic threshold exists. It cannot infer `REJECTED` from counts or free-text falsification language because no machine-executable rejection contract exists. D-B remains shared-OOS descriptive sensitivity with `independentConfirmation = false` and no selection. The registry fixes `predictiveValidityEstablished = false`, `approvedForPaperAction = false`, `grantsExecutionAuthority = false`, and `priceAuthority = NONE`; A-01 now supplies the separate non-authoritative `StrategyEligibility` boundary before any later action-layer use.
+
+### M14 / A-01 — StrategyEligibility Methodology + Contract
+
+**Status**: **IMPLEMENTED — INDEPENDENT REVIEW PENDING / NOT CHECKPOINTED**
+
+A-01 defines StrategyEligibility as deterministic admission of an exact integrity-validated evidence artifact to later paper-only evaluation. It does not mean proven alpha, `APPROVED_FOR_PAPER`, permission to act, risk acceptance, allocation, execution, or ActionDecision. The canonical versioned policy requires M13 status `CANDIDATE` plus complete declared D-B shared-OOS sensitivity evidence. `INSUFFICIENT_EVIDENCE` remains ineligible, and a research-only candidate without required D-B evidence remains explicitly ineligible rather than being dropped.
+
+The contract consumes the complete D-D registry and revalidates scientific binding against the canonical C-D hypothesis registry. Every output record binds the exact source registry/evidence identity, hypothesis, rule, parameter configuration, trial accounting, asset, TRAIN/OOS intervals, state-boundary policy, D-A summary, and optional D-B family/member/evaluation identities. All source entries receive records, preventing caller-driven winner selection. D-B remains descriptive, non-selecting, and `independentConfirmation = false`.
+
+Eligibility fixes `predictiveValidityEstablished = false`, `approvedForPaperAction = false`, Permission/Risk/allocation/execution/accounting authority flags to false, and `priceAuthority = NONE`. It emits no signal, candidate intent, target weight, order, ActionDecision, performance score, ranking, or discretionary override. Later M14 gates remain responsible for candidate intent, canonical Permission/Risk/Omega integration, and product-facing ActionDecision semantics.
