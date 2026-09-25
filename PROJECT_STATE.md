@@ -24,8 +24,8 @@ Do not rely only on AI memory or previous agent reports.
 ## 2. Last Verified Code Checkpoint
 
 - **Repository**: `ztisieunhanz/QuantFund-OS`
-- **Last Verified Code Checkpoint**: `61722d9639a49083ad052fccf5a286caaf95ad1a`
-- **Checkpoint Message**: `M13D D-B: add preregistered shared-OOS sensitivity evaluation`
+- **Last Verified Code Checkpoint**: `14ac61c888e5ba5b34070a455cdda98c005af31e`
+- **Checkpoint Message**: `M13D D-C: record calibration lane not required for v1`
 - **Authority Note**: Git itself is authoritative for the actual current HEAD. This document records verified checkpoints and phases; it does not claim to track a future commit containing its own edits.
 - **Gate Statuses**:
   - **Gate 0** (Build / Type Contract Repair): **COMPLETE**
@@ -64,14 +64,15 @@ Do not rely only on AI memory or previous agent reports.
   - **M13D / D-A-R2** (CARRY State Lineage Integrity): **COMPLETE** at `2e3474f8640cf9abbfaa70388d3fcaec137aa9be`; isolated unknown-origin witnesses are rejected in favor of a canonically anchored pre-OOS transition chain
   - **M13D / D-B** (Robustness & Sensitivity): **COMPLETE** at `61722d9639a49083ad052fccf5a286caaf95ad1a`; descriptive shared-OOS categorical sensitivity only, with no ranking, selection, threshold, economic metric, or authority
   - **M13D / D-B-R1** (Robustness Family Preregistration Contract Repair): **COMPLETE** at `5dfa01c0fbec51893293832c4ca7599c7b8f6490`; preregistration only, with no robustness evaluation or selection
-  - **M13D / D-C** (Training / Calibration Lane Necessity Audit): **NOT REQUIRED FOR CURRENT V1 — AUDIT COMPLETE; PENDING INDEPENDENT REVIEW / CHECKPOINT**; no implemented component performs genuine TRAIN-only fitting
+  - **M13D / D-C** (Training / Calibration Lane Necessity Audit): **COMPLETE — NOT REQUIRED FOR CURRENT V1** at `14ac61c888e5ba5b34070a455cdda98c005af31e`; no implemented component performs genuine TRAIN-only fitting
+  - **M13D / D-D** (Evidence Registry & Research Evidence Classification): **IMPLEMENTED — NOT REVIEWED / NOT CHECKPOINTED**; current methodology supports `CANDIDATE` and `INSUFFICIENT_EVIDENCE` only
 - **Validation Baseline**:
   - `npm run build`: **PASS**
   - `npx vitest run`: **PASS** (1032/1032 tests at the recorded D-A validation checkpoint; later exact-commit CI is authoritative for subsequent checkpoints)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
-  - **CI status**: The D-B checkpoint at `61722d9639a49083ad052fccf5a286caaf95ad1a` passed the required remote workflow.
-- **Current Documented Phase**: M13B, M13C/C-A through C-F, D-A, D-B-R1, and D-B are **COMPLETE**. The D-C necessity audit concludes that a separate TRAIN/calibration lane is not required for current v1 and is pending independent review/checkpoint. No research component grants predictive or trading authority.
+  - **CI status**: The D-C checkpoint at `14ac61c888e5ba5b34070a455cdda98c005af31e` passed the required remote workflow.
+- **Current Documented Phase**: M13B, M13C/C-A through C-F, D-A, D-B-R1, D-B, and the D-C not-required audit are **COMPLETE**. D-D evidence classification is implemented for independent review but is not checkpointed. No research component grants predictive or trading authority.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -410,7 +411,8 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - C-F's PIT-safe shadow research harness is checkpointed. It binds preregistered hypotheses, explicit parameter configurations, C-E feature evidence, and C-B/C-C evaluation without creating action authority.
 - D-A is checkpointed at `2e3474f8640cf9abbfaa70388d3fcaec137aa9be`. Its evidence-only aggregation validates C-F observation identity, fixed-trial binding, OOS isolation, chronology, and reset/carry state continuity without economic metrics or promotion.
 - D-B methodology identified that the existing hypothesis parameter-space declaration could not safely represent a complete shared-OOS sensitivity family because C-F correctly binds one exact rule identity and configuration. D-B-R1 implements only the missing immutable family preregistration relationship over existing exact fixed trials; independent review approved it and checkpoint `5dfa01c0fbec51893293832c4ca7599c7b8f6490` completed. D-B revalidates supplied member evidence through D-A, enforces exact declared membership and OOS grids, retains missing/insufficient evidence, and emits descriptive categorical evidence only; checkpoint `61722d9639a49083ad052fccf5a286caaf95ad1a` completed.
-- The D-C audit found no current v1 component that fits or calibrates parameters from TRAIN data. Current fixed trials and finite families remain preregistered evidence contracts, not optimization or winner-selection mechanisms. D-C is therefore intentionally not required for current v1, pending independent review/checkpoint of this documentation decision.
+- The D-C audit found no current v1 component that fits or calibrates parameters from TRAIN data. Current fixed trials and finite families remain preregistered evidence contracts, not optimization or winner-selection mechanisms. D-C is intentionally not required for current v1; checkpoint `14ac61c888e5ba5b34070a455cdda98c005af31e` completed.
+- D-D implements an immutable research-only Evidence Registry over validated hypothesis, held-out OOS, and optional shared-OOS sensitivity artifacts. Current methodology supports `CANDIDATE` and `INSUFFICIENT_EVIDENCE`; promotion and rejection remain explicitly unavailable pending separate preregistered methodology. D-D is implemented for independent review and is not checkpointed.
 
 ---
 
@@ -424,7 +426,7 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - Historical macro alpha & regime strategy models (mapping PIT macro context to quant signals).
 - Historical event consensus provider integration & verified surprise calculation.
 - Historical factor freshness thresholds calibrated for daily/monthly series.
-- **M13D and later**: Evidence classification and later roadmap gates; D-C training/calibration infrastructure is not required unless a future approved methodology introduces genuine TRAIN-only fitting.
+- **M13D and later**: D-D evidence classification is implemented for review; later roadmap gates remain pending. D-C training/calibration infrastructure is not required unless a future approved methodology introduces genuine TRAIN-only fitting.
 - **Post-v1 unless explicitly approved**: Additional executable time domains or a true multi-timeframe execution engine.
 - Short-selling support and margin semantics.
 - Train-set hyperparameter optimization & grid search engine.
@@ -476,8 +478,16 @@ D-B consumes one integrity-validated D-B-R1 family and exact member evidence, re
 
 ### M13D / D-C — Training / Calibration Lane Necessity Audit
 
-**Status**: **NOT REQUIRED FOR CURRENT V1 — AUDIT COMPLETE; PENDING INDEPENDENT REVIEW / CHECKPOINT**
+**Status**: **COMPLETE — NOT REQUIRED FOR CURRENT V1** at `14ac61c888e5ba5b34070a455cdda98c005af31e`
 
 The audit found no implemented M13 research path that learns, fits, estimates, optimizes, selects, or calibrates a model or parameter from TRAIN data. C-D records fixed or finite preregistered parameter contracts and trial accounting; C-F binds one exact rule identity and parameter configuration without tuning; D-A evaluates one fixed held-out trial; and D-B compares a complete preregistered family descriptively on shared OOS while forbidding post-OOS selection. Existing walk-forward TRAIN/pre-test bars are indicator pre-roll context, not fitting data. TRAIN also supports declared interval classification and auditable state-boundary evidence, but none of these uses produces a fitted artifact.
 
 Creating an optimizer or calibration engine now would invent methodology and weaken the anti-data-mining boundary. Current v1 therefore proceeds without a separate D-C lane. If a future model genuinely requires TRAIN-only fitting, its methodology must be separately preregistered and independently reviewed before implementation, including exact training inputs, fitting objective, frozen fitted-output identity, untouched OOS boundary, trial accounting, and preservation of failed/rejected/insufficient evidence. Shared D-B OOS cannot be used to choose a winner, tune a parameter, or claim independent confirmation. No predictive validity or trading/action authority follows from this audit.
+
+### M13D / D-D — Evidence Registry & Research Evidence Classification
+
+**Status**: **IMPLEMENTED — NOT REVIEWED / NOT CHECKPOINTED**
+
+D-D registers already validated C-D hypotheses, D-A held-out summaries, and optional D-B family/evaluation evidence without creating another feature, rule, replay, OOS, or robustness engine. Every immutable entry binds exact hypothesis/scientific, rule, parameter-configuration, trial-accounting, asset, TRAIN/OOS, state-policy, D-A, optional D-B, and provenance identities. Stale identities, contradictory bindings, duplicate exact-trial entries, malformed authority, and forged output identities fail closed. Incomplete or non-evaluable required evidence is retained as `INSUFFICIENT_EVIDENCE`.
+
+Current M13 methodology permits complete evaluable evidence to remain `CANDIDATE`; this is a research lifecycle state, not action eligibility. The registry cannot emit `APPROVED_FOR_PAPER` because no preregistered promotion contract or validated predictive/economic threshold exists. It cannot infer `REJECTED` from counts or free-text falsification language because no machine-executable rejection contract exists. D-B remains shared-OOS descriptive sensitivity with `independentConfirmation = false` and no selection. The registry fixes `predictiveValidityEstablished = false`, `approvedForPaperAction = false`, `grantsExecutionAuthority = false`, and `priceAuthority = NONE`; M14 must introduce a separate `StrategyEligibility` boundary before any action-layer use.

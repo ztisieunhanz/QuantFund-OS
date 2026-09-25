@@ -14,6 +14,7 @@ import {
 } from "./hypothesisRegistry";
 import {
   shadowResearchStateIdentity,
+  validateParameterConfigurationIdentity,
   validateShadowResearchObservation,
   type ShadowHypothesisBinding,
   type ShadowResearchObservation,
@@ -382,4 +383,91 @@ export function evaluateHeldOutOosEvidence(
     ...identityMaterial,
     semanticIdentity: canonicalJson(identityMaterial),
   });
+}
+
+export function validateHeldOutOosEvidenceSummary(
+  registry: HypothesisRegistrySnapshot,
+  summary: HeldOutOosEvidenceSummary
+): HeldOutOosEvidenceSummary {
+  serializeHypothesisRegistry(registry);
+  const hypotheses = registry.hypotheses.filter((hypothesis) =>
+    hypothesis.hypothesisId === summary.binding.hypothesisId
+      && hypothesis.version === summary.binding.hypothesisVersion
+  );
+  if (hypotheses.length !== 1) fail("summary must bind exactly one registered hypothesis.");
+  const hypothesis = hypotheses[0];
+  const binding = summary.binding;
+  if (summary.kind !== "HELD_OUT_OOS_EVIDENCE_SUMMARY"
+    || summary.schemaVersion !== HELD_OUT_OOS_EVALUATION_SCHEMA_VERSION
+    || summary.intendedUse !== "HELD_OUT_OOS_RESEARCH_ONLY"
+    || summary.predictiveValidityEstablished !== false
+    || summary.approvedForPaperAction !== false
+    || summary.grantsExecutionAuthority !== false
+    || summary.priceAuthority !== "NONE") {
+    fail("summary has incompatible schema, intended-use, or authority semantics.");
+  }
+  if (binding.hypothesisSemanticIdentity !== hypothesis.semanticIdentity
+    || binding.ruleId !== hypothesis.rule.ruleId
+    || binding.ruleVersion !== hypothesis.rule.version
+    || binding.ruleSemanticIdentity !== hypothesis.rule.semanticIdentity
+    || binding.trialAccountingIdentity !== canonicalJson(hypothesis.trialAccounting)
+    || binding.statefulOosBoundaryPolicy !== hypothesis.statefulOosBoundaryPolicy
+    || !hypothesis.assetScope.includes(binding.assetId)
+    || binding.oosInterval.startTime !== hypothesis.trainOosPolicy.oos.startTime
+    || binding.oosInterval.endTime !== hypothesis.trainOosPolicy.oos.endTime) {
+    fail("summary binding does not match the registered hypothesis and trial contract.");
+  }
+  const parameterBinding = validateParameterConfigurationIdentity(
+    hypothesis,
+    binding.parameterConfigurationIdentity
+  );
+  if (parameterBinding.trialAccountingIdentity !== binding.trialAccountingIdentity) {
+    fail("summary parameter configuration contradicts its trial-accounting identity.");
+  }
+  const counts = summary.counts;
+  if (![counts.total, counts.match, counts.noMatch, counts.insufficientEvidence, counts.evaluable]
+    .every((value) => Number.isSafeInteger(value) && value >= 0)
+    || counts.total <= 0
+    || counts.total !== counts.match + counts.noMatch + counts.insufficientEvidence
+    || counts.evaluable !== counts.match + counts.noMatch
+    || counts.insufficientEvidenceRate !== counts.insufficientEvidence / counts.total) {
+    fail("summary categorical counts are malformed or do not reconcile.");
+  }
+  if (!Array.isArray(summary.orderedObservationSemanticIdentities)
+    || summary.orderedObservationSemanticIdentities.length !== counts.total
+    || summary.orderedObservationSemanticIdentities.some((identity) =>
+      typeof identity !== "string" || identity.length === 0)
+    || new Set(summary.orderedObservationSemanticIdentities).size
+      !== summary.orderedObservationSemanticIdentities.length
+    || !Array.isArray(summary.orderedPreOosTransitionWitnessSemanticIdentities)
+    || summary.orderedPreOosTransitionWitnessSemanticIdentities.some((identity) =>
+      typeof identity !== "string" || identity.length === 0)
+    || new Set(summary.orderedPreOosTransitionWitnessSemanticIdentities).size
+      !== summary.orderedPreOosTransitionWitnessSemanticIdentities.length) {
+    fail("summary ordered evidence identities are malformed or duplicated.");
+  }
+  if (binding.statefulOosBoundaryPolicy === "CARRY_PIT_STATE_FROM_PRE_OOS") {
+    if (summary.orderedPreOosTransitionWitnessSemanticIdentities.length === 0) {
+      fail("CARRY summary requires its ordered pre-OOS witness identities.");
+    }
+  } else if (summary.orderedPreOosTransitionWitnessSemanticIdentities.length !== 0) {
+    fail("non-CARRY summary must not contain pre-OOS witness identities.");
+  }
+  const identityMaterial = {
+    schemaVersion: summary.schemaVersion,
+    intendedUse: summary.intendedUse,
+    binding: summary.binding,
+    counts: summary.counts,
+    orderedObservationSemanticIdentities: summary.orderedObservationSemanticIdentities,
+    orderedPreOosTransitionWitnessSemanticIdentities:
+      summary.orderedPreOosTransitionWitnessSemanticIdentities,
+    predictiveValidityEstablished: summary.predictiveValidityEstablished,
+    approvedForPaperAction: summary.approvedForPaperAction,
+    grantsExecutionAuthority: summary.grantsExecutionAuthority,
+    priceAuthority: summary.priceAuthority,
+  };
+  if (summary.semanticIdentity !== canonicalJson(identityMaterial)) {
+    fail("summary semantic identity is forged or stale.");
+  }
+  return summary;
 }

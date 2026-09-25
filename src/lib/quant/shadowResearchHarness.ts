@@ -242,6 +242,44 @@ function bindParameters(
   });
 }
 
+export function validateParameterConfigurationIdentity(
+  hypothesis: RegisteredResearchHypothesis,
+  configurationIdentity: string
+): Readonly<{
+  configuration: ParameterConfiguration;
+  configurationIdentity: string;
+  trialAccountingIdentity: string;
+}> {
+  if (typeof configurationIdentity !== "string" || configurationIdentity.length === 0) {
+    fail("parameterConfigurationIdentity must be non-empty deterministic JSON.");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(configurationIdentity);
+  } catch {
+    fail("parameterConfigurationIdentity is not deterministic JSON.");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    fail("parameterConfigurationIdentity has no exact parameter contract.");
+  }
+  const material = parsed as Record<string, unknown>;
+  if (material.hypothesisSemanticIdentity !== hypothesis.semanticIdentity
+    || !material.parameters
+    || typeof material.parameters !== "object"
+    || Array.isArray(material.parameters)) {
+    fail("parameterConfigurationIdentity contradicts the registered hypothesis.");
+  }
+  const rebound = bindParameters(
+    hypothesis,
+    hypothesis.rule.semanticIdentity,
+    material.parameters as ParameterConfiguration
+  );
+  if (rebound.configurationIdentity !== configurationIdentity) {
+    fail("parameterConfigurationIdentity is non-canonical, forged, or stale.");
+  }
+  return rebound;
+}
+
 function findHypothesis(
   registry: HypothesisRegistrySnapshot,
   hypothesisId: string,
