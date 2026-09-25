@@ -62,15 +62,15 @@ Do not rely only on AI memory or previous agent reports.
   - **M13D / D-A** (Fixed-Rule Held-Out OOS Evaluation): **COMPLETE** at `2e3474f8640cf9abbfaa70388d3fcaec137aa9be`; evidence-only aggregation does not assess predictive validity or economic performance
   - **M13D / D-A-R1** (Preregistered Stateful OOS Boundary Policy): **COMPLETE** at `3894a1308bfc66e647b75e2ceb9428519ba4595a`
   - **M13D / D-A-R2** (CARRY State Lineage Integrity): **COMPLETE** at `2e3474f8640cf9abbfaa70388d3fcaec137aa9be`; isolated unknown-origin witnesses are rejected in favor of a canonically anchored pre-OOS transition chain
-  - **M13D / D-B** (Robustness & Sensitivity): **BLOCKED — NOT IMPLEMENTED** pending independent review and checkpoint of D-B-R1
-  - **M13D / D-B-R1** (Robustness Family Preregistration Contract Repair): **IMPLEMENTED — NOT REVIEWED / NOT CHECKPOINTED**; preregistration only, with no robustness evaluation or selection
+  - **M13D / D-B** (Robustness & Sensitivity): **NOT STARTED — UNBLOCKED** after independent review and checkpoint of D-B-R1
+  - **M13D / D-B-R1** (Robustness Family Preregistration Contract Repair): **COMPLETE** at `5dfa01c0fbec51893293832c4ca7599c7b8f6490`; preregistration only, with no robustness evaluation or selection
 - **Validation Baseline**:
   - `npm run build`: **PASS**
   - `npx vitest run`: **PASS** (1032/1032 tests at the last verified checkpoint)
   - `git diff --check`: **PASS**
   - **CI target sequence**: submitted-range `git diff --check` → `npm ci` → `npx vitest run` → `npm run build` → post-validation whitespace and clean-tree checks on Ubuntu with Node 22 LTS.
   - **CI status**: The D-A checkpoint at `2e3474f8640cf9abbfaa70388d3fcaec137aa9be` passed the required remote workflow.
-- **Current Documented Phase**: M13B, M13C/C-A through C-F, and D-A are **COMPLETE**. D-B-R1 robustness-family preregistration is implemented for review; D-B evaluation remains blocked and unimplemented. No research component grants predictive or trading authority.
+- **Current Documented Phase**: M13B, M13C/C-A through C-F, D-A, and D-B-R1 are **COMPLETE**. D-B evaluation is not started and is unblocked for implementation. No research component grants predictive or trading authority.
 - **Architecture Sources**: `ROADMAP_V1.md` and `ARCHITECTURE_V1.md`.
 
 ---
@@ -408,7 +408,7 @@ M13B-1 established a machine-checkable, research-only manifest, canonical per-se
 - C-E's PIT-safe technical and macro/event feature builder is checkpointed. Missing evidence remains explicit and no feature is action-eligible.
 - C-F's PIT-safe shadow research harness is checkpointed. It binds preregistered hypotheses, explicit parameter configurations, C-E feature evidence, and C-B/C-C evaluation without creating action authority.
 - D-A is checkpointed at `2e3474f8640cf9abbfaa70388d3fcaec137aa9be`. Its evidence-only aggregation validates C-F observation identity, fixed-trial binding, OOS isolation, chronology, and reset/carry state continuity without economic metrics or promotion.
-- D-B methodology identified that the existing hypothesis parameter-space declaration could not safely represent a complete shared-OOS sensitivity family because C-F correctly binds one exact rule identity and configuration. D-B-R1 implements only the missing immutable family preregistration relationship over existing exact fixed trials; D-B evaluation remains blocked pending review/checkpoint.
+- D-B methodology identified that the existing hypothesis parameter-space declaration could not safely represent a complete shared-OOS sensitivity family because C-F correctly binds one exact rule identity and configuration. D-B-R1 implements only the missing immutable family preregistration relationship over existing exact fixed trials; independent review approved it and checkpoint `5dfa01c0fbec51893293832c4ca7599c7b8f6490` completed. D-B evaluation is not started and is now unblocked for implementation.
 
 ---
 
@@ -462,6 +462,6 @@ D-A consumes existing integrity-validated C-F observations for one exact preregi
 
 ### M13D / D-B-R1 — Robustness Family Preregistration Contract Repair
 
-**Status**: **IMPLEMENTED — NOT REVIEWED / NOT CHECKPOINTED**
+**Status**: **COMPLETE — INDEPENDENT REVIEW APPROVED; CHECKPOINTED at `5dfa01c0fbec51893293832c4ca7599c7b8f6490`**
 
-D-B methodology review found that C-D can declare finite candidate parameter spaces while C-F correctly requires one exact registered rule semantic identity and matching parameter configuration. D-B-R1 does not weaken that boundary. It preregisters a finite family of separately valid exact fixed C-D trials and fixes the baseline, scientifically described perturbation axes, member count, one common asset, identical TRAIN/OOS intervals, one stateful OOS-boundary policy, and an exact expected OOS decision-time grid. Every family member resolves to a registered single-asset, fixed-parameter, one-trial hypothesis. The identity-bearing contract fixes `PREREGISTERED_SHARED_OOS_SENSITIVITY`, `NO_POST_OOS_VARIANT_SELECTION`, and `independentConfirmation = false`; it contains no interpretation threshold and cannot assert robustness. D-B evaluation remains blocked until this repair passes independent review and checkpoint. No predictive validity, paper action, price authority, execution authority, or accounting authority is introduced.
+D-B methodology review found that C-D can declare finite candidate parameter spaces while C-F correctly requires one exact registered rule semantic identity and matching parameter configuration. D-B-R1 does not weaken that boundary. It preregisters a finite family of separately valid exact fixed C-D trials and fixes the baseline, scientifically described perturbation axes, member count, one common asset, identical TRAIN/OOS intervals, one stateful OOS-boundary policy, and an exact expected OOS decision-time grid. Every family member resolves to a registered single-asset, fixed-parameter, one-trial hypothesis. The identity-bearing contract fixes `PREREGISTERED_SHARED_OOS_SENSITIVITY`, `NO_POST_OOS_VARIANT_SELECTION`, and `independentConfirmation = false`; it contains no interpretation threshold and cannot assert robustness. Independent review approved D-B-R1 and checkpoint `5dfa01c0fbec51893293832c4ca7599c7b8f6490` completed. D-B evaluation is not started and is now unblocked for implementation. No predictive validity, paper action, price authority, execution authority, or accounting authority is introduced.
