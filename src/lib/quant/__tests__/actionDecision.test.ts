@@ -28,7 +28,7 @@ function forged(mutator: (draft: Record<string, any>) => void): ActionDecision {
   return draft as unknown as ActionDecision;
 }
 
-describe("M14 A-02 partial ActionDecision contract", () => {
+describe("M14 A-04 Step 4 ActionDecision contract", () => {
   it("creates deterministic identity from identical inputs", () => {
     expect(createDeferredActionDecision(INPUT).semanticIdentity)
       .toBe(createDeferredActionDecision({ ...INPUT }).semanticIdentity);
@@ -82,9 +82,9 @@ describe("M14 A-02 partial ActionDecision contract", () => {
     expect(decision().longOnly).toBe(true);
   });
 
-  it("represents WAIT as the only currently derivable action", () => {
+  it("keeps deferred construction fail-closed while exposing the reviewed vocabulary", () => {
     expect(decision().action).toBe("WAIT");
-    expect(decision().currentlyDerivableActions).toEqual(["WAIT"]);
+    expect(decision().currentlyDerivableActions).toEqual(["WAIT", "ENTER", "ADD", "HOLD", "REDUCE", "EXIT"]);
   });
 
   it("keeps current weight unavailable instead of deriving it from position units", () => {
@@ -100,6 +100,8 @@ describe("M14 A-02 partial ActionDecision contract", () => {
       status: "UNAVAILABLE_CANONICAL_TARGET_WEIGHT_BINDING",
       targetWeight: null,
       sourceSemanticIdentity: null,
+      targetContentIdentity: null,
+      economicTargetContentIdentity: null,
     });
   });
 
@@ -127,7 +129,7 @@ describe("M14 A-02 partial ActionDecision contract", () => {
       ...INPUT,
       strategyEligibility: "ELIGIBLE_FOR_PAPER_EVALUATION",
     } as ActionDecisionInput)).toThrow(/only assetId/);
-    expect(decision().strategyEligibility.status).toBe("NOT_BOUND_A03_A04_PENDING");
+    expect(decision().strategyEligibility.status).toBe("NOT_BOUND_ACTION_CLASSIFICATION_DOES_NOT_INFER_ELIGIBILITY");
   });
 
   it("does not let caller-provided Permission state imply action", () => {

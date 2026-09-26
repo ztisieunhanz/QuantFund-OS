@@ -2,10 +2,9 @@
 // FILE: src/lib/quant/actionLifecycle.ts
 // MODULE: ACTION LIFECYCLE METHODOLOGY CONTRACT (M14 / A-03)
 //
-// A-03 freezes the meaning of the long-only action vocabulary. It does not
-// classify numeric weights or model execution lifecycle state. Those actions
-// remain deferred until A-04 supplies reviewed, identity-bearing canonical
-// current/target/gate bindings and an explicit comparison policy.
+// A-03 freezes the meaning of the long-only action vocabulary. A-04 Step 4
+// makes those meanings constructible only from reviewed canonical evidence and
+// the existing execution-planner materiality policy.
 // ============================================================================
 
 import {
@@ -16,11 +15,11 @@ import {
   type ActionDecisionAction,
 } from "./actionDecision";
 
-export const ACTION_LIFECYCLE_SCHEMA_VERSION = "M14-A-03-1";
+export const ACTION_LIFECYCLE_SCHEMA_VERSION = "M14-A04-STEP4-1";
 
 export type LifecycleConstructibility =
   | "CONSTRUCTIBLE_FAIL_CLOSED"
-  | "DEFERRED_CANONICAL_BINDINGS_AND_COMPARISON_POLICY";
+  | "CONSTRUCTIBLE_FROM_CANONICAL_EVIDENCE";
 
 export interface ActionLifecycleDefinition {
   readonly action: ActionDecisionAction;
@@ -38,32 +37,32 @@ export interface ActionLifecyclePolicy {
   readonly kind: "ACTION_LIFECYCLE_POLICY";
   readonly schemaVersion: typeof ACTION_LIFECYCLE_SCHEMA_VERSION;
   readonly intendedUse: "PRODUCT_ACTION_LIFECYCLE_METHODOLOGY_ONLY";
-  readonly methodologyOutcome: "PARTIAL_NON_WAIT_DERIVATION_DEFERRED";
+  readonly methodologyOutcome: "CANONICAL_ACTION_CLASSIFICATION_ENABLED";
   readonly actionDecisionSchemaVersion: typeof ACTION_DECISION_SCHEMA_VERSION;
   readonly vocabulary: readonly ActionDecisionAction[];
-  readonly currentlyConstructibleActions: readonly ["WAIT"];
+  readonly currentlyConstructibleActions: readonly ActionDecisionAction[];
   readonly definitions: readonly ActionLifecycleDefinition[];
   readonly waitHoldDistinction: "WAIT_NO_PROVABLE_TRANSITION_HOLD_PROVABLE_POSITIVE_EQUAL_TARGET";
-  readonly currentStateAuthority: "DEFERRED_IDENTITY_BEARING_CANONICAL_WEIGHT_BINDING";
-  readonly targetStateAuthority: "DEFERRED_IDENTITY_BEARING_OMEGA_TARGET_BINDING";
-  readonly comparisonPolicy: "DEFERRED_NO_CANONICAL_WEIGHT_TOLERANCE";
+  readonly currentStateAuthority: "CANONICAL_PORTFOLIO_VALUATION_SNAPSHOT";
+  readonly targetStateAuthority: "OMEGA_TARGET_VIA_ACTIVE_TARGET_LIFECYCLE";
+  readonly comparisonPolicy: "CANONICAL_EXECUTION_PLANNER_USD_THRESHOLD_NO_WEIGHT_EPSILON";
   readonly numericValidationPolicy: Readonly<{
     nonFinite: "REJECT";
     negative: "REJECT_LONG_ONLY";
-    aboveOne: "DEFER_UNTIL_A04_CANONICAL_POLICY";
-    signedZero: "DEFER_UNTIL_A04_NORMALIZATION_POLICY";
-    floatingBoundary: "DEFER_UNTIL_A04_COMPARISON_POLICY";
+    aboveOne: "ACCEPT_ONLY_IF_UPSTREAM_CANONICAL_CONTRACT_ACCEPTS";
+    signedZero: "CANONICAL_PRODUCER_NORMALIZES_TO_ZERO";
+    floatingBoundary: "CANONICAL_EXECUTION_PLANNER_USD_THRESHOLD";
     absentValuation: "WAIT_FAIL_CLOSED";
     staleOrMismatchedTimestamp: "WAIT_FAIL_CLOSED";
   }>;
   readonly executionLifecyclePolicy: Readonly<{
-    newlyAuthorizedTarget: "DEFERRED_NOT_PERSISTED_AS_CANONICAL_LIFECYCLE_STATE";
-    outstandingTarget: "DEFERRED_NOT_PERSISTED_AS_CANONICAL_LIFECYCLE_STATE";
-    partialFill: "DEFERRED_NOT_PERSISTED_AS_CANONICAL_LIFECYCLE_STATE";
-    completedTarget: "DEFERRED_NO_CANONICAL_COMPLETION_BINDING";
-    repeatedTarget: "DEFERRED_NO_CANONICAL_TARGET_LINEAGE_IDENTITY";
+    newlyAuthorizedTarget: "CLASSIFY_CURRENT_ASSESSMENT";
+    outstandingTarget: "CLASSIFY_CURRENT_PROVEN_RELATIONSHIP";
+    partialFill: "CLASSIFY_POST_FILL_CANONICAL_VALUATION";
+    completedTarget: "CLASSIFY_POST_FILL_CANONICAL_VALUATION";
+    repeatedTarget: "PRESERVE_ACTIVE_ROOT_CLASSIFY_LATEST_PROVEN_RELATIONSHIP";
     staleTarget: "WAIT_FAIL_CLOSED";
-    replayBoundary: "DEFERRED_PENDING_REBALANCE_NOT_IN_DECISION_STATE";
+    replayBoundary: "TRANSIENT_CLASSIFICATION_ONLY_NO_DECISION_STATE_PERSISTENCE";
   }>;
   readonly strategyEligibilityRole: "ADMISSION_ONLY_NEVER_ACTION_TRIGGER";
   readonly permissionRiskRole: "CONSUME_FUTURE_CANONICAL_RESULTS_NEVER_REIMPLEMENT";
@@ -126,20 +125,19 @@ function definition(
   meaning: string,
   currentExposureRelation: string,
   authorizedTargetRelation: string,
-  constructible: boolean
 ): ActionLifecycleDefinition {
   return deepFreeze({
     action,
     meaning,
     currentExposureRelation,
     authorizedTargetRelation,
-    constructibility: constructible
+    constructibility: action === "WAIT"
       ? "CONSTRUCTIBLE_FAIL_CLOSED" as const
-      : "DEFERRED_CANONICAL_BINDINGS_AND_COMPARISON_POLICY" as const,
-    requiresCanonicalCurrentWeight: !constructible,
-    requiresCanonicalTargetWeight: !constructible,
-    requiresMaterialComparisonPolicy: !constructible,
-    executionLifecycleRequired: !constructible,
+      : "CONSTRUCTIBLE_FROM_CANONICAL_EVIDENCE" as const,
+    requiresCanonicalCurrentWeight: action !== "WAIT",
+    requiresCanonicalTargetWeight: action !== "WAIT",
+    requiresMaterialComparisonPolicy: action !== "WAIT",
+    executionLifecycleRequired: action !== "WAIT",
   });
 }
 
@@ -148,75 +146,69 @@ function policyMaterial(): Omit<ActionLifecyclePolicy, "semanticIdentity"> {
     kind: "ACTION_LIFECYCLE_POLICY" as const,
     schemaVersion: ACTION_LIFECYCLE_SCHEMA_VERSION,
     intendedUse: "PRODUCT_ACTION_LIFECYCLE_METHODOLOGY_ONLY" as const,
-    methodologyOutcome: "PARTIAL_NON_WAIT_DERIVATION_DEFERRED" as const,
+    methodologyOutcome: "CANONICAL_ACTION_CLASSIFICATION_ENABLED" as const,
     actionDecisionSchemaVersion: ACTION_DECISION_SCHEMA_VERSION,
     vocabulary: ACTION_DECISION_ACTION_VOCABULARY,
-    currentlyConstructibleActions: Object.freeze(["WAIT"] as const),
+    currentlyConstructibleActions: ACTION_DECISION_ACTION_VOCABULARY,
     definitions: Object.freeze([
       definition(
         "WAIT",
         "No currently provable authorized transition exists, including unavailable or invalid canonical bindings.",
         "NOT_REQUIRED_FOR_FAIL_CLOSED_WAIT",
         "NOT_PROVABLY_ACTIONABLE",
-        true
       ),
       definition(
         "ENTER",
         "Canonical long-only exposure is zero and the authorized canonical target is materially positive.",
         "ZERO",
         "MATERIALLY_POSITIVE",
-        false
       ),
       definition(
         "ADD",
         "Canonical long-only exposure is positive and the authorized canonical target is materially higher.",
         "POSITIVE",
         "MATERIALLY_GREATER_THAN_CURRENT",
-        false
       ),
       definition(
         "HOLD",
         "Canonical long-only exposure is positive and materially equal to the authorized canonical target.",
         "POSITIVE",
         "MATERIALLY_EQUAL_TO_CURRENT",
-        false
       ),
       definition(
         "REDUCE",
         "The authorized canonical target remains positive but is materially below current canonical exposure.",
         "POSITIVE",
         "POSITIVE_AND_MATERIALLY_LESS_THAN_CURRENT",
-        false
       ),
       definition(
         "EXIT",
         "Canonical long-only exposure is positive and the authorized canonical target is zero.",
         "POSITIVE",
         "ZERO",
-        false
       ),
     ]),
     waitHoldDistinction: "WAIT_NO_PROVABLE_TRANSITION_HOLD_PROVABLE_POSITIVE_EQUAL_TARGET" as const,
-    currentStateAuthority: "DEFERRED_IDENTITY_BEARING_CANONICAL_WEIGHT_BINDING" as const,
-    targetStateAuthority: "DEFERRED_IDENTITY_BEARING_OMEGA_TARGET_BINDING" as const,
-    comparisonPolicy: "DEFERRED_NO_CANONICAL_WEIGHT_TOLERANCE" as const,
+    currentStateAuthority: "CANONICAL_PORTFOLIO_VALUATION_SNAPSHOT" as const,
+    targetStateAuthority: "OMEGA_TARGET_VIA_ACTIVE_TARGET_LIFECYCLE" as const,
+    comparisonPolicy: "CANONICAL_EXECUTION_PLANNER_USD_THRESHOLD_NO_WEIGHT_EPSILON" as const,
     numericValidationPolicy: {
       nonFinite: "REJECT" as const,
       negative: "REJECT_LONG_ONLY" as const,
-      aboveOne: "DEFER_UNTIL_A04_CANONICAL_POLICY" as const,
-      signedZero: "DEFER_UNTIL_A04_NORMALIZATION_POLICY" as const,
-      floatingBoundary: "DEFER_UNTIL_A04_COMPARISON_POLICY" as const,
+      aboveOne: "ACCEPT_ONLY_IF_UPSTREAM_CANONICAL_CONTRACT_ACCEPTS" as const,
+      signedZero: "CANONICAL_PRODUCER_NORMALIZES_TO_ZERO" as const,
+      floatingBoundary: "CANONICAL_EXECUTION_PLANNER_USD_THRESHOLD" as const,
       absentValuation: "WAIT_FAIL_CLOSED" as const,
       staleOrMismatchedTimestamp: "WAIT_FAIL_CLOSED" as const,
     },
     executionLifecyclePolicy: {
-      newlyAuthorizedTarget: "DEFERRED_NOT_PERSISTED_AS_CANONICAL_LIFECYCLE_STATE" as const,
-      outstandingTarget: "DEFERRED_NOT_PERSISTED_AS_CANONICAL_LIFECYCLE_STATE" as const,
-      partialFill: "DEFERRED_NOT_PERSISTED_AS_CANONICAL_LIFECYCLE_STATE" as const,
-      completedTarget: "DEFERRED_NO_CANONICAL_COMPLETION_BINDING" as const,
-      repeatedTarget: "DEFERRED_NO_CANONICAL_TARGET_LINEAGE_IDENTITY" as const,
+      newlyAuthorizedTarget: "CLASSIFY_CURRENT_ASSESSMENT" as const,
+      outstandingTarget: "CLASSIFY_CURRENT_PROVEN_RELATIONSHIP" as const,
+      partialFill: "CLASSIFY_POST_FILL_CANONICAL_VALUATION" as const,
+      completedTarget: "CLASSIFY_POST_FILL_CANONICAL_VALUATION" as const,
+      repeatedTarget: "PRESERVE_ACTIVE_ROOT_CLASSIFY_LATEST_PROVEN_RELATIONSHIP" as const,
       staleTarget: "WAIT_FAIL_CLOSED" as const,
-      replayBoundary: "DEFERRED_PENDING_REBALANCE_NOT_IN_DECISION_STATE" as const,
+      replayBoundary: "TRANSIENT_CLASSIFICATION_ONLY_NO_DECISION_STATE_PERSISTENCE" as const,
     },
     strategyEligibilityRole: "ADMISSION_ONLY_NEVER_ACTION_TRIGGER" as const,
     permissionRiskRole: "CONSUME_FUTURE_CANONICAL_RESULTS_NEVER_REIMPLEMENT" as const,
@@ -264,8 +256,8 @@ export function serializeActionLifecyclePolicy(policy: ActionLifecyclePolicy): s
 export function validateActionLifecycleDecision(decision: ActionDecision): ActionDecision {
   const validated = validateActionDecision(decision);
   validateActionLifecyclePolicy(CURRENT_ACTION_LIFECYCLE_POLICY);
-  if (!CURRENT_ACTION_LIFECYCLE_POLICY.currentlyConstructibleActions.includes(validated.action as "WAIT")) {
-    fail(`action ${validated.action} is not constructible under the partial A-03 policy.`);
+  if (!CURRENT_ACTION_LIFECYCLE_POLICY.currentlyConstructibleActions.includes(validated.action)) {
+    fail(`action ${validated.action} is not constructible under the canonical Step 4 policy.`);
   }
   return validated;
 }

@@ -31,7 +31,7 @@ function definition(action: string) {
   return CURRENT_ACTION_LIFECYCLE_POLICY.definitions.find((item) => item.action === action)!;
 }
 
-describe("M14 A-03 partial action lifecycle methodology", () => {
+describe("M14 A-04 Step 4 action lifecycle methodology", () => {
   it("has deterministic identity", () => {
     expect(CURRENT_ACTION_LIFECYCLE_POLICY.semanticIdentity)
       .toBe(validateActionLifecyclePolicy(CURRENT_ACTION_LIFECYCLE_POLICY).semanticIdentity);
@@ -48,14 +48,18 @@ describe("M14 A-03 partial action lifecycle methodology", () => {
     expect(Object.isFrozen(CURRENT_ACTION_LIFECYCLE_POLICY.executionLifecyclePolicy)).toBe(true);
   });
 
-  it("records a truthful PARTIAL outcome", () => {
+  it("records canonical classification enablement", () => {
     expect(CURRENT_ACTION_LIFECYCLE_POLICY.methodologyOutcome)
-      .toBe("PARTIAL_NON_WAIT_DERIVATION_DEFERRED");
+      .toBe("CANONICAL_ACTION_CLASSIFICATION_ENABLED");
   });
 
-  it("keeps WAIT as the only constructible action", () => {
-    expect(CURRENT_ACTION_LIFECYCLE_POLICY.currentlyConstructibleActions).toEqual(["WAIT"]);
+  it("makes every frozen action constructible only under its evidence policy", () => {
+    expect(CURRENT_ACTION_LIFECYCLE_POLICY.currentlyConstructibleActions)
+      .toEqual(["WAIT", "ENTER", "ADD", "HOLD", "REDUCE", "EXIT"]);
     expect(definition("WAIT").constructibility).toBe("CONSTRUCTIBLE_FAIL_CLOSED");
+    for (const action of ["ENTER", "ADD", "HOLD", "REDUCE", "EXIT"]) {
+      expect(definition(action).constructibility).toBe("CONSTRUCTIBLE_FROM_CANONICAL_EVIDENCE");
+    }
   });
 
   it("makes WAIT distinct from HOLD", () => {
@@ -65,36 +69,36 @@ describe("M14 A-03 partial action lifecycle methodology", () => {
     expect(definition("HOLD").authorizedTargetRelation).toBe("MATERIALLY_EQUAL_TO_CURRENT");
   });
 
-  it("freezes zero-to-positive as ENTER methodology without constructing it", () => {
+  it("freezes zero-to-positive as ENTER methodology", () => {
     expect(definition("ENTER")).toMatchObject({
       currentExposureRelation: "ZERO",
       authorizedTargetRelation: "MATERIALLY_POSITIVE",
-      constructibility: "DEFERRED_CANONICAL_BINDINGS_AND_COMPARISON_POLICY",
+      constructibility: "CONSTRUCTIBLE_FROM_CANONICAL_EVIDENCE",
     });
   });
 
-  it("freezes positive-to-higher-positive as ADD methodology without constructing it", () => {
+  it("freezes positive-to-higher-positive as ADD methodology", () => {
     expect(definition("ADD")).toMatchObject({
       currentExposureRelation: "POSITIVE",
       authorizedTargetRelation: "MATERIALLY_GREATER_THAN_CURRENT",
     });
   });
 
-  it("freezes positive-to-equal-positive as HOLD methodology without constructing it", () => {
+  it("freezes positive-to-equal-positive as HOLD methodology", () => {
     expect(definition("HOLD")).toMatchObject({
       currentExposureRelation: "POSITIVE",
       authorizedTargetRelation: "MATERIALLY_EQUAL_TO_CURRENT",
     });
   });
 
-  it("freezes positive-to-lower-positive as REDUCE methodology without constructing it", () => {
+  it("freezes positive-to-lower-positive as REDUCE methodology", () => {
     expect(definition("REDUCE")).toMatchObject({
       currentExposureRelation: "POSITIVE",
       authorizedTargetRelation: "POSITIVE_AND_MATERIALLY_LESS_THAN_CURRENT",
     });
   });
 
-  it("freezes positive-to-zero as EXIT methodology without constructing it", () => {
+  it("freezes positive-to-zero as EXIT methodology", () => {
     expect(definition("EXIT")).toMatchObject({
       currentExposureRelation: "POSITIVE",
       authorizedTargetRelation: "ZERO",
@@ -112,21 +116,21 @@ describe("M14 A-03 partial action lifecycle methodology", () => {
     }
   });
 
-  it("keeps current-state authority deferred", () => {
+  it("binds current-state authority to canonical valuation", () => {
     expect(CURRENT_ACTION_LIFECYCLE_POLICY.currentStateAuthority)
-      .toBe("DEFERRED_IDENTITY_BEARING_CANONICAL_WEIGHT_BINDING");
+      .toBe("CANONICAL_PORTFOLIO_VALUATION_SNAPSHOT");
   });
 
-  it("keeps Omega target authority deferred but exclusive", () => {
+  it("keeps Omega target authority exclusive through lifecycle evidence", () => {
     expect(CURRENT_ACTION_LIFECYCLE_POLICY.targetStateAuthority)
-      .toBe("DEFERRED_IDENTITY_BEARING_OMEGA_TARGET_BINDING");
+      .toBe("OMEGA_TARGET_VIA_ACTIVE_TARGET_LIFECYCLE");
     expect(CURRENT_ACTION_LIFECYCLE_POLICY.omegaRole).toBe("SOLE_TARGET_WEIGHT_AUTHORITY");
   });
 
   it("does not invent a numeric tolerance", () => {
     expect(CURRENT_ACTION_LIFECYCLE_POLICY.comparisonPolicy)
-      .toBe("DEFERRED_NO_CANONICAL_WEIGHT_TOLERANCE");
-    expect(serializeActionLifecyclePolicy(CURRENT_ACTION_LIFECYCLE_POLICY)).not.toMatch(/epsilon/i);
+      .toBe("CANONICAL_EXECUTION_PLANNER_USD_THRESHOLD_NO_WEIGHT_EPSILON");
+    expect(serializeActionLifecyclePolicy(CURRENT_ACTION_LIFECYCLE_POLICY)).not.toMatch(/1e-12|Number\.EPSILON/);
   });
 
   it("rejects non-finite and negative long-only values methodologically", () => {
@@ -134,10 +138,10 @@ describe("M14 A-03 partial action lifecycle methodology", () => {
     expect(CURRENT_ACTION_LIFECYCLE_POLICY.numericValidationPolicy.negative).toBe("REJECT_LONG_ONLY");
   });
 
-  it("defers above-one, signed-zero, and floating-boundary policy", () => {
-    expect(CURRENT_ACTION_LIFECYCLE_POLICY.numericValidationPolicy.aboveOne).toMatch(/^DEFER_/);
-    expect(CURRENT_ACTION_LIFECYCLE_POLICY.numericValidationPolicy.signedZero).toMatch(/^DEFER_/);
-    expect(CURRENT_ACTION_LIFECYCLE_POLICY.numericValidationPolicy.floatingBoundary).toMatch(/^DEFER_/);
+  it("inherits above-one, signed-zero, and floating-boundary handling from canonical producers and planner", () => {
+    expect(CURRENT_ACTION_LIFECYCLE_POLICY.numericValidationPolicy.aboveOne).toBe("ACCEPT_ONLY_IF_UPSTREAM_CANONICAL_CONTRACT_ACCEPTS");
+    expect(CURRENT_ACTION_LIFECYCLE_POLICY.numericValidationPolicy.signedZero).toBe("CANONICAL_PRODUCER_NORMALIZES_TO_ZERO");
+    expect(CURRENT_ACTION_LIFECYCLE_POLICY.numericValidationPolicy.floatingBoundary).toBe("CANONICAL_EXECUTION_PLANNER_USD_THRESHOLD");
   });
 
   it("fails closed to WAIT for absent valuation or stale/mismatched time", () => {
@@ -146,15 +150,16 @@ describe("M14 A-03 partial action lifecycle methodology", () => {
       .toBe("WAIT_FAIL_CLOSED");
   });
 
-  it("defers newly authorized, outstanding, partial, completed, and repeated target state", () => {
-    for (const value of Object.values(CURRENT_ACTION_LIFECYCLE_POLICY.executionLifecyclePolicy)) {
-      expect(value).toMatch(/^(DEFERRED_|WAIT_FAIL_CLOSED)/);
-    }
+  it("classifies lifecycle states without granting lifecycle authority", () => {
+    expect(CURRENT_ACTION_LIFECYCLE_POLICY.executionLifecyclePolicy.newlyAuthorizedTarget).toBe("CLASSIFY_CURRENT_ASSESSMENT");
+    expect(CURRENT_ACTION_LIFECYCLE_POLICY.executionLifecyclePolicy.partialFill).toBe("CLASSIFY_POST_FILL_CANONICAL_VALUATION");
+    expect(CURRENT_ACTION_LIFECYCLE_POLICY.executionLifecyclePolicy.completedTarget).toBe("CLASSIFY_POST_FILL_CANONICAL_VALUATION");
+    expect(CURRENT_ACTION_LIFECYCLE_POLICY.executionLifecyclePolicy.staleTarget).toBe("WAIT_FAIL_CLOSED");
   });
 
-  it("records that pending replay state is absent from DecisionState", () => {
+  it("records that classification remains transient and absent from DecisionState persistence", () => {
     expect(CURRENT_ACTION_LIFECYCLE_POLICY.executionLifecyclePolicy.replayBoundary)
-      .toBe("DEFERRED_PENDING_REBALANCE_NOT_IN_DECISION_STATE");
+      .toBe("TRANSIENT_CLASSIFICATION_ONLY_NO_DECISION_STATE_PERSISTENCE");
   });
 
   it("does not let StrategyEligibility trigger action", () => {

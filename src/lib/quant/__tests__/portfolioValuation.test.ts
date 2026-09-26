@@ -247,7 +247,8 @@ describe("M14 A-04 Step 2 canonical portfolio valuation", () => {
     expect(value.cashWeight + Object.values(value.assetWeights).reduce((sum, weight) => sum + weight, 0)).toBe(1);
     const decision = createDeferredActionDecision({ assetId: "BTC", decisionTime, asOf: decisionTime });
     expect(decision.action).toBe("WAIT");
-    expect(decision.currentlyDerivableActions).toEqual(["WAIT"]);
+    expect(decision.actionDerivationStatus).toBe("WAIT_FAIL_CLOSED");
+    expect(decision.currentPortfolioState.currentWeight).toBeNull();
     expect(decision.deltaWeight).toBeNull();
   });
 });

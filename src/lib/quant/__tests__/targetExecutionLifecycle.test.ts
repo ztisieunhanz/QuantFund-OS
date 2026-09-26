@@ -610,10 +610,11 @@ describe("M14 A-04 Step 3 execution assessment and target lineage", () => {
     expect(() => createCanonicalPortfolioValuationSnapshot({ decisionTime: T0, account: account(0.2), marks: [{ assetId: "BTC", bar: bar(T0) }], dataQuality: "SYNTHETIC" })).toThrow(/requires LIVE/);
   });
 
-  it("keeps ActionDecision WAIT-only after Step 3", () => {
+  it("keeps the evidence-free ActionDecision builder fail-closed after Step 4", () => {
     const action = createDeferredActionDecision({ assetId: "BTC", decisionTime: T0, asOf: T0 });
     expect(action.action).toBe("WAIT");
-    expect(action.currentlyDerivableActions).toEqual(["WAIT"]);
+    expect(action.actionDerivationStatus).toBe("WAIT_FAIL_CLOSED");
+    expect(action.canonicalEvidence).toBeNull();
     expect(action.grantsExecutionAuthority).toBe(false);
   });
 
