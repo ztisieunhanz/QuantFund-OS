@@ -27,6 +27,12 @@ import type {
 } from "@/types/market";
 
 import { runBacktest, type BacktestDataset, type BacktestPerformanceMetrics } from "@/lib/quant/backtestEngine";
+import {
+  createDurableTargetLifecycleCheckpointFromReplay,
+  reconstructActionDecisionFromCheckpoint,
+  type DurableTargetLifecycleCheckpoint,
+} from "@/lib/quant/actionLifecyclePersistence";
+import type { ActionDecision } from "@/lib/quant/actionDecision";
 import type {
   BacktestConfig,
   DecisionState,
@@ -242,6 +248,8 @@ export class PaperEngine {
   benchmarkDca: SubBotTracker = createSubBot("benchmark_dca", "BENCHMARK_DCA", "Control · Passive DCA 5%");
   
   latestDecision: DecisionState | null = null;
+  latestLifecycleCheckpoint: DurableTargetLifecycleCheckpoint | null = null;
+  latestActionDecision: ActionDecision | null = null;
 
   reset(): void {
     this.trend = createSubBot("trend", "ADAPTIVE_TREND", "Alpha 1 · Adaptive Trend");
@@ -250,6 +258,8 @@ export class PaperEngine {
     this.omega = createSubBot("omega", "OMEGA_PORTFOLIO", "Omega · Quant Meta-Fund");
     this.benchmarkDca = createSubBot("benchmark_dca", "BENCHMARK_DCA", "Control · Passive DCA 5%");
     this.latestDecision = null;
+    this.latestLifecycleCheckpoint = null;
+    this.latestActionDecision = null;
   }
 
   /**
@@ -277,6 +287,8 @@ export class PaperEngine {
     omega: BotMetrics;
     benchmarkDca: BotMetrics;
     latestDecision: DecisionState | null;
+    lifecycleCheckpoint: DurableTargetLifecycleCheckpoint | null;
+    actionDecision: ActionDecision | null;
   } {
     // BLOCKER 2: PaperEngine independently enforces the 1H boundary.
     // The store normally prevents this path, but a direct call cannot bypass the contract.
@@ -300,6 +312,8 @@ export class PaperEngine {
         omega: toBotMetrics(this.omega, lastClosePrice),
         benchmarkDca: toBotMetrics(this.benchmarkDca, lastClosePrice),
         latestDecision: null,
+        lifecycleCheckpoint: null,
+        actionDecision: null,
       };
     }
 
@@ -328,6 +342,17 @@ export class PaperEngine {
 
       const backtestResult = runBacktest(config, dataset);
       this.latestDecision = backtestResult.timeline.at(-1) ?? null;
+      if (dataQuality === "LIVE" && this.latestDecision && backtestResult.targetLifecycleEvidence.length > 0) {
+        this.latestLifecycleCheckpoint = createDurableTargetLifecycleCheckpointFromReplay({
+          actionAssetId: "BTC",
+          lifecycleEvidence: backtestResult.targetLifecycleEvidence,
+          decisionState: this.latestDecision,
+        });
+        this.latestActionDecision = reconstructActionDecisionFromCheckpoint(
+          this.latestLifecycleCheckpoint,
+          this.latestDecision,
+        ).actionDecision;
+      }
       const perfMetrics = backtestResult.metrics;
 
       // Replay chi tiết từng bước nến sau warmup
@@ -366,9 +391,13 @@ export class PaperEngine {
         omega: toBotMetrics(this.omega, lastClosePrice, this.latestDecision, perfMetrics),
         benchmarkDca: toBotMetrics(this.benchmarkDca, lastClosePrice, this.latestDecision, perfMetrics),
         latestDecision: this.latestDecision,
+        lifecycleCheckpoint: this.latestLifecycleCheckpoint,
+        actionDecision: this.latestActionDecision,
       };
     } catch (err) {
       console.error("[QuantEngine Live Sync] Replay execution error:", err);
+      this.latestLifecycleCheckpoint = null;
+      this.latestActionDecision = null;
     }
 
     return {
@@ -378,6 +407,8 @@ export class PaperEngine {
       omega: toBotMetrics(this.omega, lastClosePrice, this.latestDecision),
       benchmarkDca: toBotMetrics(this.benchmarkDca, lastClosePrice, this.latestDecision),
       latestDecision: this.latestDecision,
+      lifecycleCheckpoint: null,
+      actionDecision: null,
     };
   }
 

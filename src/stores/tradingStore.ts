@@ -2,10 +2,9 @@
 // FILE: src/stores/tradingStore.ts
 // MODULE: QUANT TRADING & BENCHMARK STATE STORE
 //
-// GATE M7B: Persists canonical Paper Engine decision state (latestDecision)
-// with truthful restored provenance and fail-closed validation.
-// Single Canonical Ledger invariant preserved: latestDecision is the sole
-// persisted decision artifact. Derived UI metrics are recomputed on hydration.
+// GATE M7B + M14/A-04 STEP 5: Persists canonical Paper Engine DecisionState
+// plus one separately typed non-authoritative lifecycle evidence checkpoint.
+// Derived UI metrics and ActionDecision are reconstructed on hydration.
 // ============================================================================
 
 import { create } from "zustand";
@@ -14,6 +13,11 @@ import type { BotMetrics, OhlcvBar, QuantBotId, TradeFill } from "@/types/market
 import type { DecisionState, PositionRecord, SignalOutput } from "@/lib/quant/types";
 import { PaperEngine, STARTING_EQUITY } from "@/lib/paperEngine";
 import { QUANT_BAR_INTERVAL, type QuantReplayMarketContext } from "@/lib/quant/timeDomain";
+import type { ActionDecision } from "@/lib/quant/actionDecision";
+import {
+  reconstructActionDecisionFromCheckpoint,
+  type DurableTargetLifecycleCheckpoint,
+} from "@/lib/quant/actionLifecyclePersistence";
 
 const engine = new PaperEngine();
 
@@ -170,7 +174,7 @@ export function deriveMetricsFromDecision(dec: DecisionState | null): {
   };
 }
 
-interface TradingState {
+export interface TradingState {
   running: boolean;
   trend: BotMetrics;
   event: BotMetrics;
@@ -178,6 +182,8 @@ interface TradingState {
   omega: BotMetrics;
   benchmarkDca: BotMetrics;
   latestDecision: DecisionState | null;
+  lifecycleCheckpoint: DurableTargetLifecycleCheckpoint | null;
+  actionDecision: ActionDecision | null;
   lastRunAt: number | null;
   isRestored: boolean;
   restoredAt: number | null;
@@ -221,6 +227,8 @@ export const useTradingStore = create<TradingState>()(
       omega: emptyBot("omega", "Omega · Quant Meta-Fund"),
       benchmarkDca: emptyBot("benchmark_dca", "Control · Passive DCA 10%"),
       latestDecision: null,
+      lifecycleCheckpoint: null,
+      actionDecision: null,
       lastRunAt: null,
       isRestored: false,
       restoredAt: null,
@@ -236,6 +244,8 @@ export const useTradingStore = create<TradingState>()(
             omega: emptyBot("omega", "Omega · Quant Meta-Fund"),
             benchmarkDca: emptyBot("benchmark_dca", "Control · Passive DCA 10%"),
             latestDecision: null,
+            lifecycleCheckpoint: null,
+            actionDecision: null,
             lastRunAt: null,
             isRestored: false,
             restoredAt: null,
@@ -245,7 +255,16 @@ export const useTradingStore = create<TradingState>()(
 
         if (!bars || bars.length < 130) return;
 
-        const { trend, event, mean, omega, benchmarkDca, latestDecision } = engine.replay(bars, ctx);
+        const {
+          trend,
+          event,
+          mean,
+          omega,
+          benchmarkDca,
+          latestDecision,
+          lifecycleCheckpoint,
+          actionDecision,
+        } = engine.replay(bars, ctx);
         set({
           trend,
           event,
@@ -253,6 +272,8 @@ export const useTradingStore = create<TradingState>()(
           omega,
           benchmarkDca,
           latestDecision,
+          lifecycleCheckpoint,
+          actionDecision,
           lastRunAt: Date.now(),
           isRestored: false,
           restoredAt: null,
@@ -269,6 +290,8 @@ export const useTradingStore = create<TradingState>()(
           omega: emptyBot("omega", "Omega · Quant Meta-Fund"),
           benchmarkDca: emptyBot("benchmark_dca", "Control · Passive DCA 10%"),
           latestDecision: null,
+          lifecycleCheckpoint: null,
+          actionDecision: null,
           lastRunAt: null,
           isRestored: false,
           restoredAt: null,
@@ -277,10 +300,11 @@ export const useTradingStore = create<TradingState>()(
     }),
     {
       name: "quant_paper_engine_state",
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => getStorageApi()),
       partialize: (state) => ({
         latestDecision: state.latestDecision,
+        lifecycleCheckpoint: state.lifecycleCheckpoint,
         lastRunAt: state.lastRunAt,
       }),
       onRehydrateStorage: () => (hydratedState, error) => {
@@ -291,15 +315,34 @@ export const useTradingStore = create<TradingState>()(
           Number.isFinite(hydratedState.lastRunAt)
         ) {
           const derived = deriveMetricsFromDecision(hydratedState.latestDecision);
+          let lifecycleCheckpoint: DurableTargetLifecycleCheckpoint | null = null;
+          let actionDecision: ActionDecision | null = null;
+          if (hydratedState.lifecycleCheckpoint) {
+            try {
+              const restored = reconstructActionDecisionFromCheckpoint(
+                hydratedState.lifecycleCheckpoint,
+                hydratedState.latestDecision,
+              );
+              lifecycleCheckpoint = restored.checkpoint;
+              actionDecision = restored.actionDecision;
+            } catch {
+              lifecycleCheckpoint = null;
+              actionDecision = null;
+            }
+          }
           useTradingStore.setState({
             isRestored: true,
             restoredAt: Date.now(),
+            lifecycleCheckpoint,
+            actionDecision,
             ...derived,
           });
         } else {
           const empty = deriveMetricsFromDecision(null);
           useTradingStore.setState({
             latestDecision: null,
+            lifecycleCheckpoint: null,
+            actionDecision: null,
             lastRunAt: null,
             isRestored: false,
             restoredAt: null,
@@ -308,14 +351,19 @@ export const useTradingStore = create<TradingState>()(
         }
       },
       migrate: (persistedState: unknown, version: number) => {
-        if (version !== 1 || !persistedState || typeof persistedState !== "object") {
-          return { latestDecision: null, lastRunAt: null };
+        if (!persistedState || typeof persistedState !== "object") {
+          return { latestDecision: null, lifecycleCheckpoint: null, actionDecision: null, lastRunAt: null };
         }
         const p = persistedState as Record<string, unknown>;
-        if (!isValidDecisionState(p.latestDecision)) {
-          return { latestDecision: null, lastRunAt: null };
+        if (version !== 1 || !isValidDecisionState(p.latestDecision) || !Number.isFinite(p.lastRunAt)) {
+          return { latestDecision: null, lifecycleCheckpoint: null, actionDecision: null, lastRunAt: null };
         }
-        return p as Partial<TradingState>;
+        return {
+          latestDecision: p.latestDecision,
+          lastRunAt: p.lastRunAt,
+          lifecycleCheckpoint: null,
+          actionDecision: null,
+        } as Partial<TradingState>;
       },
     }
   )

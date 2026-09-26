@@ -149,13 +149,14 @@ describe("Gate M7B Paper Engine Persistence & Hydration Safety", () => {
     const parsed = JSON.parse(storedRaw!);
     expect(parsed.state.latestDecision).toEqual(mockDec);
     expect(parsed.state.lastRunAt).toBe(1758400000999);
-    expect(parsed.version).toBe(1);
+    expect(parsed.version).toBe(2);
 
     // Single Canonical Ledger Invariant: Duplicate accounting state must NOT be persisted in storage
     expect(parsed.state.omega).toBeUndefined();
     expect(parsed.state.trend).toBeUndefined();
     expect(parsed.state.event).toBeUndefined();
     expect(parsed.state.mean).toBeUndefined();
+    expect(parsed.state.actionDecision).toBeUndefined();
   });
 
   it("2 & 3 & 4. valid persisted latestDecision hydrates with exact timestamp & restored provenance", () => {
@@ -340,4 +341,3 @@ describe("Gate M7B Paper Engine Persistence & Hydration Safety", () => {
     expect(state.isRestored).toBe(false);
   });
 });
-
