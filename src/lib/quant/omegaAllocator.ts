@@ -38,6 +38,8 @@ export const DEFAULT_OMEGA_CONFIG: OmegaAllocatorConfig = {
   maxAssetWeightCap: 0.40,
 };
 
+const trustedOmegaTargets = new WeakSet<object>();
+
 type TargetMaterial = Omit<TargetPortfolioWeight, "provenance">;
 
 function targetContentMaterial(target: TargetMaterial) {
@@ -77,12 +79,33 @@ function createOmegaTargetPortfolioWeight(target: TargetMaterial, signals: reado
     omegaConfigIdentity: producerIdentity(config),
     correlationsIdentity: correlations === null ? "NONE" as const : producerIdentity(correlations),
   };
-  return immutableProducerCopy({ ...target, provenance: { ...base, targetDecisionIdentity: producerIdentity({ ...base, asOfTimestamp: target.asOfTimestamp }) } });
+  const result = immutableProducerCopy({ ...target, provenance: { ...base, targetDecisionIdentity: producerIdentity({ ...base, asOfTimestamp: target.asOfTimestamp }) } });
+  trustedOmegaTargets.add(result);
+  return result;
+}
+
+export function validateTargetPortfolioWeightArtifact(target: TargetPortfolioWeight): asserts target is ProvenancedTargetPortfolioWeight {
+  if (trustedOmegaTargets.has(target)) return;
+  const { provenance, ...material } = target;
+  if (!provenance || provenance.schemaVersion !== "M14_A04_TARGET_PROVENANCE_V1") throw new Error("Invalid target provenance contract");
+  const expectedProvenanceKeys = ["correlationsIdentity", "omegaConfigIdentity", "permissionIdentities", "riskIdentity", "schemaVersion", "signalIdentities", "targetContentIdentity", "targetDecisionIdentity"].sort();
+  if (canonicalProducerJson(Object.keys(provenance).sort()) !== canonicalProducerJson(expectedProvenanceKeys)) throw new Error("Unsupported target provenance content");
+  if (![provenance.targetContentIdentity, provenance.targetDecisionIdentity, provenance.riskIdentity, provenance.omegaConfigIdentity, provenance.correlationsIdentity].every((identity) => typeof identity === "string" && identity.length > 0)) throw new Error("Target provenance identities are required");
+  for (const identities of [provenance.signalIdentities, provenance.permissionIdentities]) {
+    if (!Array.isArray(identities) || identities.some((identity) => typeof identity !== "string" || identity.length === 0)) throw new Error("Target upstream provenance identities are invalid");
+    if (canonicalProducerJson(identities) !== canonicalProducerJson([...identities].sort())) throw new Error("Target upstream provenance identities must be canonical");
+  }
+  validateTargetMaterial(material);
+  const expectedContentIdentity = producerIdentity(targetContentMaterial(material));
+  if (provenance.targetContentIdentity !== expectedContentIdentity) throw new Error("Target content identity mismatch");
+  const { targetDecisionIdentity, ...decisionBase } = provenance;
+  const expectedDecisionIdentity = producerIdentity({ ...decisionBase, asOfTimestamp: material.asOfTimestamp });
+  if (targetDecisionIdentity !== expectedDecisionIdentity) throw new Error("Target decision identity mismatch");
 }
 
 export function validateTargetPortfolioWeight(target: TargetPortfolioWeight, signals: readonly SignalOutput[], permissions: readonly PermissionOutput[], risk: RiskOutput, correlations: unknown, config: OmegaAllocatorConfig): void {
+  validateTargetPortfolioWeightArtifact(target);
   const { provenance, ...material } = target;
-  if (!provenance || provenance.schemaVersion !== "M14_A04_TARGET_PROVENANCE_V1") throw new Error("Invalid target provenance contract");
   const rebuilt = createOmegaTargetPortfolioWeight(material, signals, permissions, risk, correlations, config);
   if (canonicalProducerJson(rebuilt.provenance) !== canonicalProducerJson(provenance)) throw new Error("Target portfolio provenance mismatch");
 }

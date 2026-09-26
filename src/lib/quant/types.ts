@@ -272,6 +272,16 @@ export interface ExecutionRecord {
   readonly slippage: number;
   readonly fees: number;
   readonly netCashImpact: number;
+  readonly lifecycleBinding?: ExecutionRecordLifecycleBinding;
+}
+
+export interface ExecutionRecordLifecycleBinding {
+  readonly schemaVersion: "M14_A04_EXECUTION_RECORD_LIFECYCLE_BINDING_V1";
+  readonly targetDecisionIdentity: string;
+  readonly activeTargetRootIdentity: string;
+  readonly preExecutionAccountIdentity: string;
+  readonly executionPlanIdentity: string;
+  readonly fillIdentity: string;
 }
 
 // ----------------------------------------------------------------------------

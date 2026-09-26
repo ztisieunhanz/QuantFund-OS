@@ -16,7 +16,7 @@ import type {
   StrategyContext,
   StrategyId,
   StrategyState,
-  TargetPortfolioWeight,
+  ProvenancedTargetPortfolioWeight,
 } from "@/lib/quant/types";
 
 import { evaluateAdaptiveTrend, updateAdaptiveTrendState, type AdaptiveTrendConfig } from "@/lib/quant/adaptiveTrend";
@@ -25,7 +25,12 @@ import { evaluateMeanReversion, updateMeanReversionState, type MeanReversionConf
 import { evaluatePermission, type PermissionGateConfig } from "@/lib/quant/permissionGate";
 import { evaluatePortfolioRisk, createInitialRiskState, type RiskEngineConfig, type RiskEngineState } from "@/lib/quant/riskEngine";
 import { evaluateOmegaAllocation, type OmegaAllocatorConfig } from "@/lib/quant/omegaAllocator";
-import { executeRebalance, type PortfolioAccountState } from "@/lib/quant/executionEngine";
+import {
+  executeRebalance,
+  type ExecutionContext,
+  type ExecutionEngineResult,
+  type PortfolioAccountState,
+} from "@/lib/quant/executionEngine";
 import {
   createCanonicalPortfolioValuationSnapshot,
   type CanonicalPortfolioValuationSnapshot,
@@ -40,6 +45,14 @@ import {
   type HistoricalDataset,
   type HistoricalContextAtTime,
 } from "@/lib/quant/historicalPit";
+import {
+  advanceActiveTargetLifecycle,
+  createActiveTargetLifecycleRoot,
+  createExecutionBoundTargetAssessment,
+  createTargetExecutionAssessment,
+  reconcileActiveTargetLifecycleExecution,
+  type ActiveTargetLifecycle,
+} from "@/lib/quant/targetExecutionLifecycle";
 
 export interface BacktestDataset {
   readonly assetBars: Readonly<Record<AssetId, readonly PointInTimeBar[]>>;
@@ -86,6 +99,22 @@ export interface BacktestResult {
   readonly timeline: readonly DecisionState[];
   readonly metrics: BacktestPerformanceMetrics;
   readonly totalBarsEvaluated: number;
+  /** Transient audit evidence only; never persisted into DecisionState or consumed as authority. */
+  readonly targetLifecycleEvidence: readonly ActiveTargetLifecycle[];
+}
+
+interface PendingCanonicalExecutionEvidence {
+  readonly lifecycle: ActiveTargetLifecycle;
+  readonly target: ProvenancedTargetPortfolioWeight;
+  readonly preExecutionAccount: PortfolioAccountState;
+  readonly assetBars: Readonly<Record<AssetId, PointInTimeBar>>;
+  readonly context: ExecutionContext;
+  readonly executionResult: ExecutionEngineResult;
+}
+
+function stripTransientLifecycleBinding(record: ExecutionRecord): ExecutionRecord {
+  const { lifecycleBinding: _transientLifecycleBinding, ...durableRecord } = record;
+  return durableRecord;
 }
 
 function getLatestMacroAsOf(
@@ -196,7 +225,9 @@ export function runBacktest(
 
   const decisionHistory: DecisionState[] = [];
   const allExecutions: ExecutionRecord[] = [];
-  let pendingRebalance: TargetPortfolioWeight | null = null;
+  const targetLifecycleEvidence: ActiveTargetLifecycle[] = [];
+  let pendingRebalance: ProvenancedTargetPortfolioWeight | null = null;
+  let activeTargetLifecycle: ActiveTargetLifecycle | null = null;
 
   for (let t = effectiveWarmup; t < primaryBars.length; t++) {
     const currentBar = primaryBars[t];
@@ -214,22 +245,41 @@ export function runBacktest(
 
     // A. XỬ LÝ KHỚP LỆNH CHỜ TẠI NEXT_BAR_OPEN
     let barExecutions: ExecutionRecord[] = [];
+    let pendingCanonicalExecutionEvidence: PendingCanonicalExecutionEvidence | null = null;
     if (config.executionRule === "NEXT_BAR_OPEN" && pendingRebalance) {
+      const preExecutionAccount = account;
+      const executionContext: ExecutionContext = {
+        decisionTimestamp: pendingRebalance.asOfTimestamp,
+        executionTimestamp: timestamp,
+        executionRule: "NEXT_BAR_OPEN",
+        commissionRate: config.commissionRate,
+        slippageConfig: config.slippageModel,
+        ...(activeTargetLifecycle ? {
+          lifecycleBinding: {
+            targetDecisionIdentity: pendingRebalance.provenance.targetDecisionIdentity,
+            activeTargetRootIdentity: activeTargetLifecycle.activeTargetRootIdentity,
+          },
+        } : {}),
+      };
       const execResult = executeRebalance(
         account,
         pendingRebalance,
         currentAssetBars,
-        {
-          decisionTimestamp: pendingRebalance.asOfTimestamp,
-          executionTimestamp: timestamp,
-          executionRule: "NEXT_BAR_OPEN",
-          commissionRate: config.commissionRate,
-          slippageConfig: config.slippageModel,
-        }
+        executionContext,
       );
+      if (activeTargetLifecycle) {
+        pendingCanonicalExecutionEvidence = {
+          lifecycle: activeTargetLifecycle,
+          target: pendingRebalance,
+          preExecutionAccount,
+          assetBars: currentAssetBars,
+          context: executionContext,
+          executionResult: execResult,
+        };
+      }
       account = execResult.updatedAccount;
-      barExecutions = [...execResult.records];
-      allExecutions.push(...execResult.records);
+      barExecutions = execResult.records.map(stripTransientLifecycleBinding);
+      allExecutions.push(...barExecutions);
       pendingRebalance = null;
     }
 
@@ -317,6 +367,22 @@ export function runBacktest(
         dataQuality: config.dataQuality,
       });
       preAllocNav = valuationSnapshot.nav;
+      if (pendingCanonicalExecutionEvidence) {
+        const executionAssessment = createExecutionBoundTargetAssessment({
+          activeTargetRootIdentity: pendingCanonicalExecutionEvidence.lifecycle.activeTargetRootIdentity,
+          target: pendingCanonicalExecutionEvidence.target,
+          preExecutionAccount: pendingCanonicalExecutionEvidence.preExecutionAccount,
+          assetBars: pendingCanonicalExecutionEvidence.assetBars,
+          context: pendingCanonicalExecutionEvidence.context,
+          executionResult: pendingCanonicalExecutionEvidence.executionResult,
+          postExecutionValuation: valuationSnapshot,
+        });
+        activeTargetLifecycle = reconcileActiveTargetLifecycleExecution(
+          pendingCanonicalExecutionEvidence.lifecycle,
+          executionAssessment,
+        );
+        targetLifecycleEvidence.push(activeTargetLifecycle);
+      }
     } else {
       for (const [id, pos] of Object.entries(account.positions)) {
         const p = currentAssetBars[id]?.close ?? 0;
@@ -349,6 +415,19 @@ export function runBacktest(
       timestamp,
       strategyConfigs.omega
     );
+
+    if (valuationSnapshot && config.executionRule === "NEXT_BAR_OPEN") {
+      const targetAssessment = createTargetExecutionAssessment({
+        valuation: valuationSnapshot,
+        target: targetWeights,
+      });
+      activeTargetLifecycle = activeTargetLifecycle
+        ? advanceActiveTargetLifecycle(activeTargetLifecycle, targetAssessment)
+        : createActiveTargetLifecycleRoot(targetAssessment);
+      targetLifecycleEvidence.push(activeTargetLifecycle);
+    } else {
+      activeTargetLifecycle = null;
+    }
 
     // G. KHỚP LỆNH MẶC ĐỊNH THEO NEXT_BAR_OPEN (HOẶC SAME_BAR_CLOSE NẾU CHỈ ĐỊNH)
     if (config.executionRule === "SAME_BAR_CLOSE") {
@@ -432,6 +511,7 @@ export function runBacktest(
     timeline: decisionHistory,
     metrics,
     totalBarsEvaluated: decisionHistory.length,
+    targetLifecycleEvidence,
   };
 }
 

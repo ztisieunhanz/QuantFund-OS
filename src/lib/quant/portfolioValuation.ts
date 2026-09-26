@@ -10,6 +10,7 @@ import {
 export const CANONICAL_PORTFOLIO_VALUATION_SCHEMA_VERSION = "M14_A04_PORTFOLIO_VALUATION_V1" as const;
 /** Floating-point reconciliation guard only; never an action/lifecycle comparison tolerance. */
 export const PORTFOLIO_WEIGHT_RECONCILIATION_TOLERANCE = 1e-12;
+const trustedCanonicalValuations = new WeakSet<object>();
 
 export interface CanonicalValuationMarkInput {
   readonly assetId: AssetId;
@@ -143,10 +144,13 @@ export function createCanonicalPortfolioValuationSnapshot(input: {
     assetWeights,
     cashWeight,
   };
-  return immutableProducerCopy({ ...material, semanticIdentity: producerIdentity(snapshotSemanticMaterial(material)) });
+  const snapshot = immutableProducerCopy({ ...material, semanticIdentity: producerIdentity(snapshotSemanticMaterial(material)) });
+  trustedCanonicalValuations.add(snapshot);
+  return snapshot;
 }
 
 export function validateCanonicalPortfolioValuationSnapshot(snapshot: CanonicalPortfolioValuationSnapshot): void {
+  if (trustedCanonicalValuations.has(snapshot)) return;
   if (snapshot.schemaVersion !== CANONICAL_PORTFOLIO_VALUATION_SCHEMA_VERSION || snapshot.boundary !== "BAR_CLOSE_AFTER_PRIOR_TARGET_EXECUTION_BEFORE_NEW_TARGET" || snapshot.priceAuthority !== "BACKTEST_DATASET_ASSET_BARS" || snapshot.dataQuality !== "LIVE") throw new Error("Invalid canonical portfolio valuation contract");
   const rebuilt = createCanonicalPortfolioValuationSnapshot({
     decisionTime: snapshot.decisionTime,

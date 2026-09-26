@@ -46,6 +46,11 @@ export function isValidDecisionState(dec: unknown): dec is DecisionState {
   if (!Number.isFinite(d.barIndex) || !Number.isFinite(d.timestamp)) return false;
   if (!Number.isFinite(d.nav) || !Number.isFinite(d.cash) || !Number.isFinite(d.currentDrawdown)) return false;
   if (!Array.isArray(d.signals)) return false;
+  if (!Array.isArray(d.executions)) return false;
+  if ("targetLifecycleEvidence" in d) return false;
+  if (d.executions.some((execution) => (
+    !execution || typeof execution !== "object" || "lifecycleBinding" in (execution as Record<string, unknown>)
+  ))) return false;
   if (!d.risk || typeof d.risk !== "object") return false;
   if (!d.targetWeights || typeof d.targetWeights !== "object") return false;
   if (!d.positions || typeof d.positions !== "object") return false;
