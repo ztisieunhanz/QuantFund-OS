@@ -7,6 +7,8 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
+import { AI_GATEWAY_MAX_BODY_BYTES } from './src/lib/aiGatewayContract';
+import { handleAiGatewayRequest } from './server/aiGateway';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
@@ -90,62 +92,36 @@ export default defineConfig(({ mode }) => {
             }
           });
 
-          // 3. HANDLER: GEMINI AI CHAT ADVISOR
+          // 3. LOCAL/DEV ADAPTER: SAME-ORIGIN AI GATEWAY CONTRACT
+          // This Vite middleware is not the final production hosting topology.
           server.middlewares.use('/api/ai-advisor', async (req, res) => {
-            if (req.method !== 'POST') {
-              res.statusCode = 405;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: { message: 'Method not allowed' } }));
-              return;
-            }
-
-            let body = '';
-            req.on('data', chunk => { body += chunk; });
+            const bodyChunks: Buffer[] = [];
+            let bodyByteLength = 0;
+            req.on('data', chunk => {
+              const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+              bodyByteLength += buffer.byteLength;
+              if (bodyByteLength <= AI_GATEWAY_MAX_BODY_BYTES) bodyChunks.push(buffer);
+            });
             req.on('end', async () => {
-              try {
-                const parsedPayload = JSON.parse(body);
-                const apiKey = (env.VITE_GEMINI_API_KEY || '').trim();
-                if (!apiKey) throw new Error('Missing VITE_GEMINI_API_KEY in environment');
-
-                const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-                let targetAiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent';
-
-                if (apiKey.startsWith('AQ.')) {
-                  authHeaders['Authorization'] = `Bearer ${apiKey}`;
-                } else if (apiKey.startsWith('AIzaSy')) {
-                  targetAiUrl = `${targetAiUrl}?key=${apiKey}`;
-                } else {
-                  authHeaders['x-goog-api-key'] = apiKey;
-                }
-
-                const forwardBody = parsedPayload.contents ? parsedPayload : {
-                  contents: [{ parts: [{ text: parsedPayload.prompt || '' }] }],
-                  generationConfig: { temperature: 0.2 }
-                };
-
-                const response = await fetch(targetAiUrl, {
-                  method: 'POST',
-                  headers: authHeaders,
-                  body: JSON.stringify(forwardBody)
-                });
-
-                const responseText = await response.text();
-                res.statusCode = response.status;
-                res.setHeader('Content-Type', 'application/json');
-                res.end(responseText);
-              } catch (err: any) {
-                res.statusCode = 500;
-                res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify({ error: { message: err.message || 'Internal Proxy Error' } }));
-              }
+              const result = await handleAiGatewayRequest(
+                {
+                  method: req.method,
+                  rawBody: Buffer.concat(bodyChunks).toString('utf8'),
+                  bodyByteLength,
+                },
+                { apiKey: env.GEMINI_API_KEY }
+              );
+              res.statusCode = result.statusCode;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify(result.body));
             });
           });
 
           // 4. NEW PIPELINE: EDGE-LLM EVENT GATEWAY
           server.middlewares.use('/api/quant-events', async (_req, res) => {
             try {
-              const apiKey = (env.VITE_GEMINI_API_KEY || '').trim();
-              if (!apiKey) throw new Error('Missing VITE_GEMINI_API_KEY');
+              const apiKey = (env.GEMINI_API_KEY || '').trim();
+              if (!apiKey) throw new Error('Missing GEMINI_API_KEY');
 
               const rssUrls = [
                 'https://api.rss2json.com/v1/api.json?rss_url=https://cointelegraph.com/rss',

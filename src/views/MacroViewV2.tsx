@@ -20,6 +20,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
+import { requestAiAdvisor } from "@/lib/aiGatewayClient";
+import { AI_GATEWAY_OPERATION } from "@/lib/aiGatewayContract";
 import { clsx } from "@/lib/clsx";
 import { buildGroundedChatbotSystemPrompt } from "@/lib/macro/chatbotGrounding";
 import { formatGoldLabel } from "@/lib/macro/helpers";
@@ -171,36 +173,19 @@ export function MacroViewV2() {
     setChatLoading(true);
 
     try {
-      const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
-      if (!apiKey) throw new Error("Missing VITE_GEMINI_API_KEY");
-
       const systemPrompt = buildGroundedChatbotSystemPrompt(snapshot);
-      const apiContents = [
-        { role: "user", parts: [{ text: systemPrompt }] },
-        { role: "model", parts: [{ text: "Đã hiểu. Tôi sẽ phân tích dựa trên dữ liệu CurrentMarketSnapshot được cung cấp." }] },
-        ...chatMessages.slice(1).map((m) => ({
-          role: m.sender === "user" ? "user" : "model",
-          parts: [{ text: m.text }],
-        })),
-        { role: "user", parts: [{ text }] },
-      ];
-
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: apiContents,
-            generationConfig: { temperature: 0.2 },
-          }),
-        }
-      );
-
-      const data = await res.json();
-      const reply =
-        data.candidates?.[0]?.content?.parts?.[0]?.text ||
-        "Xin lỗi, không thể nhận hồi đáp từ AI lúc này.";
+      const reply = await requestAiAdvisor({
+        operation: AI_GATEWAY_OPERATION,
+        messages: [
+          { role: "user", text: systemPrompt },
+          { role: "model", text: "Đã hiểu. Tôi sẽ phân tích dựa trên dữ liệu CurrentMarketSnapshot được cung cấp." },
+          ...chatMessages.slice(1).map((m) => ({
+            role: m.sender === "user" ? "user" as const : "model" as const,
+            text: m.text,
+          })),
+          { role: "user", text },
+        ],
+      });
 
       setChatMessages((prev) => [...prev, { sender: "ai", text: reply }]);
     } catch (err) {

@@ -7,6 +7,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { BrainCircuit, X, Send, Loader2, MessageSquareText, Target } from "lucide-react";
 import { clsx } from "@/lib/clsx";
+import { requestAiAdvisor } from "@/lib/aiGatewayClient";
+import { AI_GATEWAY_OPERATION } from "@/lib/aiGatewayContract";
 import { buildGroundedChatbotSystemPrompt } from "@/lib/macro/chatbotGrounding";
 import { useSnapshotStore } from "@/stores/snapshotStore";
 
@@ -107,29 +109,23 @@ export const GlobalChatbot: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
-      if (!apiKey) throw new Error("Missing API Key");
-
       const systemPrompt = buildGroundedChatbotSystemPrompt(currentSnapshot);
 
-      const apiContents = [
-        { role: "user", parts: [{ text: systemPrompt }] },
-        { role: "model", parts: [{ text: "Đã hiểu, tôi sẽ phân tích dựa trên dữ liệu CurrentMarketSnapshot được cung cấp." }] },
-        ...messages.slice(1).map((m) => ({ role: m.sender === "user" ? "user" : "model", parts: [{ text: m.text }] })),
-        { role: "user", parts: [{ text: userText }] },
-      ];
-
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: apiContents, generationConfig: { temperature: 0.2 } }),
+      const reply = await requestAiAdvisor({
+        operation: AI_GATEWAY_OPERATION,
+        messages: [
+          { role: "user", text: systemPrompt },
+          { role: "model", text: "Đã hiểu, tôi sẽ phân tích dựa trên dữ liệu CurrentMarketSnapshot được cung cấp." },
+          ...messages.slice(1).map((message) => ({
+            role: message.sender === "user" ? "user" as const : "model" as const,
+            text: message.text,
+          })),
+          { role: "user", text: userText },
+        ],
       });
-
-      const data = await response.json();
-      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Xin lỗi, không thể phân tích lúc này.";
       setMessages((prev) => [...prev, { sender: "ai", text: reply }]);
-    } catch (err) {
-      setMessages((prev) => [...prev, { sender: "ai", text: "⚠️ **Lỗi kết nối AI.** Vui lòng kiểm tra lại API Key." }]);
+    } catch {
+      setMessages((prev) => [...prev, { sender: "ai", text: "⚠️ **Lỗi kết nối AI.** Vui lòng thử lại sau." }]);
     } finally {
       setIsLoading(false);
     }
