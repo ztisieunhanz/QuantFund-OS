@@ -133,7 +133,7 @@ describe("M14 A-04 Step 1 producer provenance", () => {
     validateRiskOutput(result.risk);
     validateRiskOutputAgainstInputs(result.risk, 100, 110, benchmark, prior, result.nextState, DEFAULT_RISK_ENGINE_CONFIG);
     expect(result.risk.provenance?.valuationIdentity).toBeNull();
-    expect(result.risk.provenance?.valuationBindingStatus).toBe("DEFERRED_TO_A04_STEP_2");
+    expect(result.risk.provenance?.valuationBindingStatus).toBe("UNBOUND_NONCANONICAL_COMPATIBILITY");
     expect(() => validateRiskOutput({ ...result.risk, targetExposure: 0.123 })).toThrow(/semantic identity/);
     const changedTime = evaluatePortfolioRisk(100, 110, benchmark, prior, DEFAULT_RISK_ENGINE_CONFIG, decisionTime + 1).risk;
     const changedState = evaluatePortfolioRisk(100, 110, benchmark, { ...prior, cooldownRemainingBars: 1 }, DEFAULT_RISK_ENGINE_CONFIG, decisionTime).risk;

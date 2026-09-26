@@ -198,8 +198,8 @@ export interface RiskOutput {
 export interface RiskOutputProvenance {
   readonly schemaVersion: "M14_A04_RISK_PROVENANCE_V1";
   readonly decisionTime: number;
-  readonly valuationIdentity: null;
-  readonly valuationBindingStatus: "DEFERRED_TO_A04_STEP_2";
+  readonly valuationIdentity: string | null;
+  readonly valuationBindingStatus: "BOUND_CANONICAL_VALUATION" | "UNBOUND_NONCANONICAL_COMPATIBILITY";
   readonly navInputIdentity: string;
   readonly benchmarkPrefixIdentity: string;
   readonly priorStateIdentity: string;

@@ -10,7 +10,11 @@ import type {
   PointInTimeBar,
 } from "@/lib/quant/types";
 import { BARS_PER_YEAR } from "@/lib/quant/timeDomain";
-import { createRiskOutput } from "@/lib/quant/producerProvenance";
+import { createRiskOutput, validateRiskOutputAgainstInputs } from "@/lib/quant/producerProvenance";
+import {
+  validateCanonicalPortfolioValuationSnapshot,
+  type CanonicalPortfolioValuationSnapshot,
+} from "@/lib/quant/portfolioValuation";
 
 export interface RiskEngineConfig {
   readonly targetAnnualVolatility: number;  // Giả định chính sách (mặc định 12%)
@@ -81,7 +85,13 @@ export function evaluatePortfolioRisk(
   state: RiskEngineState,
   config: RiskEngineConfig = DEFAULT_RISK_ENGINE_CONFIG,
   decisionTime: number = benchmarkBars.at(-1)?.timestamp ?? 0,
+  valuationSnapshot: CanonicalPortfolioValuationSnapshot | null = null,
 ): { risk: ProvenancedRiskOutput; nextState: RiskEngineState } {
+  if (valuationSnapshot) {
+    validateCanonicalPortfolioValuationSnapshot(valuationSnapshot);
+    if (valuationSnapshot.decisionTime !== decisionTime) throw new Error("Risk canonical valuation decisionTime mismatch");
+    if (valuationSnapshot.nav !== currentNav) throw new Error("Risk currentNav does not match canonical valuation NAV");
+  }
   const riskFlags: string[] = [];
 
   // 1. BIẾN ĐỘNG THỰC TẾ (CÓ SÀN BIẾN ĐỘNG BẢO VỆ)
@@ -165,7 +175,21 @@ export function evaluatePortfolioRisk(
   };
 
   return {
-    risk: createRiskOutput(riskMaterial, decisionTime, currentNav, peakNav, benchmarkBars, state, nextState, config),
+    risk: createRiskOutput(riskMaterial, decisionTime, currentNav, peakNav, benchmarkBars, state, nextState, config, valuationSnapshot?.semanticIdentity ?? null),
     nextState,
   };
+}
+
+export function validateRiskOutputAgainstCanonicalValuation(
+  risk: RiskOutput,
+  valuationSnapshot: CanonicalPortfolioValuationSnapshot,
+  peakNav: number,
+  benchmarkBars: readonly PointInTimeBar[],
+  priorState: RiskEngineState,
+  nextState: RiskEngineState,
+  config: RiskEngineConfig,
+): void {
+  validateCanonicalPortfolioValuationSnapshot(valuationSnapshot);
+  if (risk.provenance?.decisionTime !== valuationSnapshot.decisionTime) throw new Error("Risk/valuation decisionTime mismatch");
+  validateRiskOutputAgainstInputs(risk, valuationSnapshot.nav, peakNav, benchmarkBars, priorState, nextState, config, valuationSnapshot.semanticIdentity);
 }

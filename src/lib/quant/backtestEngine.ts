@@ -26,8 +26,12 @@ import { evaluatePermission, type PermissionGateConfig } from "@/lib/quant/permi
 import { evaluatePortfolioRisk, createInitialRiskState, type RiskEngineConfig, type RiskEngineState } from "@/lib/quant/riskEngine";
 import { evaluateOmegaAllocation, type OmegaAllocatorConfig } from "@/lib/quant/omegaAllocator";
 import { executeRebalance, type PortfolioAccountState } from "@/lib/quant/executionEngine";
+import {
+  createCanonicalPortfolioValuationSnapshot,
+  type CanonicalPortfolioValuationSnapshot,
+} from "@/lib/quant/portfolioValuation";
 import { reconstructTradeAttribution } from "@/lib/quant/tradeAttribution";
-import { BARS_PER_YEAR, ANNUALIZATION_FACTOR } from "@/lib/quant/timeDomain";
+import { BARS_PER_YEAR, ANNUALIZATION_FACTOR, BAR_DURATION_MS } from "@/lib/quant/timeDomain";
 import {
   validateHistoricalDataset,
   normalizeHistoricalDataset,
@@ -292,10 +296,32 @@ export function runBacktest(
     ];
 
     // E. RISK ENGINE (HYSTERESIS & VOL FLOOR)
+    let valuationSnapshot: CanonicalPortfolioValuationSnapshot | null = null;
     let preAllocNav = account.cash;
-    for (const [id, pos] of Object.entries(account.positions)) {
-      const p = currentAssetBars[id]?.close ?? 0;
-      preAllocNav += pos.quantity * p;
+    if (config.dataQuality === "LIVE") {
+      // PointInTimeBar.timestamp is candle-open time. At this decision boundary
+      // the exact eligible close is the bar whose open + 1H equals timestamp;
+      // currentAssetBars are retained separately for prior-target execution.
+      const marks = Object.entries(account.positions)
+        .filter(([, position]) => position.quantity > 0)
+        .flatMap(([assetId]) => {
+          const completedBar = dataset.assetBars[assetId]?.find(
+            (bar) => bar.timestamp + BAR_DURATION_MS === timestamp
+          );
+          return completedBar ? [{ assetId, bar: completedBar }] : [];
+        });
+      valuationSnapshot = createCanonicalPortfolioValuationSnapshot({
+        decisionTime: timestamp,
+        account,
+        marks,
+        dataQuality: config.dataQuality,
+      });
+      preAllocNav = valuationSnapshot.nav;
+    } else {
+      for (const [id, pos] of Object.entries(account.positions)) {
+        const p = currentAssetBars[id]?.close ?? 0;
+        preAllocNav += pos.quantity * p;
+      }
     }
     if (preAllocNav > peakNav) peakNav = preAllocNav;
 
@@ -305,7 +331,8 @@ export function runBacktest(
       benchmarkSlice,
       riskState,
       strategyConfigs.risk,
-      timestamp
+      timestamp,
+      valuationSnapshot
     );
     riskState = updatedRiskState;
 

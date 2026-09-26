@@ -166,12 +166,14 @@ function riskSemanticMaterial(risk: RiskMaterial, provenance: Omit<RiskOutputPro
   return { ...provenance, risk };
 }
 
-export function createRiskOutput(risk: RiskMaterial, decisionTime: number, currentNav: number, peakNav: number, benchmarkBars: unknown, priorState: unknown, nextState: unknown, config: unknown): ProvenancedRiskOutput {
+export function createRiskOutput(risk: RiskMaterial, decisionTime: number, currentNav: number, peakNav: number, benchmarkBars: unknown, priorState: unknown, nextState: unknown, config: unknown, valuationIdentity: string | null = null): ProvenancedRiskOutput {
   const base = {
     schemaVersion: "M14_A04_RISK_PROVENANCE_V1" as const,
     decisionTime,
-    valuationIdentity: null,
-    valuationBindingStatus: "DEFERRED_TO_A04_STEP_2" as const,
+    valuationIdentity,
+    valuationBindingStatus: valuationIdentity === null
+      ? "UNBOUND_NONCANONICAL_COMPATIBILITY" as const
+      : "BOUND_CANONICAL_VALUATION" as const,
     navInputIdentity: producerIdentity({ currentNav, peakNav }),
     benchmarkPrefixIdentity: producerIdentity(benchmarkBars),
     priorStateIdentity: producerIdentity(priorState),
@@ -185,11 +187,14 @@ export function validateRiskOutput(risk: RiskOutput): asserts risk is RiskOutput
   const { provenance, ...material } = risk;
   if (!provenance) throw new Error("Risk provenance is required");
   const { semanticIdentity, ...base } = provenance;
-  if (provenance.schemaVersion !== "M14_A04_RISK_PROVENANCE_V1" || provenance.valuationIdentity !== null || provenance.valuationBindingStatus !== "DEFERRED_TO_A04_STEP_2") throw new Error("Invalid risk provenance contract");
+  const validValuationBinding = provenance.valuationBindingStatus === "BOUND_CANONICAL_VALUATION"
+    ? typeof provenance.valuationIdentity === "string" && provenance.valuationIdentity.length > 0
+    : provenance.valuationBindingStatus === "UNBOUND_NONCANONICAL_COMPATIBILITY" && provenance.valuationIdentity === null;
+  if (provenance.schemaVersion !== "M14_A04_RISK_PROVENANCE_V1" || !validValuationBinding) throw new Error("Invalid risk provenance contract");
   if (semanticIdentity !== producerIdentity(riskSemanticMaterial(material, base))) throw new Error("Risk semantic identity mismatch");
 }
 
-export function validateRiskOutputAgainstInputs(risk: RiskOutput, currentNav: number, peakNav: number, benchmarkBars: unknown, priorState: unknown, nextState: unknown, config: unknown): void {
+export function validateRiskOutputAgainstInputs(risk: RiskOutput, currentNav: number, peakNav: number, benchmarkBars: unknown, priorState: unknown, nextState: unknown, config: unknown, valuationIdentity: string | null = null): void {
   validateRiskOutput(risk);
-  if (risk.provenance.navInputIdentity !== producerIdentity({ currentNav, peakNav }) || risk.provenance.benchmarkPrefixIdentity !== producerIdentity(benchmarkBars) || risk.provenance.priorStateIdentity !== producerIdentity(priorState) || risk.provenance.nextStateIdentity !== producerIdentity(nextState) || risk.provenance.configIdentity !== producerIdentity(config)) throw new Error("Risk producer input identity mismatch");
+  if (risk.provenance.navInputIdentity !== producerIdentity({ currentNav, peakNav }) || risk.provenance.benchmarkPrefixIdentity !== producerIdentity(benchmarkBars) || risk.provenance.priorStateIdentity !== producerIdentity(priorState) || risk.provenance.nextStateIdentity !== producerIdentity(nextState) || risk.provenance.configIdentity !== producerIdentity(config) || risk.provenance.valuationIdentity !== valuationIdentity) throw new Error("Risk producer input identity mismatch");
 }
