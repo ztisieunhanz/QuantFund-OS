@@ -23,6 +23,10 @@ import {
   BoundedOperationalDurableStore,
   type OperationalDurableStorage,
 } from "../operationalPersistence";
+import type {
+  OperationalTelemetryClock,
+  OperationalTelemetrySink,
+} from "../operationalTelemetry";
 import {
   acquireMacroDatumWithEvidence,
   loadReliableMacroDatum,
@@ -71,6 +75,11 @@ export function resetMacroProviderReliabilityCache(): void {
   runtimeCache.clear();
 }
 
+export interface MacroUniverseOperationalOptions {
+  readonly telemetry?: OperationalTelemetrySink;
+  readonly telemetryClock?: OperationalTelemetryClock;
+}
+
 async function loadDirect(opts?: AdapterOptions): Promise<MarketSnapshotData> {
   const [dxy, us2y, us10y, vix, gold, btc, vnindex, breadth, liquidity, foreignFlow] =
     await Promise.all([
@@ -94,7 +103,8 @@ async function loadDirect(opts?: AdapterOptions): Promise<MarketSnapshotData> {
  * Pure Layer 1 Data Ingestion — does NOT run regime scoring, asset allocation, or chatbot logic.
  */
 export async function loadMacroUniverseV2(
-  opts?: AdapterOptions
+  opts?: AdapterOptions,
+  operational?: MacroUniverseOperationalOptions
 ): Promise<MarketSnapshotData> {
   // Explicitly injected adapters retain direct deterministic behavior for tests
   // and callers that own their transport policy. The active runtime path uses
@@ -128,6 +138,8 @@ export async function loadMacroUniverseV2(
     }),
     cache: runtimeCache as BoundedOperationalProviderCache<AvailableMacroDatum<T>>,
     durableStore: durableStore as BoundedOperationalDurableStore<AvailableMacroDatum<T>> | null ?? undefined,
+    telemetry: operational?.telemetry,
+    telemetryClock: operational?.telemetryClock,
   });
 
   const [dxy, us2y, us10y, vix, gold, btc, vnindex, breadth, liquidity, foreignFlow] =

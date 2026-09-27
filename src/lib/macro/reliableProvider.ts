@@ -12,6 +12,15 @@ import {
   type OperationalWait,
 } from "../operationalReliability";
 import { BoundedOperationalDurableStore } from "../operationalPersistence";
+import {
+  createCacheTelemetry,
+  createPersistenceTelemetry,
+  createProviderAttemptTelemetry,
+  createResultTelemetry,
+  emitOperationalTelemetry,
+  type OperationalTelemetryClock,
+  type OperationalTelemetrySink,
+} from "../operationalTelemetry";
 import type { FetchFn, FetchResponse } from "./adapters";
 import type { AvailableMacroDatum, MacroDatum, UnavailableMacroDatum } from "./types";
 
@@ -28,6 +37,8 @@ export interface ReliableMacroDatumOptions<T> {
   readonly cache: BoundedOperationalProviderCache<AvailableMacroDatum<T>>;
   readonly durableStore?: BoundedOperationalDurableStore<AvailableMacroDatum<T>>;
   readonly wait?: OperationalWait;
+  readonly telemetry?: OperationalTelemetrySink;
+  readonly telemetryClock?: OperationalTelemetryClock;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -249,6 +260,18 @@ function markCachedDatumStale<T>(datum: AvailableMacroDatum<T>): AvailableMacroD
   return Object.freeze({ ...datum, quality: "STALE" });
 }
 
+function telemetryNow(options: Readonly<{
+  referenceTimeMs: number;
+  telemetryClock?: OperationalTelemetryClock;
+}>): number {
+  try {
+    const value = options.telemetryClock?.now() ?? Date.now();
+    return Number.isFinite(value) && value >= 0 ? value : options.referenceTimeMs;
+  } catch {
+    return options.referenceTimeMs;
+  }
+}
+
 /**
  * Reliability wrapper for active Macro V2 reads. Fresh cache hits avoid a
  * provider call. Stale cache evidence triggers bounded acquisition; it is used
@@ -264,12 +287,28 @@ export async function loadReliableMacroDatum<T>(
     freshnessMaxAgeMs: options.freshnessMaxAgeMs,
   });
 
+  emitOperationalTelemetry(options.telemetry, () => createCacheTelemetry({
+    dependency: options.metricId,
+    recordedAt: telemetryNow(options),
+    outcome: cached === null
+      ? "MISS"
+      : cached.result.freshness.status === "WITHIN_THRESHOLD" ? "FRESH_HIT" : "STALE_HIT",
+  }));
+
   if (cached === null && options.durableStore !== undefined) {
-    const recovered = options.durableStore.recover({
+    const recovery = options.durableStore.recoverWithOutcome({
       identity,
       recoveredAt: options.referenceTimeMs,
       freshnessMaxAgeMs: options.freshnessMaxAgeMs,
     });
+    const recovered = recovery.result;
+    emitOperationalTelemetry(options.telemetry, () => createPersistenceTelemetry({
+      dependency: options.metricId,
+      recordedAt: telemetryNow(options),
+      operation: "RECOVER",
+      outcome: recovery.outcome,
+      freshness: recovered?.freshness.status ?? null,
+    }));
     if (recovered !== null) {
       options.cache.write(recovered);
       cached = options.cache.read({
@@ -277,6 +316,13 @@ export async function loadReliableMacroDatum<T>(
         cacheReadAt: options.referenceTimeMs,
         freshnessMaxAgeMs: options.freshnessMaxAgeMs,
       });
+      emitOperationalTelemetry(options.telemetry, () => createCacheTelemetry({
+        dependency: options.metricId,
+        recordedAt: telemetryNow(options),
+        outcome: recovered.freshness.status === "WITHIN_THRESHOLD"
+          ? "RECOVERED_FRESH"
+          : "RECOVERED_STALE",
+      }));
     }
   }
 
@@ -292,10 +338,11 @@ export async function loadReliableMacroDatum<T>(
     },
     wait: options.wait,
     attempt: async (attemptNumber) => {
+      const startedAt = telemetryNow(options);
       const acquisition = await options.acquire(attemptNumber);
       if (acquisition.failure === null) {
         const datum = acquisition.datum;
-        return createOperationalProviderSuccess({
+        const result = createOperationalProviderSuccess({
           identity,
           data: datum,
           sourceClassification: datum.sourceClassification,
@@ -303,11 +350,24 @@ export async function loadReliableMacroDatum<T>(
           retrievedAt: datum.fetchedAt,
           freshnessMaxAgeMs: options.freshnessMaxAgeMs,
         });
+        const completedAt = telemetryNow(options);
+        emitOperationalTelemetry(options.telemetry, () => createProviderAttemptTelemetry({
+          dependency: options.metricId,
+          recordedAt: completedAt,
+          attempt: attemptNumber,
+          durationMs: Math.max(0, completedAt - startedAt),
+          outcome: "SUCCESS",
+          freshness: result.freshness.status,
+          failureClass: null,
+          retryDisposition: null,
+          isRateLimited: false,
+        }));
+        return result;
       }
 
       const datum = acquisition.datum;
       finalUnavailable = datum;
-      return createOperationalProviderFailure({
+      const result = createOperationalProviderFailure({
         identity,
         evidence: acquisition.failure.evidence,
         occurredAt: options.referenceTimeMs,
@@ -316,21 +376,53 @@ export async function loadReliableMacroDatum<T>(
           message: acquisition.failure.diagnosticMessage,
         },
       });
+      const completedAt = telemetryNow(options);
+      emitOperationalTelemetry(options.telemetry, () => createProviderAttemptTelemetry({
+        dependency: options.metricId,
+        recordedAt: completedAt,
+        attempt: attemptNumber,
+        durationMs: Math.max(0, completedAt - startedAt),
+        outcome: "FAILURE",
+        freshness: null,
+        failureClass: result.failureClass,
+        retryDisposition: result.retryDisposition,
+        isRateLimited: result.isRateLimited,
+      }));
+      return result;
     },
   });
 
   if (execution.result.kind === "SUCCESS") {
     options.cache.write(execution.result);
-    options.durableStore?.persist(execution.result);
+    if (options.durableStore !== undefined) {
+      const persistence = options.durableStore.persistWithOutcome(execution.result);
+      emitOperationalTelemetry(options.telemetry, () => createPersistenceTelemetry({
+        dependency: options.metricId,
+        recordedAt: telemetryNow(options),
+        operation: "WRITE",
+        outcome: persistence.outcome,
+        freshness: execution.result.kind === "SUCCESS" ? execution.result.freshness.status : null,
+      }));
+    }
     return execution.result.data;
   }
 
   if (cached !== null) {
+    emitOperationalTelemetry(options.telemetry, () => createResultTelemetry({
+      dependency: options.metricId,
+      recordedAt: telemetryNow(options),
+      outcome: "STALE_FALLBACK",
+    }));
     return markCachedDatumStale(cached.result.data);
   }
 
   if (finalUnavailable === null) {
     throw new Error("Macro provider reliability execution produced no datum.");
   }
+  emitOperationalTelemetry(options.telemetry, () => createResultTelemetry({
+    dependency: options.metricId,
+    recordedAt: telemetryNow(options),
+    outcome: "UNAVAILABLE",
+  }));
   return finalUnavailable;
 }

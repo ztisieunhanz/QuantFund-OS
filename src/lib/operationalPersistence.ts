@@ -38,6 +38,19 @@ interface DurableDocument<T> {
   readonly entries: readonly DurableEntry<T>[];
 }
 
+export type OperationalDurableRecoveryOutcome = "RECOVERED" | "MISS" | "REJECTED" | "FAILED";
+export type OperationalDurablePersistenceOutcome = "WRITTEN" | "UNCHANGED" | "REJECTED" | "FAILED";
+
+export interface OperationalDurableRecovery<T> {
+  readonly outcome: OperationalDurableRecoveryOutcome;
+  readonly result: OperationalProviderSuccess<T> | null;
+}
+
+export interface OperationalDurablePersistence {
+  readonly outcome: OperationalDurablePersistenceOutcome;
+  readonly persisted: boolean;
+}
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
@@ -174,16 +187,48 @@ export class BoundedOperationalDurableStore<T> {
     }
   }
 
+  private readDocumentWithOutcome(): Readonly<{
+    outcome: "READ" | "REJECTED" | "FAILED";
+    document: DurableDocument<T> | null;
+  }> {
+    let raw: string | null;
+    try {
+      raw = this.storage.getItem(this.storageKey);
+    } catch {
+      return Object.freeze({ outcome: "FAILED", document: null });
+    }
+    const document = this.parseDocument(raw);
+    return document === null
+      ? Object.freeze({ outcome: "REJECTED", document: null })
+      : Object.freeze({ outcome: "READ", document });
+  }
+
   recover(input: {
     readonly identity: OperationalProviderRequestIdentity;
     readonly recoveredAt: number;
     readonly freshnessMaxAgeMs: number;
   }): OperationalProviderSuccess<T> | null {
-    if (!Number.isFinite(input.recoveredAt) || input.recoveredAt <= 0) return null;
-    const document = this.readDocument();
-    if (document === null) return null;
+    return this.recoverWithOutcome(input).result;
+  }
+
+  recoverWithOutcome(input: {
+    readonly identity: OperationalProviderRequestIdentity;
+    readonly recoveredAt: number;
+    readonly freshnessMaxAgeMs: number;
+  }): OperationalDurableRecovery<T> {
+    if (!Number.isFinite(input.recoveredAt) || input.recoveredAt <= 0) {
+      return Object.freeze({ outcome: "REJECTED", result: null });
+    }
+    const read = this.readDocumentWithOutcome();
+    if (read.outcome === "FAILED") return Object.freeze({ outcome: "FAILED", result: null });
+    if (read.outcome === "REJECTED") return Object.freeze({ outcome: "REJECTED", result: null });
+    if (read.document === null) return Object.freeze({ outcome: "REJECTED", result: null });
+    const document = read.document;
     const entry = document.entries.find((candidate) => sameIdentity(candidate.identity, input.identity));
-    if (entry === undefined || entry.observedAt > input.recoveredAt) return null;
+    if (entry === undefined) return Object.freeze({ outcome: "MISS", result: null });
+    if (entry.observedAt > input.recoveredAt) {
+      return Object.freeze({ outcome: "REJECTED", result: null });
+    }
 
     const recovered = createOperationalProviderSuccess({
       identity: entry.identity,
@@ -193,7 +238,7 @@ export class BoundedOperationalDurableStore<T> {
       retrievedAt: entry.retrievedAt,
       freshnessMaxAgeMs: input.freshnessMaxAgeMs,
     });
-    return Object.freeze({
+    const result = Object.freeze({
       ...recovered,
       freshness: classifyOperationalFreshness({
         observedAt: entry.observedAt,
@@ -201,23 +246,30 @@ export class BoundedOperationalDurableStore<T> {
         maxAgeMs: input.freshnessMaxAgeMs,
       }),
     });
+    return Object.freeze({ outcome: "RECOVERED", result });
   }
 
   persist(result: OperationalProviderResult<T>): boolean {
-    if (result.kind !== "SUCCESS" || result.observedAt === null) return false;
+    return this.persistWithOutcome(result).persisted;
+  }
+
+  persistWithOutcome(result: OperationalProviderResult<T>): OperationalDurablePersistence {
+    if (result.kind !== "SUCCESS" || result.observedAt === null) {
+      return Object.freeze({ outcome: "REJECTED", persisted: false });
+    }
     const parsedData = this.codec.parse(result.data);
     if (
       parsedData === null ||
       !Number.isFinite(result.observedAt) || result.observedAt <= 0 ||
       !Number.isFinite(result.retrievedAt) || result.retrievedAt <= 0 ||
       result.observedAt > result.retrievedAt
-    ) return false;
+    ) return Object.freeze({ outcome: "REJECTED", persisted: false });
     if (
       !sameIdentity(this.codec.identityFor(parsedData), result.identity) ||
       this.codec.provenanceFor(parsedData) !== result.sourceClassification ||
       this.codec.observedAtFor(parsedData) !== result.observedAt ||
       this.codec.retrievedAtFor(parsedData) !== result.retrievedAt
-    ) return false;
+    ) return Object.freeze({ outcome: "REJECTED", persisted: false });
 
     const current = this.readDocument();
     const entries = current?.entries ? [...current.entries] : [];
@@ -237,7 +289,7 @@ export class BoundedOperationalDurableStore<T> {
       if (
         existing.retrievedAt > nextEntry.retrievedAt ||
         (existing.retrievedAt === nextEntry.retrievedAt && existing.observedAt > nextEntry.observedAt)
-      ) return true;
+      ) return Object.freeze({ outcome: "UNCHANGED", persisted: true });
       entries.splice(existingIndex, 1);
     }
     entries.push(nextEntry);
@@ -252,9 +304,9 @@ export class BoundedOperationalDurableStore<T> {
 
     try {
       this.storage.setItem(this.storageKey, JSON.stringify(document));
-      return true;
+      return Object.freeze({ outcome: "WRITTEN", persisted: true });
     } catch {
-      return false;
+      return Object.freeze({ outcome: "FAILED", persisted: false });
     }
   }
 }
