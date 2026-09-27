@@ -5,6 +5,7 @@ const VIEW_TITLE = {
   macro: "MACRO REGIME / ASSET ALLOCATION",
   charts: "TECHNICAL CHARTING / BTCUSDT",
   lab: "CANONICAL PAPER ACTION / PORTFOLIO STATE",
+  research: "CANONICAL RESEARCH EVIDENCE / RULES",
 } as const;
 
 export function Header() {

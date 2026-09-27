@@ -6,7 +6,7 @@
 import type { OrderSide, PositionSide } from "@/lib/quant/types";
 export type { PositionSide } from "@/lib/quant/types";
 
-export type ViewId = "macro" | "charts" | "lab";
+export type ViewId = "macro" | "charts" | "lab" | "research";
 
 export interface OhlcvBar {
   readonly time: number; // Giây hoặc ms

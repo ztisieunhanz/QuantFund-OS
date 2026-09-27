@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { useUiStore } from "@/stores/uiStore";
 import { ChartView } from "@/views/ChartView";
 import { MacroViewV2 } from "@/views/MacroViewV2";
+import { ResearchRulesView } from "@/views/ResearchRulesView";
 import { TradingLabView } from "@/views/TradingLabView";
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
           {view === "macro" ? <MacroViewV2 /> : null}
           {view === "charts" ? <ChartView /> : null}
           {view === "lab" ? <TradingLabView /> : null}
+          {view === "research" ? <ResearchRulesView /> : null}
           <div className="scanlines absolute inset-0 pointer-events-none" />
         </main>
       </div>
