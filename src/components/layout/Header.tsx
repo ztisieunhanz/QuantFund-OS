@@ -4,7 +4,7 @@ import { useUiStore } from "@/stores/uiStore";
 const VIEW_TITLE = {
   macro: "MACRO REGIME / ASSET ALLOCATION",
   charts: "TECHNICAL CHARTING / BTCUSDT",
-  lab: "MICRO BOT PAPER TRADING LAB",
+  lab: "CANONICAL PAPER ACTION / PORTFOLIO STATE",
 } as const;
 
 export function Header() {

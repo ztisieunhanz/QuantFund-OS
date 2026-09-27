@@ -9,7 +9,7 @@ interface UiState {
 }
 
 export const useUiStore = create<UiState>((set) => ({
-  view: "macro",
+  view: "lab",
   clock: Date.now(),
   setView: (view) => set({ view }),
   tickClock: () => set({ clock: Date.now() }),

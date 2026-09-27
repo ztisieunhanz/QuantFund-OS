@@ -22,6 +22,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
+import { ActionDecisionCard } from "@/components/ActionDecisionCard";
 import { clsx } from "@/lib/clsx";
 import { FEE_BPS, STARTING_EQUITY } from "@/lib/paperEngine";
 import { QUANT_BAR_INTERVAL } from "@/lib/quant/timeDomain";
@@ -44,6 +45,7 @@ export function TradingLabView() {
   const omega = useTradingStore((s) => s.omega);
   const benchmarkDca = useTradingStore((s) => s.benchmarkDca);
   const latestDecision = useTradingStore((s) => s.latestDecision);
+  const actionDecision = useTradingStore((s) => s.actionDecision);
   const runOnBars = useTradingStore((s) => s.runOnBars);
   const resetTrading = useTradingStore((s) => s.reset);
   const lastRunAt = useTradingStore((s) => s.lastRunAt);
@@ -127,6 +129,8 @@ export function TradingLabView() {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-3 bg-[#07090d]">
+      <ActionDecisionCard decision={actionDecision} />
+
       {/* 1. THANH TELEMETRY HUD CHUẨN ĐỒNG BỘ */}
       <div className="flex flex-wrap items-center justify-between border border-line bg-panel px-3 py-2 font-mono text-[11px] rounded-sm gap-2">
         <div className="flex flex-wrap items-center gap-4 sm:gap-6">

@@ -10,9 +10,9 @@ import { useUiStore } from "@/stores/uiStore";
 import type { ViewId } from "@/types/market";
 
 const NAV: Array<{ id: ViewId; label: string; blurb: string; icon: typeof Globe2 }> = [
+  { id: "lab", label: "PAPER ACTION", blurb: "Canonical decision", icon: Cpu },
   { id: "macro", label: "MACRO", blurb: "Regime & Allocation", icon: Globe2 },
   { id: "charts", label: "CHARTS", blurb: "BTCUSDT · Indicators", icon: CandlestickChart },
-  { id: "lab", label: "PAPER LAB", blurb: "Multi-bot sandbox", icon: Cpu },
 ];
 
 export function Sidebar() {
