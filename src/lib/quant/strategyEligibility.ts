@@ -334,13 +334,20 @@ function rebuild(
   hypothesisRegistry: HypothesisRegistrySnapshot,
   evidenceRegistry: ResearchEvidenceRegistrySnapshot
 ): StrategyEligibilityRegistrySnapshot {
-  serializeHypothesisRegistry(hypothesisRegistry);
-  validateResearchEvidenceRegistry(evidenceRegistry);
-  evidenceRegistry.entries.forEach((entry) => validateScientificBinding(hypothesisRegistry, entry));
+  validateResearchEvidenceScientificBindings(hypothesisRegistry, evidenceRegistry);
   return snapshotFor(
     evidenceRegistry,
     evidenceRegistry.entries.map((entry) => recordFor(evidenceRegistry, entry))
   );
+}
+
+export function validateResearchEvidenceScientificBindings(
+  hypothesisRegistry: HypothesisRegistrySnapshot,
+  evidenceRegistry: ResearchEvidenceRegistrySnapshot
+): void {
+  serializeHypothesisRegistry(hypothesisRegistry);
+  validateResearchEvidenceRegistry(evidenceRegistry);
+  evidenceRegistry.entries.forEach((entry) => validateScientificBinding(hypothesisRegistry, entry));
 }
 
 export function createStrategyEligibilityRegistry(
