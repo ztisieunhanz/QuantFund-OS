@@ -7,9 +7,9 @@ import { clsx } from "@/lib/clsx";
 
 function Identity({ label, value }: { label: string; value: string }) {
   return (
-    <div>
+    <div className="min-w-0">
       <div className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted">{label}</div>
-      <div className="mt-1 break-all font-mono text-[10px] leading-4 text-ink">{value}</div>
+      <div className="mt-1 break-all font-mono text-[10px] leading-4 text-ink" title={value}>{value}</div>
     </div>
   );
 }
@@ -27,7 +27,7 @@ export function ResearchRulesView() {
       <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-[#07090d] p-3">
         <Panel title="Research / Rules" right="READ-ONLY · CANONICAL SOURCE">
           <div className="flex min-h-[320px] items-center justify-center">
-            <div className="max-w-2xl border border-amber/35 bg-amber/5 p-6 text-center">
+            <div className="w-full max-w-2xl min-w-0 border border-amber/35 bg-amber/5 p-4 text-center sm:p-6">
               <Database className="mx-auto text-amber" size={28} />
               <h1 className="mt-4 font-mono text-sm font-semibold tracking-[0.12em] text-ink">
                 {presentation.title}
@@ -89,8 +89,8 @@ export function ResearchRulesView() {
           title={`${entry.hypothesisId} · ${entry.assetId}`}
           right={`${entry.hypothesisVersion} · ${entry.ruleId}@${entry.ruleVersion}`}
         >
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-            <div className="space-y-4">
+          <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+            <div className="min-w-0 space-y-4">
               <div>
                 <h2 className="font-mono text-sm font-semibold text-ink">{entry.hypothesisTitle}</h2>
                 <p className="mt-1 text-xs leading-5 text-muted">{entry.hypothesisDescription}</p>
@@ -125,19 +125,19 @@ export function ResearchRulesView() {
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <div className="font-mono text-[9px] tracking-[0.16em] text-muted">TRAIN INTERVAL</div>
-                  <div className="mt-1 font-mono text-[10px] text-ink">{entry.trainingInterval}</div>
+                  <div className="mt-1 break-words font-mono text-[10px] text-ink">{entry.trainingInterval}</div>
                 </div>
                 <div>
                   <div className="font-mono text-[9px] tracking-[0.16em] text-muted">OOS INTERVAL</div>
-                  <div className="mt-1 font-mono text-[10px] text-ink">{entry.oosInterval}</div>
+                  <div className="mt-1 break-words font-mono text-[10px] text-ink">{entry.oosInterval}</div>
                 </div>
                 <div>
                   <div className="font-mono text-[9px] tracking-[0.16em] text-muted">STATEFUL OOS POLICY</div>
-                  <div className="mt-1 font-mono text-[10px] text-ink">{entry.statefulOosBoundaryPolicy}</div>
+                  <div className="mt-1 break-words font-mono text-[10px] text-ink">{entry.statefulOosBoundaryPolicy}</div>
                 </div>
                 <div>
                   <div className="font-mono text-[9px] tracking-[0.16em] text-muted">DECLARED PARAMETERS</div>
-                  <div className="mt-1 font-mono text-[10px] text-ink">
+                  <div className="mt-1 break-words font-mono text-[10px] text-ink">
                     {entry.declaredParameters.length > 0 ? entry.declaredParameters.join(" · ") : "NONE"}
                   </div>
                 </div>
@@ -147,7 +147,7 @@ export function ResearchRulesView() {
                 <div className="font-mono text-[9px] tracking-[0.16em] text-muted">CLASSIFICATION REASONS</div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {entry.classificationReasons.map((reason) => (
-                    <span key={reason} className="border border-line bg-panel-2 px-2 py-1 font-mono text-[9px] text-ink">
+                    <span key={reason} className="max-w-full break-words border border-line bg-panel-2 px-2 py-1 font-mono text-[9px] text-ink">
                       {reason}
                     </span>
                   ))}
@@ -166,7 +166,7 @@ export function ResearchRulesView() {
               </div>
             </div>
 
-            <div className="space-y-4 border-t border-line pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0">
+            <div className="min-w-0 space-y-4 border-t border-line pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0">
               <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.14em] text-cyan">
                 <Link2 size={13} /> CANONICAL IDENTITIES / PROVENANCE
               </div>
@@ -177,7 +177,7 @@ export function ResearchRulesView() {
               <Identity label="Evidence identity" value={entry.evidenceSemanticIdentity} />
               <div>
                 <div className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted">Shared-OOS robustness</div>
-                <div className="mt-1 font-mono text-[10px] leading-4 text-ink">
+                <div className="mt-1 break-words font-mono text-[10px] leading-4 text-ink">
                   {entry.robustness
                     ? `${entry.robustness.familyId}@${entry.robustness.familyVersion} · ${entry.robustness.familyCompleteness} · ${entry.robustness.memberCompleteness} · ${entry.robustness.interpretation}`
                     : "NOT_PUBLISHED"}

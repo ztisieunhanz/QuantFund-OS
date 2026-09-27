@@ -24,6 +24,7 @@ import { requestAiAdvisor } from "@/lib/aiGatewayClient";
 import { AI_GATEWAY_OPERATION } from "@/lib/aiGatewayContract";
 import { clsx } from "@/lib/clsx";
 import { buildAiAdvisorGrounding } from "@/lib/aiAdvisorGroundingProjection";
+import { createChatRequestCoordinator } from "@/lib/chatRequestCoordinator";
 import { formatGoldLabel } from "@/lib/macro/helpers";
 import type {
   AvailableMacroDatum,
@@ -156,6 +157,11 @@ export function MacroViewV2() {
   ]);
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const requestCoordinatorRef = useRef(createChatRequestCoordinator());
+
+  useEffect(() => () => {
+    requestCoordinatorRef.current.dispose();
+  }, []);
 
   useEffect(() => {
     if (!snapshot) {
@@ -168,7 +174,8 @@ export function MacroViewV2() {
   }, [chatMessages]);
 
   const handleSendChat = async (userText: string) => {
-    if (!userText.trim() || chatLoading || !snapshot) return;
+    if (!userText.trim() || !snapshot) return;
+    const { requestId } = requestCoordinatorRef.current.begin();
     const text = userText.trim();
     setChatInput("");
     setChatMessages((prev) => [...prev, { sender: "user", text }]);
@@ -187,17 +194,24 @@ export function MacroViewV2() {
         ],
       });
 
-      setChatMessages((prev) => [...prev, { sender: "ai", text: reply }]);
-    } catch (err) {
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          sender: "ai",
-          text: `⚠️ **Lỗi kết nối AI:** ${err instanceof Error ? err.message : "Vui lòng kiểm tra lại API key hoặc mạng."}`,
-        },
-      ]);
+      if (requestCoordinatorRef.current.isCurrent(requestId)) {
+        setChatMessages((prev) => [...prev, { sender: "ai", text: reply }]);
+      }
+    } catch {
+      if (requestCoordinatorRef.current.isCurrent(requestId)) {
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            sender: "ai",
+            text: "Yêu cầu AI không thành công. Đây là lỗi request, không phải trạng thái ActionDecision. Vui lòng thử lại sau.",
+          },
+        ]);
+      }
     } finally {
-      setChatLoading(false);
+      if (requestCoordinatorRef.current.isCurrent(requestId)) {
+        requestCoordinatorRef.current.finish(requestId);
+        setChatLoading(false);
+      }
     }
   };
 
@@ -243,12 +257,12 @@ export function MacroViewV2() {
   ];
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-auto p-4 bg-[#07090d] text-slate-100 custom-scrollbar font-sans">
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-auto bg-[#07090d] p-3 font-sans text-slate-100 custom-scrollbar sm:p-4">
       {/* HEADER BAR */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#1c2736] pb-3 shrink-0">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-lg font-bold text-white tracking-wide">Macro V2 Intelligence & Decision Synthesis</h1>
+            <h1 className="break-words text-lg font-bold tracking-wide text-white">Macro V2 Intelligence & Decision Synthesis</h1>
             <StatusBadge status={synthesis?.status ?? "INSUFFICIENT_DATA"} />
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
@@ -526,7 +540,7 @@ export function MacroViewV2() {
       {/* 5. GROUNDED CHATBOT EMBEDDED SURFACE */}
       <Panel
         title="GROUNDED AI QUANT ADVISOR (ACTIONDECISION AUTHORITY)"
-        className="shrink-0 mt-2 mb-6 flex flex-col h-[500px] border-[#1c2736]"
+        className="mb-6 mt-2 flex h-[500px] min-w-0 shrink-0 flex-col border-[#1c2736]"
       >
         <div className="border-b border-[#1c2736] bg-[#0f141d] px-4 py-2 text-[10px] font-mono uppercase tracking-wider text-slate-400">
           Canonical action: <span className={actionDecision ? "text-cyan" : "text-amber-400"}>{actionDecision?.action ?? "UNAVAILABLE"}</span>
@@ -537,13 +551,13 @@ export function MacroViewV2() {
             <div
               key={idx}
               className={clsx(
-                "flex flex-col max-w-[85%]",
+                "flex min-w-0 max-w-[85%] flex-col",
                 msg.sender === "user" ? "ml-auto items-end" : "mr-auto items-start"
               )}
             >
               <div
                 className={clsx(
-                  "p-3.5 rounded-xl text-xs leading-relaxed shadow-sm",
+                  "min-w-0 break-words p-3.5 rounded-xl text-xs leading-relaxed shadow-sm",
                   msg.sender === "user"
                     ? "bg-cyan/20 border border-cyan/40 text-cyan rounded-br-none"
                     : "bg-[#121824] border border-[#1c2736] text-slate-200 rounded-bl-none whitespace-pre-wrap"
@@ -554,7 +568,7 @@ export function MacroViewV2() {
             </div>
           ))}
           {chatLoading && (
-            <div className="flex items-center gap-2 text-cyan text-xs p-2">
+            <div className="flex items-center gap-2 text-cyan text-xs p-2" role="status" aria-live="polite">
               <Loader2 size={16} className="animate-spin" /> Trợ lý AI đang suy luận trên CurrentMarketSnapshot...
             </div>
           )}
@@ -566,18 +580,18 @@ export function MacroViewV2() {
             e.preventDefault();
             handleSendChat(chatInput);
           }}
-          className="p-3 bg-[#0f141d] border-t border-[#1c2736] flex gap-3"
+          className="flex flex-col gap-2 border-t border-[#1c2736] bg-[#0f141d] p-3 sm:flex-row sm:gap-3"
         >
           <input
             type="text"
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
             placeholder="Hỏi AI Advisor dựa trên dữ liệu CurrentMarketSnapshot..."
-            className="flex-1 bg-[#07090d] border border-[#1c2736] text-white px-4 py-2.5 rounded text-xs font-sans focus:outline-none focus:border-cyan"
+            className="min-w-0 flex-1 bg-[#07090d] border border-[#1c2736] text-white px-4 py-2.5 rounded text-xs font-sans focus:outline-none focus:border-cyan disabled:opacity-60"
           />
           <button
             type="submit"
-            disabled={chatLoading || !chatInput.trim()}
+            disabled={!chatInput.trim()}
             className="px-4 py-2.5 bg-cyan hover:bg-cyan/80 text-[#07090d] font-bold text-xs rounded flex items-center gap-1.5 transition-colors disabled:opacity-50"
           >
             <Send size={14} /> Gửi

@@ -200,4 +200,17 @@ describe("P16-A canonical ActionDecision presentation", () => {
     expect(formatActionWeight(0.025, true)).toBe("+2.50%");
     expect(formatActionTime(DECISION_TIME)).toBe("2026-09-27 08:00:00 UTC");
   });
+
+  it("contains long canonical identity and decision content without page-level overflow", () => {
+    const decision = canonicalDecision("WAIT", {
+      semanticIdentity: `canonical-${"identity".repeat(40)}`,
+      contradictions: Object.freeze(["CANONICAL_EVIDENCE_TIME_MISMATCH"]),
+    });
+    const html = render(decision);
+
+    expect(html).toContain("break-all");
+    expect(html).toContain("break-words");
+    expect(html).toContain("sm:grid-cols-3");
+    expect(presentActionDecision(decision).action).toBe("WAIT");
+  });
 });

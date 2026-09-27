@@ -10,6 +10,7 @@ import { clsx } from "@/lib/clsx";
 import { requestAiAdvisor } from "@/lib/aiGatewayClient";
 import { AI_GATEWAY_OPERATION } from "@/lib/aiGatewayContract";
 import { buildAiAdvisorGrounding } from "@/lib/aiAdvisorGroundingProjection";
+import { createChatRequestCoordinator } from "@/lib/chatRequestCoordinator";
 import { useSnapshotStore } from "@/stores/snapshotStore";
 import { useTradingStore } from "@/stores/tradingStore";
 
@@ -18,6 +19,30 @@ const CHAT_EXPIRY_MS = 60 * 60 * 1000;
 interface Message {
   sender: "user" | "ai";
   text: string;
+  kind?: "response" | "request-error" | "system";
+}
+
+function isMessage(value: unknown): value is Message {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (candidate.sender === "user" || candidate.sender === "ai")
+    && typeof candidate.text === "string"
+    && (candidate.kind === undefined
+      || candidate.kind === "response"
+      || candidate.kind === "request-error"
+      || candidate.kind === "system");
+}
+
+function InlineMessage({ text }: { readonly text: string }) {
+  return text.split(/(\*\*.*?\*\*|\*.*?\*)/gu).map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={index} className="font-bold text-white">{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*")) {
+      return <em key={index} className="italic text-slate-300">{part.slice(1, -1)}</em>;
+    }
+    return <React.Fragment key={index}>{part}</React.Fragment>;
+  });
 }
 
 const FormatMessage = ({ text }: { text: string }) => {
@@ -32,17 +57,15 @@ const FormatMessage = ({ text }: { text: string }) => {
         const isList = line.startsWith("- ") || line.startsWith("* ");
         const content = isList ? line.substring(2) : line;
         
-        const formattedHTML = content.replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-bold">$1</strong>').replace(/\*(.*?)\*/g, '<em class="italic text-slate-300">$1</em>');
-
         if (isList) {
           return (
             <div key={i} className="flex items-start gap-2 ml-1">
               <span className="text-[#b388ff] mt-0.5">•</span>
-              <span dangerouslySetInnerHTML={{ __html: formattedHTML }} />
+              <span className="min-w-0 break-words"><InlineMessage text={content} /></span>
             </div>
           );
         }
-        return <div key={i} dangerouslySetInnerHTML={{ __html: formattedHTML }} />;
+        return <div key={i} className="break-words"><InlineMessage text={content} /></div>;
       })}
     </div>
   );
@@ -54,10 +77,15 @@ export const GlobalChatbot: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const requestCoordinatorRef = useRef(createChatRequestCoordinator());
 
   const snapshot = useSnapshotStore((s) => s.snapshot);
   const loading = useSnapshotStore((s) => s.loading);
   const actionDecision = useTradingStore((s) => s.actionDecision);
+
+  useEffect(() => () => {
+    requestCoordinatorRef.current.dispose();
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -72,12 +100,23 @@ export const GlobalChatbot: React.FC = () => {
       : "Xin chào! Tôi là **Trợ lý AI Quản trị Rủi ro (Quant Expert)**.\n\nHệ thống đang chờ dữ liệu `CurrentMarketSnapshot`. Vui lòng mở màn hình Macro V2 để tải snapshot.";
 
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
-      setMessages([{ sender: "ai", text: initialGreeting }]);
+      setMessages([{ sender: "ai", text: initialGreeting, kind: "system" }]);
       localStorage.setItem("quant_chat_last_reset", now.toString());
       localStorage.removeItem("quant_chat_history");
     } else {
       const savedHistory = localStorage.getItem("quant_chat_history");
-      if (savedHistory) setMessages(JSON.parse(savedHistory));
+      if (!savedHistory) {
+        setMessages([{ sender: "ai", text: initialGreeting, kind: "system" }]);
+        return;
+      }
+      try {
+        const parsed: unknown = JSON.parse(savedHistory);
+        setMessages(Array.isArray(parsed) && parsed.every(isMessage)
+          ? parsed
+          : [{ sender: "ai", text: initialGreeting, kind: "system" }]);
+      } catch {
+        setMessages([{ sender: "ai", text: initialGreeting, kind: "system" }]);
+      }
     }
   }, [snapshot]);
 
@@ -88,7 +127,8 @@ export const GlobalChatbot: React.FC = () => {
   }, [messages]);
 
   const handleSend = async (text: string) => {
-    if (!text.trim() || isLoading) return;
+    if (!text.trim()) return;
+    const { requestId } = requestCoordinatorRef.current.begin();
     const userText = text.trim();
     setInput("");
     setMessages((prev) => [...prev, { sender: "user", text: userText }]);
@@ -112,11 +152,22 @@ export const GlobalChatbot: React.FC = () => {
           { role: "user", text: userText },
         ],
       });
-      setMessages((prev) => [...prev, { sender: "ai", text: reply }]);
+      if (requestCoordinatorRef.current.isCurrent(requestId)) {
+        setMessages((prev) => [...prev, { sender: "ai", text: reply, kind: "response" }]);
+      }
     } catch {
-      setMessages((prev) => [...prev, { sender: "ai", text: "⚠️ **Lỗi kết nối AI.** Vui lòng thử lại sau." }]);
+      if (requestCoordinatorRef.current.isCurrent(requestId)) {
+        setMessages((prev) => [...prev, {
+          sender: "ai",
+          text: "Yêu cầu AI không thành công. Canonical ActionDecision không thay đổi; vui lòng thử lại sau.",
+          kind: "request-error",
+        }]);
+      }
     } finally {
-      setIsLoading(false);
+      if (requestCoordinatorRef.current.isCurrent(requestId)) {
+        requestCoordinatorRef.current.finish(requestId);
+        setIsLoading(false);
+      }
     }
   };
 
@@ -150,14 +201,16 @@ export const GlobalChatbot: React.FC = () => {
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 right-6 z-[999] p-4 bg-gradient-to-r from-[#b388ff] to-[#7c4dff] text-white rounded-full shadow-[0_0_25px_rgba(179,136,255,0.4)] hover:scale-105 transition-all flex items-center justify-center animate-bounce-slow"
+          type="button"
+          aria-label="Open grounded AI advisor"
+          className="fixed bottom-3 right-3 z-[999] flex items-center justify-center rounded-full bg-gradient-to-r from-[#b388ff] to-[#7c4dff] p-3 text-white shadow-[0_0_25px_rgba(179,136,255,0.4)] transition-all hover:scale-105 sm:bottom-6 sm:right-6 sm:p-4"
         >
           <BrainCircuit size={28} />
         </button>
       )}
 
       {isOpen && (
-        <div className="fixed bottom-6 right-6 z-[999] w-[450px] h-[650px] max-h-[85vh] bg-[#0f172a] border border-[#1e293b] rounded-2xl shadow-2xl flex flex-col overflow-hidden font-sans animate-in slide-in-from-bottom-4 fade-in duration-200">
+        <div className="fixed inset-x-2 bottom-2 z-[999] flex h-[min(650px,calc(100vh-1rem))] max-h-[85vh] min-w-0 flex-col overflow-hidden rounded-2xl border border-[#1e293b] bg-[#0f172a] font-sans shadow-2xl sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-[450px]">
           
           <div className="flex items-center justify-between px-5 py-4 bg-[#1e293b]/50 backdrop-blur-md border-b border-[#334155]">
             <div className="flex items-center gap-3">
@@ -171,7 +224,7 @@ export const GlobalChatbot: React.FC = () => {
                 </p>
               </div>
             </div>
-            <button onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-700 transition-colors">
+            <button type="button" aria-label="Close grounded AI advisor" onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-700 transition-colors">
               <X size={20} />
             </button>
           </div>
@@ -180,9 +233,11 @@ export const GlobalChatbot: React.FC = () => {
             {messages.map((msg, idx) => (
               <div key={idx} className={clsx("flex flex-col max-w-[90%]", msg.sender === "user" ? "ml-auto items-end" : "mr-auto items-start")}>
                 <div className={clsx(
-                  "p-4 rounded-2xl shadow-md", 
+                  "min-w-0 break-words p-4 rounded-2xl shadow-md",
                   msg.sender === "user" 
                     ? "bg-gradient-to-br from-[#b388ff] to-[#9c66ff] text-black font-medium rounded-br-sm" 
+                    : msg.kind === "request-error"
+                    ? "border border-amber/40 bg-amber/10 text-amber rounded-bl-sm"
                     : "bg-[#1e293b] border border-[#334155] text-slate-300 rounded-bl-sm"
                 )}>
                   {msg.sender === "user" ? <span className="whitespace-pre-wrap text-[13px]">{msg.text}</span> : (
@@ -195,7 +250,7 @@ export const GlobalChatbot: React.FC = () => {
               </div>
             ))}
             {isLoading && (
-              <div className="flex items-center gap-2 text-slate-400 text-xs p-2">
+              <div className="flex items-center gap-2 text-slate-400 text-xs p-2" role="status" aria-live="polite">
                 <Loader2 size={16} className="animate-spin text-[#b388ff]" /> Trợ lý đang suy luận dữ liệu...
               </div>
             )}
@@ -203,10 +258,10 @@ export const GlobalChatbot: React.FC = () => {
           </div>
 
           <div className="px-3 pt-3 pb-2 bg-[#0f172a] flex gap-2 overflow-x-auto hide-scrollbar border-t border-[#1e293b]">
-            <button onClick={() => handleSend("Tóm tắt thị trường hôm nay và tôi nên hành động thế nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-[#1e293b] hover:bg-[#b388ff]/20 text-[#b388ff] rounded-lg text-[11px] font-medium transition-colors whitespace-nowrap border border-[#334155]">
+            <button type="button" onClick={() => handleSend("Tóm tắt thị trường hôm nay và tôi nên hành động thế nào?")} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-[#1e293b] hover:bg-[#b388ff]/20 text-[#b388ff] rounded-lg text-[11px] font-medium transition-colors whitespace-nowrap border border-[#334155]">
               <MessageSquareText size={14} /> Tóm tắt & Hành động
             </button>
-            <button onClick={() => handleSend("Trong 3 tháng tới tôi nên tái cơ cấu tỷ trọng tài sản ra sao để tối đa hóa thu nhập/vốn?")} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-[#1e293b] hover:bg-[#b388ff]/20 text-[#b388ff] rounded-lg text-[11px] font-medium transition-colors whitespace-nowrap border border-[#334155]">
+            <button type="button" onClick={() => handleSend("Trong 3 tháng tới tôi nên tái cơ cấu tỷ trọng tài sản ra sao để tối đa hóa thu nhập/vốn?")} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-[#1e293b] hover:bg-[#b388ff]/20 text-[#b388ff] rounded-lg text-[11px] font-medium transition-colors whitespace-nowrap border border-[#334155]">
               <Target size={14} /> Chiến lược 3 tháng
             </button>
           </div>
@@ -218,9 +273,9 @@ export const GlobalChatbot: React.FC = () => {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Hỏi AI... (Shift + Enter để xuống dòng)"
-              className="flex-1 bg-[#1e293b] border border-[#334155] text-slate-100 px-4 py-3 rounded-xl text-[13px] focus:outline-none focus:border-[#b388ff] resize-none max-h-32 min-h-[44px] custom-scrollbar"
+              className="min-h-[44px] min-w-0 flex-1 resize-none bg-[#1e293b] border border-[#334155] text-slate-100 px-4 py-3 rounded-xl text-[13px] focus:outline-none focus:border-[#b388ff] max-h-32 custom-scrollbar disabled:opacity-60"
             />
-            <button type="submit" disabled={isLoading || !input.trim()} className="bg-gradient-to-br from-[#b388ff] to-[#9c66ff] hover:opacity-90 text-black font-bold w-11 h-11 rounded-xl flex items-center justify-center transition-all disabled:opacity-50 shadow-lg shrink-0">
+            <button type="submit" disabled={!input.trim()} className="bg-gradient-to-br from-[#b388ff] to-[#9c66ff] hover:opacity-90 text-black font-bold w-11 h-11 rounded-xl flex items-center justify-center transition-all disabled:opacity-50 shadow-lg shrink-0">
               <Send size={18} className="ml-0.5" />
             </button>
           </form>

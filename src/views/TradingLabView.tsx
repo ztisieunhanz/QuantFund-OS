@@ -31,6 +31,34 @@ import { useMarketStore } from "@/stores/marketStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useSnapshotStore } from "@/stores/snapshotStore";
 import type { BotMetrics } from "@/types/market";
+import type { DecisionState } from "@/lib/quant/types";
+
+export function deriveTradingDecisionPresentation(latestDecision: DecisionState | null) {
+  if (!latestDecision) {
+    return Object.freeze({
+      riskAvailable: false,
+      riskStatus: "UNAVAILABLE",
+      riskReason: "Canonical risk state unavailable.",
+      allocationSummary: "UNAVAILABLE",
+      allocationRationale: "Canonical allocation unavailable.",
+    });
+  }
+
+  const btcWeight = latestDecision.targetWeights.assetWeights["BTC"];
+  const allocationSummary = typeof btcWeight === "number"
+    ? `BTC: ${(btcWeight * 100).toFixed(1)}% | Cash: ${(latestDecision.targetWeights.cashWeight * 100).toFixed(1)}%`
+    : "UNAVAILABLE";
+
+  return Object.freeze({
+    riskAvailable: true,
+    riskStatus: latestDecision.risk.circuitBreakerStatus,
+    riskReason: latestDecision.risk.circuitBreakerReason ?? "Canonical risk rationale unavailable.",
+    allocationSummary,
+    allocationRationale: allocationSummary === "UNAVAILABLE"
+      ? "Canonical allocation unavailable."
+      : latestDecision.targetWeights.rationale,
+  });
+}
 
 export function TradingLabView() {
   const bars = useMarketStore((s) => s.bars);
@@ -124,11 +152,12 @@ export function TradingLabView() {
     return sorted.filter((_, idx, arr) => idx % stepSize === 0 || idx === arr.length - 1);
   }, [trend.equityCurve, mean.equityCurve, event.equityCurve, omega.equityCurve, benchmarkDca.equityCurve]);
 
-  const cbStatus = latestDecision?.risk.circuitBreakerStatus ?? "NORMAL";
-  const cbReason = latestDecision?.risk.circuitBreakerReason ?? "System exposure within thresholds";
+  const decisionPresentation = deriveTradingDecisionPresentation(latestDecision);
+  const cbStatus = decisionPresentation.riskStatus;
+  const cbReason = decisionPresentation.riskReason;
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-3 bg-[#07090d]">
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 overflow-y-auto bg-[#07090d] p-3">
       <ActionDecisionCard decision={actionDecision} />
 
       {/* 1. THANH TELEMETRY HUD CHUẨN ĐỒNG BỘ */}
@@ -198,7 +227,7 @@ export function TradingLabView() {
           <div className="text-base font-mono font-bold text-ink mt-1">
             {latestDecision
               ? `${(latestDecision.risk.targetVolatility * 100).toFixed(1)}% / ${(latestDecision.risk.realizedVol * 100).toFixed(1)}%`
-              : "12.0% / 18.5%"}
+              : "UNAVAILABLE"}
           </div>
           <div className="text-[10px] text-muted font-mono">
             Target Vol / Realized (VolFloor: 5.0%)
@@ -207,7 +236,7 @@ export function TradingLabView() {
 
         <div className="flex flex-col justify-between border-b sm:border-b-0 sm:border-r border-line/40 pb-2 sm:pb-0 sm:pr-3">
           <div className="flex items-center gap-1.5 text-muted text-[10px] font-bold tracking-wider">
-            <ShieldCheck size={14} className="text-[#00e676]" /> HYSTERESIS RISK STATUS
+            <ShieldCheck size={14} className={decisionPresentation.riskAvailable ? "text-[#00e676]" : "text-muted"} /> HYSTERESIS RISK STATUS
           </div>
           <div className="text-base font-mono font-bold mt-1">
             <span
@@ -217,16 +246,18 @@ export function TradingLabView() {
                   ? "bg-down/20 text-down border border-down/30"
                   : cbStatus === "WARNING"
                   ? "bg-amber/20 text-amber border border-amber/30"
-                  : "bg-up/20 text-up border border-up/30"
+                  : cbStatus === "NORMAL"
+                  ? "bg-up/20 text-up border border-up/30"
+                  : "bg-panel-2 text-muted border border-line"
               )}
             >
               {cbStatus}
             </span>
             <span className="text-muted text-[11px] ml-2 font-normal">
-              Max DD: {omega.maxDrawdown != null ? formatPct(-omega.maxDrawdown, 1) : "N/A"}
+              Max DD: {latestDecision && omega.maxDrawdown != null ? formatPct(-omega.maxDrawdown, 1) : "N/A"}
             </span>
           </div>
-          <div className="text-[10px] text-muted truncate font-mono" title={cbReason}>
+          <div className="break-words font-mono text-[10px] text-muted" title={cbReason}>
             {cbReason}
           </div>
         </div>
@@ -236,10 +267,10 @@ export function TradingLabView() {
             <Layers size={14} className="text-[#b388ff]" /> ALLOCATION BREAKDOWN
           </div>
           <div className="text-[11px] font-mono font-bold text-white mt-1">
-            BTC: {latestDecision ? `${((latestDecision.targetWeights.assetWeights["BTC"] ?? 0) * 100).toFixed(1)}%` : "0.0%"} | Cash: {latestDecision ? `${(latestDecision.targetWeights.cashWeight * 100).toFixed(1)}%` : "100.0%"}
+            {decisionPresentation.allocationSummary}
           </div>
-          <div className="text-[10px] text-cyan font-mono truncate" title={latestDecision?.targetWeights.rationale}>
-            {latestDecision?.targetWeights.rationale.slice(0, 42) ?? "Awaiting allocation..."}
+          <div className="break-words font-mono text-[10px] text-cyan" title={decisionPresentation.allocationRationale}>
+            {decisionPresentation.allocationRationale.slice(0, 42)}
           </div>
         </div>
       </div>
@@ -277,11 +308,11 @@ export function TradingLabView() {
 
       {/* 4. ĐƯỜNG CONG VỐN ĐỐI CHUẨN (EQUITY CURVES) */}
       <div className="border border-line bg-panel p-3 rounded-sm w-full">
-        <div className="flex items-center justify-between mb-2">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="text-[11px] font-mono font-bold text-muted uppercase tracking-wider">
             Multi-Strategy Concurrent Fleet vs. Control Benchmark (Post-Warmup 125 Bars)
           </div>
-          <div className="flex items-center gap-4 text-[10px] font-mono">
+          <div className="flex flex-wrap items-center gap-3 font-mono text-[10px] sm:gap-4">
             <span className="flex items-center gap-1 text-[#00e676] font-bold"><span className="w-2.5 h-0.5 bg-[#00e676]"></span> Omega Fund</span>
             <span className="flex items-center gap-1 text-[#26c6da]"><span className="w-2.5 h-0.5 bg-[#26c6da]"></span> Alpha 1 (Trend)</span>
             <span className="flex items-center gap-1 text-[#ffc107]"><span className="w-2.5 h-0.5 bg-[#ffc107]"></span> Alpha 2 (Event)</span>
@@ -394,8 +425,8 @@ function Blotter({ bot }: { bot: BotMetrics }) {
 
   return (
     <Panel title={`${bot.name} · Audit Log`}>
-      <div className="max-h-[190px] overflow-y-auto">
-        <table className="w-full border-collapse font-mono text-[10px]">
+      <div className="max-h-[190px] overflow-auto">
+        <table className="w-full min-w-[360px] border-collapse font-mono text-[10px]">
           <thead className="text-muted border-b border-line bg-panel-2 sticky top-0">
             <tr>
               <th className="py-1 px-1.5 text-left">TIME</th>

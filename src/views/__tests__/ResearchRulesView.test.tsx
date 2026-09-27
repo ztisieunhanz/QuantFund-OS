@@ -310,6 +310,15 @@ describe("P16-C R1B ResearchRulesView", () => {
     expect(html).not.toMatch(/>\s*(Approve|Reject|Promote|Run trade|Apply strategy|Optimize|Execute)\s*</iu);
   });
 
+  it("contains long canonical identities and reasons with intentional wrapping", () => {
+    publishCanonicalResearchArtifacts(canonicalArtifacts());
+    const html = renderView();
+
+    expect(html).toContain("break-all");
+    expect(html).toContain("break-words");
+    expect(html).toContain("minmax(0,1.1fr)");
+  });
+
   it("imports only the read-only research source and no financial authority", () => {
     const viewSource = readFileSync("src/views/ResearchRulesView.tsx", "utf8");
     const presenterSource = readFileSync("src/lib/researchRulesPresenter.ts", "utf8");

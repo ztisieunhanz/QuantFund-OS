@@ -15,10 +15,10 @@ const ACTION_TONE: Readonly<Record<ActionDecisionAction, string>> = Object.freez
 export function ActionDecisionCard({ decision }: { readonly decision: ActionDecision | null }) {
   if (decision === null) {
     return (
-      <section className="border border-amber/40 bg-amber/5 p-4" aria-label="Canonical paper action unavailable">
+      <section className="min-w-0 border border-amber/40 bg-amber/5 p-4" aria-label="Canonical paper action unavailable">
         <div className="flex items-start gap-3">
           <AlertTriangle className="mt-0.5 shrink-0 text-amber" size={18} />
-          <div>
+          <div className="min-w-0">
             <div className="font-mono text-[10px] font-bold tracking-[0.2em] text-amber">CANONICAL PAPER ACTION</div>
             <div className="mt-1 text-lg font-semibold text-ink">Unavailable</div>
             <p className="mt-1 text-[11px] text-muted">
@@ -33,13 +33,13 @@ export function ActionDecisionCard({ decision }: { readonly decision: ActionDeci
   const view = presentActionDecision(decision);
 
   return (
-    <section className="border border-line bg-panel p-4" aria-label={`Canonical paper action for ${view.assetId}`} data-action={view.action}>
+    <section className="min-w-0 border border-line bg-panel p-4" aria-label={`Canonical paper action for ${view.assetId}`} data-action={view.action}>
       <div className="grid gap-4 xl:grid-cols-[1.1fr_1fr_1.35fr]">
-        <div>
-          <div className="flex items-center gap-2 font-mono text-[10px] font-bold tracking-[0.2em] text-muted">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-start gap-2 break-words font-mono text-[10px] font-bold tracking-[0.2em] text-muted">
             <Target size={14} className="text-cyan" /> CANONICAL PAPER ACTION · {view.assetId}
           </div>
-          <div className="mt-3 flex items-center gap-3">
+          <div className="mt-3 flex flex-wrap items-center gap-3">
             <span className={clsx("border px-4 py-2 font-mono text-2xl font-black tracking-[0.14em]", ACTION_TONE[view.action])}>
               {view.action}
             </span>
@@ -51,7 +51,7 @@ export function ActionDecisionCard({ decision }: { readonly decision: ActionDeci
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-3 gap-2 font-mono">
+          <div className="mt-4 grid grid-cols-1 gap-2 font-mono sm:grid-cols-3">
             <WeightCell label="CURRENT" value={view.currentWeightLabel} />
             <WeightCell label="OMEGA TARGET" value={view.targetWeightLabel} />
             <WeightCell label="DELTA" value={view.deltaWeightLabel} />
@@ -60,33 +60,33 @@ export function ActionDecisionCard({ decision }: { readonly decision: ActionDeci
           <div className="mt-3 space-y-1 border-t border-line pt-3 font-mono text-[10px] text-muted">
             <div className="flex items-center gap-1.5"><Clock3 size={11} /> Decision: <span className="text-ink">{view.decisionTimeLabel}</span></div>
             <div className="pl-[17px]">As of: <span className="text-ink">{view.asOfLabel}</span></div>
-            <div className="truncate pl-[17px]" title={view.semanticIdentity}>ID: {view.semanticIdentity}</div>
+            <div className="break-all pl-[17px]" title={view.semanticIdentity}>ID: {view.semanticIdentity}</div>
           </div>
         </div>
 
-        <div className="border-l-0 border-line xl:border-l xl:pl-4">
+        <div className="min-w-0 border-l-0 border-line xl:border-l xl:pl-4">
           <div className="flex items-center gap-2 font-mono text-[10px] font-bold tracking-[0.16em] text-muted">
             <CheckCircle2 size={13} className="text-up" /> SUPPORTING EVIDENCE
           </div>
           <ul className="mt-2 space-y-2 text-[11px] text-ink">
-            {view.reasons.map((reason) => <li key={reason.code}>• {reason.label}</li>)}
+            {view.reasons.map((reason) => <li key={reason.code} className="break-words">• {reason.label}</li>)}
           </ul>
 
           <div className="mt-4 font-mono text-[10px] font-bold tracking-[0.16em] text-muted">CONTRADICTIONS</div>
           {view.contradictions.length > 0 ? (
             <ul className="mt-2 space-y-2 text-[11px] text-amber">
-              {view.contradictions.map((item) => <li key={item.code}>• {item.label}</li>)}
+              {view.contradictions.map((item) => <li key={item.code} className="break-words">• {item.label}</li>)}
             </ul>
           ) : <div className="mt-2 text-[11px] text-muted">None supplied by the canonical decision.</div>}
 
           {view.conditions.length > 0 ? (
-            <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
               {view.conditions.map((condition) => (
                 <div key={condition.label} className="border border-line bg-panel-2 px-2 py-1.5 text-[10px]">
                   <span className="text-muted">{condition.label}</span>{" "}
                   <strong className={condition.status === "PROVEN" ? "text-up" : "text-amber"}>{condition.status}</strong>
                   {condition.evidenceSemanticIdentities.length > 0 ? (
-                    <div className="mt-1 font-mono text-[9px] text-muted">{condition.evidenceSemanticIdentities.length} canonical evidence IDs</div>
+                    <div className="mt-1 break-words font-mono text-[9px] text-muted">{condition.evidenceSemanticIdentities.length} canonical evidence IDs</div>
                   ) : null}
                 </div>
               ))}
@@ -94,11 +94,11 @@ export function ActionDecisionCard({ decision }: { readonly decision: ActionDeci
           ) : null}
         </div>
 
-        <div className="border-l-0 border-line xl:border-l xl:pl-4">
+        <div className="min-w-0 border-l-0 border-line xl:border-l xl:pl-4">
           <div className="flex items-center gap-2 font-mono text-[10px] font-bold tracking-[0.16em] text-muted">
             <Shield size={13} className="text-cyan" /> QUALITY & AUTHORITY
           </div>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]">
+          <div className="mt-2 grid grid-cols-1 gap-2 text-[10px] sm:grid-cols-2">
             <StatusCell label="DATA QUALITY" value={view.dataQualityStatus} alert={view.dataQualityStatus !== "LIVE_CANONICAL"} />
             <StatusCell label="TARGET" value={view.targetAuthorityStatus} alert={view.targetAuthorityStatus !== "BOUND_OMEGA_TARGET"} />
             <StatusCell label="PERMISSION" value={view.permissionStatus} alert={view.permissionStatus === "NOT_BOUND"} />
