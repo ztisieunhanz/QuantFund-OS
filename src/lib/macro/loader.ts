@@ -20,15 +20,52 @@ import {
 import { getFreshnessThresholdMs } from "./config";
 import { BoundedOperationalProviderCache } from "../operationalReliability";
 import {
+  BoundedOperationalDurableStore,
+  type OperationalDurableStorage,
+} from "../operationalPersistence";
+import {
   acquireMacroDatumWithEvidence,
   loadReliableMacroDatum,
   MACRO_PROVIDER_CACHE_MAX_ENTRIES,
+  MACRO_PROVIDER_DURABLE_STORAGE_KEY,
+  macroIdentity,
+  parsePersistedMacroDatum,
 } from "./reliableProvider";
 import type { AvailableMacroDatum, MacroDatum, MarketSnapshotData } from "./types";
 
 const runtimeCache = new BoundedOperationalProviderCache<AvailableMacroDatum<unknown>>(
   MACRO_PROVIDER_CACHE_MAX_ENTRIES
 );
+let runtimeDurableStore: BoundedOperationalDurableStore<AvailableMacroDatum<unknown>> | null | undefined;
+
+function resolveRuntimeStorage(): OperationalDurableStorage | null {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) return window.localStorage;
+    const candidate = (globalThis as Record<string, unknown>).localStorage;
+    if (candidate && typeof candidate === "object") return candidate as OperationalDurableStorage;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function getRuntimeDurableStore(): BoundedOperationalDurableStore<AvailableMacroDatum<unknown>> | null {
+  if (runtimeDurableStore !== undefined) return runtimeDurableStore;
+  const storage = resolveRuntimeStorage();
+  runtimeDurableStore = storage === null ? null : new BoundedOperationalDurableStore({
+    storage,
+    storageKey: MACRO_PROVIDER_DURABLE_STORAGE_KEY,
+    maxEntries: MACRO_PROVIDER_CACHE_MAX_ENTRIES,
+    codec: {
+      parse: parsePersistedMacroDatum,
+      identityFor: (datum) => macroIdentity(datum.id),
+      provenanceFor: (datum) => datum.sourceClassification,
+      observedAtFor: (datum) => datum.asOf,
+      retrievedAtFor: (datum) => datum.fetchedAt,
+    },
+  });
+  return runtimeDurableStore;
+}
 
 export function resetMacroProviderReliabilityCache(): void {
   runtimeCache.clear();
@@ -65,6 +102,7 @@ export async function loadMacroUniverseV2(
   if (opts !== undefined) return loadDirect(opts);
 
   const referenceTimeMs = Date.now();
+  const durableStore = getRuntimeDurableStore();
   const directLoaders = {
     dxy: fetchDxyDatumV2,
     us2y: fetchUs2yDatumV2,
@@ -89,6 +127,7 @@ export async function loadMacroUniverseV2(
       acquire: (fetchFn) => acquire({ fetchFn, fetchedAt: Date.now() }),
     }),
     cache: runtimeCache as BoundedOperationalProviderCache<AvailableMacroDatum<T>>,
+    durableStore: durableStore as BoundedOperationalDurableStore<AvailableMacroDatum<T>> | null ?? undefined,
   });
 
   const [dxy, us2y, us10y, vix, gold, btc, vnindex, breadth, liquidity, foreignFlow] =
