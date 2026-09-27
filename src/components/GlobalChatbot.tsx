@@ -9,8 +9,9 @@ import { BrainCircuit, X, Send, Loader2, MessageSquareText, Target } from "lucid
 import { clsx } from "@/lib/clsx";
 import { requestAiAdvisor } from "@/lib/aiGatewayClient";
 import { AI_GATEWAY_OPERATION } from "@/lib/aiGatewayContract";
-import { buildGroundedChatbotSystemPrompt } from "@/lib/macro/chatbotGrounding";
+import { buildAiAdvisorGrounding } from "@/lib/aiAdvisorGroundingProjection";
 import { useSnapshotStore } from "@/stores/snapshotStore";
+import { useTradingStore } from "@/stores/tradingStore";
 
 const CHAT_EXPIRY_MS = 60 * 60 * 1000;
 
@@ -56,6 +57,7 @@ export const GlobalChatbot: React.FC = () => {
 
   const snapshot = useSnapshotStore((s) => s.snapshot);
   const loading = useSnapshotStore((s) => s.loading);
+  const actionDecision = useTradingStore((s) => s.actionDecision);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -94,28 +96,15 @@ export const GlobalChatbot: React.FC = () => {
     // Strict Gate M4 Requirement: Read snapshot from shared Zustand store only.
     // MUST NOT call loadRuntimeMarketSnapshot() independently during handleSend().
     const currentSnapshot = useSnapshotStore.getState().snapshot;
-
-    if (!currentSnapshot) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: "ai",
-          text: "⚠️ **Snapshot Chưa Sẵn Sàng.** Vui lòng mở màn hình Macro V2 để tải dữ liệu `CurrentMarketSnapshot` trước khi gửi câu hỏi.",
-        },
-      ]);
-      return;
-    }
+    const currentActionDecision = useTradingStore.getState().actionDecision;
 
     setIsLoading(true);
 
     try {
-      const systemPrompt = buildGroundedChatbotSystemPrompt(currentSnapshot);
-
       const reply = await requestAiAdvisor({
         operation: AI_GATEWAY_OPERATION,
+        grounding: buildAiAdvisorGrounding(currentActionDecision, currentSnapshot),
         messages: [
-          { role: "user", text: systemPrompt },
-          { role: "model", text: "Đã hiểu, tôi sẽ phân tích dựa trên dữ liệu CurrentMarketSnapshot được cung cấp." },
           ...messages.slice(1).map((message) => ({
             role: message.sender === "user" ? "user" as const : "model" as const,
             text: message.text,
@@ -138,30 +127,22 @@ export const GlobalChatbot: React.FC = () => {
     }
   };
 
-  // Truthful Sync Status Display
-  let statusText = "Snapshot Unavailable";
+  // Truthful canonical action status; snapshot remains contextual only.
+  let statusText = actionDecision
+    ? `Canonical ${actionDecision.action}${actionDecision.actionDerivationStatus === "WAIT_FAIL_CLOSED" ? " · Fail-closed" : ""}`
+    : "Canonical Action Unavailable";
   let statusColor = "text-rose-400";
   let dotColor = "bg-rose-400";
 
   if (loading) {
-    statusText = "Loading Snapshot...";
+    statusText += " · Loading Context";
     statusColor = "text-amber-400";
     dotColor = "bg-amber-400 animate-pulse";
+  } else if (actionDecision) {
+    statusColor = actionDecision.actionDerivationStatus === "WAIT_FAIL_CLOSED" ? "text-amber-400" : "text-emerald-400";
+    dotColor = actionDecision.actionDerivationStatus === "WAIT_FAIL_CLOSED" ? "bg-amber-400" : "bg-emerald-400 animate-pulse";
   } else if (snapshot) {
-    const synthStatus = snapshot.synthesis?.status;
-    if (synthStatus === "AVAILABLE") {
-      statusText = "Grounded Snapshot Ready";
-      statusColor = "text-emerald-400";
-      dotColor = "bg-emerald-400 animate-pulse";
-    } else if (synthStatus === "PARTIAL") {
-      statusText = "Partial Snapshot Ready";
-      statusColor = "text-amber-400";
-      dotColor = "bg-amber-400 animate-pulse";
-    } else {
-      statusText = "Insufficient Data";
-      statusColor = "text-rose-400";
-      dotColor = "bg-rose-400";
-    }
+    statusText += " · Context Ready";
   }
 
   return (
@@ -204,7 +185,12 @@ export const GlobalChatbot: React.FC = () => {
                     ? "bg-gradient-to-br from-[#b388ff] to-[#9c66ff] text-black font-medium rounded-br-sm" 
                     : "bg-[#1e293b] border border-[#334155] text-slate-300 rounded-bl-sm"
                 )}>
-                  {msg.sender === "user" ? <span className="whitespace-pre-wrap text-[13px]">{msg.text}</span> : <FormatMessage text={msg.text} />}
+                  {msg.sender === "user" ? <span className="whitespace-pre-wrap text-[13px]">{msg.text}</span> : (
+                    <div>
+                      <div className="mb-2 text-[9px] font-mono uppercase tracking-widest text-slate-500">AI explanation · non-authoritative</div>
+                      <FormatMessage text={msg.text} />
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

@@ -5,9 +5,11 @@ import {
   type AiGatewayFetch,
 } from "../aiGatewayClient";
 import { AI_GATEWAY_ENDPOINT, AI_GATEWAY_OPERATION } from "../aiGatewayContract";
+import { buildAiAdvisorGrounding } from "../aiAdvisorGroundingProjection";
 
 const request = {
   operation: AI_GATEWAY_OPERATION,
+  grounding: buildAiAdvisorGrounding(null, null),
   messages: [{ role: "user" as const, text: "Grounded public prompt" }],
 };
 

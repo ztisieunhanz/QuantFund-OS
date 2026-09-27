@@ -4,6 +4,8 @@
 // PRINCIPLE: Public advisory messages only; no credentials or economic authority
 // ============================================================================
 
+import { parseAiAdvisorGrounding, type AiAdvisorGrounding } from "./aiAdvisorGrounding";
+
 export const AI_GATEWAY_ENDPOINT = "/api/ai-advisor" as const;
 export const AI_GATEWAY_OPERATION = "GROUNDED_CHAT" as const;
 export const AI_GATEWAY_MAX_BODY_BYTES = 65_536;
@@ -21,6 +23,7 @@ export interface AiGatewayMessage {
 export interface AiGatewayRequest {
   readonly operation: typeof AI_GATEWAY_OPERATION;
   readonly messages: readonly AiGatewayMessage[];
+  readonly grounding: AiAdvisorGrounding;
 }
 
 export type AiGatewayFailureCode =
@@ -62,7 +65,7 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
  * other than the allowlisted grounded-chat operation.
  */
 export function parseAiGatewayRequest(value: unknown): AiGatewayRequest | null {
-  if (!isPlainRecord(value) || !hasExactKeys(value, ["operation", "messages"])) return null;
+  if (!isPlainRecord(value) || !hasExactKeys(value, ["operation", "messages", "grounding"])) return null;
   if (value.operation !== AI_GATEWAY_OPERATION || !Array.isArray(value.messages)) return null;
   if (value.messages.length === 0 || value.messages.length > AI_GATEWAY_MAX_MESSAGES) return null;
 
@@ -79,9 +82,13 @@ export function parseAiGatewayRequest(value: unknown): AiGatewayRequest | null {
     messages.push(Object.freeze({ role: candidate.role, text }));
   }
 
+  const grounding = parseAiAdvisorGrounding(value.grounding);
+  if (!grounding) return null;
+
   return Object.freeze({
     operation: AI_GATEWAY_OPERATION,
     messages: Object.freeze(messages),
+    grounding,
   });
 }
 

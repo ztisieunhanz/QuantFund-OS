@@ -11,6 +11,7 @@ import {
   type AiGatewayFailureCode,
   type AiGatewayResponse,
 } from "../src/lib/aiGatewayContract";
+import { buildServerGroundedAdvisorInstruction } from "../src/lib/aiAdvisorGrounding";
 
 const GEMINI_GENERATE_CONTENT_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
@@ -118,6 +119,9 @@ export async function handleAiGatewayRequest(
       method: "POST",
       headers,
       body: JSON.stringify({
+        systemInstruction: {
+          parts: [{ text: buildServerGroundedAdvisorInstruction(request.grounding) }],
+        },
         contents: request.messages.map((message) => ({
           role: message.role,
           parts: [{ text: message.text }],

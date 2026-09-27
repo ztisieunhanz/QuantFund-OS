@@ -23,7 +23,7 @@ import { Panel } from "@/components/ui/Panel";
 import { requestAiAdvisor } from "@/lib/aiGatewayClient";
 import { AI_GATEWAY_OPERATION } from "@/lib/aiGatewayContract";
 import { clsx } from "@/lib/clsx";
-import { buildGroundedChatbotSystemPrompt } from "@/lib/macro/chatbotGrounding";
+import { buildAiAdvisorGrounding } from "@/lib/aiAdvisorGroundingProjection";
 import { formatGoldLabel } from "@/lib/macro/helpers";
 import type {
   AvailableMacroDatum,
@@ -33,6 +33,7 @@ import type {
   UnavailableMacroDatum,
 } from "@/lib/macro/types";
 import { useSnapshotStore } from "@/stores/snapshotStore";
+import { useTradingStore } from "@/stores/tradingStore";
 
 function formatTimestamp(asOf?: number | null): string {
   if (!asOf || !Number.isFinite(asOf)) return "N/A";
@@ -145,6 +146,7 @@ function ProvenanceBadge({ classification }: { classification: string }) {
 
 export function MacroViewV2() {
   const { snapshot, loading, refreshSnapshot } = useSnapshotStore();
+  const actionDecision = useTradingStore((state) => state.actionDecision);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "ai"; text: string }>>([
     {
@@ -173,12 +175,10 @@ export function MacroViewV2() {
     setChatLoading(true);
 
     try {
-      const systemPrompt = buildGroundedChatbotSystemPrompt(snapshot);
       const reply = await requestAiAdvisor({
         operation: AI_GATEWAY_OPERATION,
+        grounding: buildAiAdvisorGrounding(actionDecision, snapshot),
         messages: [
-          { role: "user", text: systemPrompt },
-          { role: "model", text: "Đã hiểu. Tôi sẽ phân tích dựa trên dữ liệu CurrentMarketSnapshot được cung cấp." },
           ...chatMessages.slice(1).map((m) => ({
             role: m.sender === "user" ? "user" as const : "model" as const,
             text: m.text,
@@ -525,9 +525,13 @@ export function MacroViewV2() {
 
       {/* 5. GROUNDED CHATBOT EMBEDDED SURFACE */}
       <Panel
-        title="GROUNDED AI QUANT ADVISOR (SNAPSHOT SINGLE SOURCE OF TRUTH)"
+        title="GROUNDED AI QUANT ADVISOR (ACTIONDECISION AUTHORITY)"
         className="shrink-0 mt-2 mb-6 flex flex-col h-[500px] border-[#1c2736]"
       >
+        <div className="border-b border-[#1c2736] bg-[#0f141d] px-4 py-2 text-[10px] font-mono uppercase tracking-wider text-slate-400">
+          Canonical action: <span className={actionDecision ? "text-cyan" : "text-amber-400"}>{actionDecision?.action ?? "UNAVAILABLE"}</span>
+          {actionDecision?.actionDerivationStatus === "WAIT_FAIL_CLOSED" ? " · FAIL-CLOSED" : ""} · AI explanation is non-authoritative
+        </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[#07090d] custom-scrollbar font-sans">
           {chatMessages.map((msg, idx) => (
             <div
