@@ -59,7 +59,7 @@ import {
   createCanonicalPortfolioValuationSnapshot,
   type CanonicalPortfolioValuationSnapshot,
 } from "@/lib/quant/portfolioValuation";
-import { BAR_DURATION_MS } from "@/lib/quant/timeDomain";
+import { BAR_DURATION_MS, canonicalBarAvailableAt } from "@/lib/quant/timeDomain";
 import { createCycleKey } from "@/lib/quant/operationalPaperContract";
 import type { HistoricalContextAtTime } from "@/lib/quant/historicalPit";
 import {
@@ -166,6 +166,176 @@ function stripTransientLifecycleBinding(record: ExecutionRecord): ExecutionRecor
   return durableRecord;
 }
 
+export class TemporalAuthorityViolationError extends Error {
+  constructor(message: string) {
+    super(`Temporal Authority Violation: ${message}`);
+    this.name = "TemporalAuthorityViolationError";
+  }
+}
+
+/**
+ * Fail-closed validator for single-cycle context temporal authority.
+ * Validates that all evidence consumed for this cycle satisfies canonical point-in-time rules.
+ */
+export function validateCycleTransitionContext(ctx: CycleTransitionContext): void {
+  const { currentBar, decisionTime, benchmarkSlice,
+          currentAssetBars, priorAssetBars, macroState, eventState,
+          historicalContext } = ctx;
+
+  // A. Current Bar and Decision Boundary
+  if (!currentBar || !Number.isFinite(currentBar.timestamp)) {
+    throw new TemporalAuthorityViolationError("currentBar is missing or has non-finite timestamp.");
+  }
+  const expectedDecisionTime = canonicalBarAvailableAt(currentBar.timestamp);
+  if (decisionTime !== expectedDecisionTime) {
+    throw new TemporalAuthorityViolationError(
+      `decisionTime (${decisionTime}) must equal canonicalBarAvailableAt(currentBar.timestamp) (${expectedDecisionTime}) for bar at ${currentBar.timestamp}.`
+    );
+  }
+
+  // B. Benchmark Slice
+  if (!benchmarkSlice || benchmarkSlice.length === 0) {
+    throw new TemporalAuthorityViolationError("benchmarkSlice must be a non-empty array of historical bars.");
+  }
+  const terminalBenchmarkBar = benchmarkSlice[benchmarkSlice.length - 1];
+  if (terminalBenchmarkBar.timestamp !== currentBar.timestamp) {
+    throw new TemporalAuthorityViolationError(
+      `Terminal benchmark bar timestamp (${terminalBenchmarkBar.timestamp}) does not match currentBar timestamp (${currentBar.timestamp}).`
+    );
+  }
+  for (let i = 0; i < benchmarkSlice.length; i++) {
+    const bar = benchmarkSlice[i];
+    if (!Number.isFinite(bar.timestamp)) {
+      throw new TemporalAuthorityViolationError(`Benchmark bar at index ${i} has non-finite timestamp.`);
+    }
+    if (bar.timestamp > currentBar.timestamp) {
+      throw new TemporalAuthorityViolationError(
+        `Benchmark bar at index ${i} has future timestamp (${bar.timestamp}) exceeding currentBar (${currentBar.timestamp}).`
+      );
+    }
+    if (canonicalBarAvailableAt(bar.timestamp) > decisionTime) {
+      throw new TemporalAuthorityViolationError(
+        `Benchmark bar at index ${i} (open=${bar.timestamp}) is unavailable at decisionTime (${decisionTime}).`
+      );
+    }
+    if (i > 0 && bar.timestamp <= benchmarkSlice[i - 1].timestamp) {
+      throw new TemporalAuthorityViolationError(
+        `Benchmark slice is not strictly ascending at index ${i} (${benchmarkSlice[i - 1].timestamp} -> ${bar.timestamp}).`
+      );
+    }
+  }
+
+  // C. Current Asset Bars
+  if (!currentAssetBars || typeof currentAssetBars !== "object") {
+    throw new TemporalAuthorityViolationError("currentAssetBars must be a valid mapping of asset bars.");
+  }
+  for (const [assetId, bar] of Object.entries(currentAssetBars)) {
+    if (!bar || !Number.isFinite(bar.timestamp)) {
+      throw new TemporalAuthorityViolationError(`Current asset bar for "${assetId}" is invalid or non-finite.`);
+    }
+    if (bar.timestamp !== currentBar.timestamp) {
+      throw new TemporalAuthorityViolationError(
+        `Current asset bar for "${assetId}" timestamp (${bar.timestamp}) does not match current cycle bar (${currentBar.timestamp}).`
+      );
+    }
+    if (canonicalBarAvailableAt(bar.timestamp) > decisionTime) {
+      throw new TemporalAuthorityViolationError(
+        `Current asset bar for "${assetId}" is unavailable at decisionTime (${decisionTime}).`
+      );
+    }
+  }
+
+  // D. Prior Asset Bars
+  if (priorAssetBars && typeof priorAssetBars === "object") {
+    for (const [assetId, bar] of Object.entries(priorAssetBars)) {
+      if (!bar || !Number.isFinite(bar.timestamp)) {
+        throw new TemporalAuthorityViolationError(`Prior asset bar for "${assetId}" is invalid or non-finite.`);
+      }
+      if (bar.timestamp >= currentBar.timestamp) {
+        throw new TemporalAuthorityViolationError(
+          `Prior asset bar for "${assetId}" timestamp (${bar.timestamp}) must strictly precede currentBar (${currentBar.timestamp}).`
+        );
+      }
+      if (canonicalBarAvailableAt(bar.timestamp) > currentBar.timestamp) {
+        throw new TemporalAuthorityViolationError(
+          `Prior asset bar for "${assetId}" was not closed and available before currentBar open (${currentBar.timestamp}).`
+        );
+      }
+    }
+  }
+
+  // E. Macro State
+  if (macroState) {
+    if (!Number.isFinite(macroState.asOfTimestamp)) {
+      throw new TemporalAuthorityViolationError("macroState has non-finite asOfTimestamp.");
+    }
+    if (macroState.asOfTimestamp > decisionTime) {
+      throw new TemporalAuthorityViolationError(
+        `macroState asOfTimestamp (${macroState.asOfTimestamp}) is in the future relative to decisionTime (${decisionTime}).`
+      );
+    }
+  }
+
+  // F. Event State
+  if (eventState) {
+    if (!Number.isFinite(eventState.publicationTimestamp) || !Number.isFinite(eventState.consensusSnapshotTimestamp)) {
+      throw new TemporalAuthorityViolationError("eventState has non-finite publication or consensus timestamps.");
+    }
+    if (eventState.publicationTimestamp > decisionTime) {
+      throw new TemporalAuthorityViolationError(
+        `eventState publicationTimestamp (${eventState.publicationTimestamp}) exceeds decisionTime (${decisionTime}).`
+      );
+    }
+    if (eventState.consensusSnapshotTimestamp > decisionTime) {
+      throw new TemporalAuthorityViolationError(
+        `eventState consensusSnapshotTimestamp (${eventState.consensusSnapshotTimestamp}) exceeds decisionTime (${decisionTime}).`
+      );
+    }
+  }
+
+  // G. Historical Context
+  if (historicalContext) {
+    if (historicalContext.decisionTime !== decisionTime) {
+      throw new TemporalAuthorityViolationError(
+        `historicalContext.decisionTime (${historicalContext.decisionTime}) does not match cycle decisionTime (${decisionTime}).`
+      );
+    }
+    if (historicalContext.market) {
+      for (const [seriesId, obs] of Object.entries(historicalContext.market)) {
+        if (obs && obs.availableAt > decisionTime) {
+          throw new TemporalAuthorityViolationError(
+            `historicalContext market observation "${seriesId}" availableAt (${obs.availableAt}) exceeds decisionTime (${decisionTime}).`
+          );
+        }
+      }
+    }
+    if (historicalContext.macro) {
+      for (const [seriesId, rel] of Object.entries(historicalContext.macro)) {
+        if (rel && rel.availableAt > decisionTime) {
+          throw new TemporalAuthorityViolationError(
+            `historicalContext macro release "${seriesId}" availableAt (${rel.availableAt}) exceeds decisionTime (${decisionTime}).`
+          );
+        }
+      }
+    }
+    if (historicalContext.latestEvent) {
+      if (historicalContext.latestEvent.availableAt > decisionTime) {
+        throw new TemporalAuthorityViolationError(
+          `historicalContext latestEvent availableAt (${historicalContext.latestEvent.availableAt}) exceeds decisionTime (${decisionTime}).`
+        );
+      }
+      if (
+        historicalContext.latestEvent.consensusFrozenAt !== null &&
+        historicalContext.latestEvent.consensusFrozenAt > decisionTime
+      ) {
+        throw new TemporalAuthorityViolationError(
+          `historicalContext latestEvent consensusFrozenAt (${historicalContext.latestEvent.consensusFrozenAt}) exceeds decisionTime (${decisionTime}).`
+        );
+      }
+    }
+  }
+}
+
 // ============================================================================
 // THE PURE SINGLE-CYCLE TRANSITION
 // ============================================================================
@@ -183,6 +353,9 @@ export function executeSingleCycleTransition(
   priorState: PriorCycleState,
   ctx: CycleTransitionContext,
 ): CycleTransitionResult {
+  // Fail-closed temporal boundary validation
+  validateCycleTransitionContext(ctx);
+
   const { config, strategyConfigs, currentBar, currentBarIndex, decisionTime,
           currentAssetBars, benchmarkSlice, benchmarkId, macroState, eventState,
           historicalContext, priorAssetBars } = ctx;

@@ -2,18 +2,21 @@
 // FILE: src/lib/quant/__tests__/cycleTransitionKernel.test.ts
 // MODULE: M18-B PURE SINGLE-CYCLE TRANSITION KERNEL TEST SUITE
 // PURPOSE: Verify determinism, input immutability, accounting parity,
-//          replay composition equivalence, authority invariants, and PIT correctness.
+//          replay composition equivalence, authority invariants, PIT correctness,
+//          and fail-closed temporal boundary validation.
 // ============================================================================
 
 import { describe, it, expect, vi } from "vitest";
 import {
   executeSingleCycleTransition,
+  validateCycleTransitionContext,
+  TemporalAuthorityViolationError,
   type PriorCycleState,
   type CycleTransitionContext,
   type CycleStrategyConfigs,
 } from "../cycleTransitionKernel";
 import { runBacktest, type BacktestDataset } from "../backtestEngine";
-import { createInitialRiskState } from "../riskEngine";
+import { createInitialRiskState, DEFAULT_RISK_ENGINE_CONFIG } from "../riskEngine";
 import { DEFAULT_PERMISSION_CONFIG } from "../permissionGate";
 import { BAR_DURATION_MS, canonicalBarAvailableAt } from "../timeDomain";
 import type {
@@ -23,6 +26,7 @@ import type {
   PointInTimeEvent,
   PointInTimeMacro,
 } from "../types";
+import type { HistoricalContextAtTime } from "../historicalPit";
 
 // ----------------------------------------------------------------------------
 // TEST HELPERS & SYNTHETIC DATA GENERATOR
@@ -272,29 +276,41 @@ describe("M18-B: Pure Single-Cycle Transition Kernel", () => {
     }
   });
 
-  // 6. NEXT_BAR_OPEN ORDERING & SAME-EPOCH DECISION-BEFORE-FILL
-  it("EXECUTION ORDERING: Prior target fills at current bar open before new decision is calculated", () => {
+  // 6. NEXT_BAR_OPEN ORDERING & SAME-EPOCH LINEAGE
+  it("SAME-EPOCH LINEAGE: Target created at cycle N decision fills at cycle N+1 open before N+1 decision", () => {
     let cycleState = createInitialPriorState(10000);
 
-    // Cycle 1: Bar 125 (generates pendingRebalance for NEXT_BAR_OPEN)
-    const ctx1 = buildContextForBar(bars, 125, config);
-    const result1 = executeSingleCycleTransition(cycleState, ctx1);
+    // Cycle N: Bar 125 (generates target TN at decisionTime = 125 open + 1h)
+    const ctxN = buildContextForBar(bars, 125, config);
+    const resultN = executeSingleCycleTransition(cycleState, ctxN);
 
-    expect(result1.barExecutions.length).toBe(0); // No execution on bar 125 since no prior pending
-    expect(result1.nextState.pendingRebalance).toBeDefined();
+    expect(resultN.barExecutions.length).toBe(0); // No execution on bar 125 since no prior pending
+    const targetN = resultN.nextState.pendingRebalance;
+    expect(targetN).not.toBeNull();
+    const targetDecisionIdN = targetN?.provenance?.targetDecisionIdentity;
+    expect(targetDecisionIdN).toBeDefined();
 
-    // Cycle 2: Bar 126 (should execute pendingRebalance at bar 126 open price)
-    const ctx2 = buildContextForBar(bars, 126, config);
-    const result2 = executeSingleCycleTransition(result1.nextState, ctx2);
+    // Cycle N+1: Bar 126
+    const ctxNPlus1 = buildContextForBar(bars, 126, config);
+    const resultNPlus1 = executeSingleCycleTransition(resultN.nextState, ctxNPlus1);
 
-    if (result1.nextState.pendingRebalance && (result1.nextState.pendingRebalance.assetWeights.BTC ?? 0) > 0) {
-      expect(result2.barExecutions.length).toBeGreaterThan(0);
-      // Execution timestamp is current bar open (bars[126].timestamp)
-      expect(result2.barExecutions[0].executionTimestamp).toBe(bars[126].timestamp);
-      // Intended price reflects bar open price
-      expect(result2.barExecutions[0].intendedPrice).toBe(bars[126].open);
-      // Execution price incorporates configured slippage
-      expect(result2.barExecutions[0].executionPrice).toBeGreaterThanOrEqual(bars[126].open);
+    if (targetN && (targetN.assetWeights.BTC ?? 0) > 0) {
+      expect(resultNPlus1.barExecutions.length).toBeGreaterThan(0);
+      // Fills at bar 126 open timestamp
+      expect(resultNPlus1.barExecutions[0].executionTimestamp).toBe(bars[126].timestamp);
+      expect(resultNPlus1.barExecutions[0].intendedPrice).toBe(bars[126].open);
+      expect(resultNPlus1.barExecutions[0].executionPrice).toBeGreaterThanOrEqual(bars[126].open);
+    }
+
+    // Cycle N+1 decision produces target TN+1 with a distinct decision timestamp and identity
+    const targetNPlus1 = resultNPlus1.nextState.pendingRebalance;
+    expect(targetNPlus1).not.toBeNull();
+    expect(targetNPlus1?.asOfTimestamp).toBe(ctxNPlus1.decisionTime);
+    expect(targetNPlus1?.provenance?.targetDecisionIdentity).not.toBe(targetDecisionIdN);
+
+    // Ensure TN+1 was NOT executed in cycle N+1
+    for (const exec of resultNPlus1.barExecutions) {
+      expect(exec.decisionTimestamp).toBe(ctxN.decisionTime); // Executed order was from cycle N decision
     }
   });
 
@@ -398,17 +414,36 @@ describe("M18-B: Pure Single-Cycle Transition Kernel", () => {
     expect(result.decision.targetWeights.assetWeights.BTC ?? 0).toBe(0);
   });
 
-  // 11. RISK & OMEGA ALLOCATION AUTHORITY
-  it("RISK & OMEGA PIPELINE: Risk scaling modulates target weights monotonically", () => {
+  // 11. RISK & OMEGA ALLOCATION AUTHORITY (STRENGTHENED)
+  it("RISK & OMEGA PIPELINE: Risk scaling directly bounds and modulates final target weights", () => {
     const priorState = createInitialPriorState(10000);
-    const ctx = buildContextForBar(bars, 130, config);
+    const ctxNormal = buildContextForBar(bars, 130, config);
 
-    const result = executeSingleCycleTransition(priorState, ctx);
+    // Constrained risk configuration with tight maxGrossExposureCap
+    const ctxConstrained = buildContextForBar(bars, 130, config, {
+      risk: {
+        ...DEFAULT_RISK_ENGINE_CONFIG,
+        maxGrossExposureCap: 0.20, // Strict cap
+      },
+    });
 
-    expect(result.decision.risk).toBeDefined();
-    expect(result.decision.targetWeights).toBeDefined();
-    expect(result.decision.targetWeights.asOfTimestamp).toBe(ctx.decisionTime);
-    expect(result.decision.targetWeights.provenance).toBeDefined();
+    const resultNormal = executeSingleCycleTransition(priorState, ctxNormal);
+    const resultConstrained = executeSingleCycleTransition(priorState, ctxConstrained);
+
+    expect(resultNormal.decision.risk).toBeDefined();
+    expect(resultConstrained.decision.risk).toBeDefined();
+
+    // The constrained risk engine limits gross exposure to <= 0.20
+    expect(resultConstrained.decision.risk.targetExposure).toBeLessThanOrEqual(0.20);
+    expect(resultConstrained.decision.targetWeights.grossExposure).toBeLessThanOrEqual(0.2001);
+
+    // Normal allocation vs constrained allocation demonstrates Risk engine authority
+    if (resultNormal.decision.targetWeights.assetWeights.BTC > 0.20) {
+      expect(resultConstrained.decision.targetWeights.assetWeights.BTC).toBeLessThanOrEqual(0.2001);
+      expect(resultConstrained.decision.targetWeights.assetWeights.BTC).toBeLessThan(
+        resultNormal.decision.targetWeights.assetWeights.BTC
+      );
+    }
   });
 
   // 12. SINGLE CYCLE PARITY WITH REPLAY FIRST BAR
@@ -444,7 +479,6 @@ describe("M18-B: Pure Single-Cycle Transition Kernel", () => {
       const exec = result2.barExecutions[0];
       expect(exec.fees).toBeGreaterThan(0);
       // Verify cash balance reflects cash deduction of notional + fees
-      // Pre-execution cash was 10000
       const totalCashSpent = exec.notionalUsd + exec.fees;
       expect(Math.abs(result2.nextState.account.cash - (10000 - totalCashSpent))).toBeLessThan(0.01);
     }
@@ -466,5 +500,195 @@ describe("M18-B: Pure Single-Cycle Transition Kernel", () => {
       expect(result.barExecutions[0].executionTimestamp).toBe(ctx.decisionTime);
     }
   });
-});
 
+  // ==========================================================================
+  // 15-24: ADVERSARIAL TEMPORAL AUTHORITY REJECTION TESTS (FAIL-CLOSED)
+  // ==========================================================================
+
+  it("ADVERSARIAL REJECTION: Rejects decisionTime == currentBar.timestamp (premature close boundary)", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      decisionTime: validCtx.currentBar.timestamp, // Premature!
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+    expect(() => validateCycleTransitionContext(invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+
+  it("ADVERSARIAL REJECTION: Rejects arbitrary decisionTime not matching canonicalBarAvailableAt", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      decisionTime: validCtx.decisionTime + 1000, // Delayed / non-canonical!
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+
+  it("ADVERSARIAL REJECTION: Rejects benchmarkSlice containing future bar beyond currentBar", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const futureBar: PointInTimeBar = {
+      timestamp: validCtx.currentBar.timestamp + BAR_DURATION_MS,
+      open: 60000,
+      high: 61000,
+      low: 59000,
+      close: 60500,
+      volume: 1000,
+    };
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      benchmarkSlice: [...validCtx.benchmarkSlice, futureBar], // Future bar appended!
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+
+  it("ADVERSARIAL REJECTION: Rejects benchmarkSlice where terminal bar does not match currentBar", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      benchmarkSlice: validCtx.benchmarkSlice.slice(0, validCtx.benchmarkSlice.length - 1), // Truncated!
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+
+  it("ADVERSARIAL REJECTION: Rejects currentAssetBars with timestamps not matching currentBar", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      currentAssetBars: {
+        BTC: {
+          ...validCtx.currentBar,
+          timestamp: validCtx.currentBar.timestamp - BAR_DURATION_MS, // Stale!
+        },
+      },
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+
+  it("ADVERSARIAL REJECTION: Rejects priorAssetBars with future or non-prior timestamps", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      priorAssetBars: {
+        BTC: {
+          ...validCtx.currentBar,
+          timestamp: validCtx.currentBar.timestamp, // Same as current, not prior!
+        },
+      },
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+
+  it("ADVERSARIAL REJECTION: Rejects macroState with asOfTimestamp in the future (> decisionTime)", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const futureMacro: PointInTimeMacro = {
+      ...createBaseMacro(validCtx.decisionTime + 24 * BAR_DURATION_MS), // 24h into the future!
+    };
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      macroState: futureMacro,
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+
+  it("ADVERSARIAL REJECTION: Rejects eventState with future publication or consensus timestamps", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const futureEvent: PointInTimeEvent = {
+      eventId: "FUTURE-EVENT-1",
+      eventType: "FED_RATE_DECISION",
+      eventTimestamp: validCtx.decisionTime + 3600000,
+      publicationTimestamp: validCtx.decisionTime + 3600000, // Future publication!
+      consensusSnapshotTimestamp: validCtx.decisionTime,
+      actual: 5.25,
+      consensus: 5.25,
+      previous: 5.0,
+      surprise: 0.0,
+      sourceQuality: "TIER_1_OFFICIAL",
+      noveltyScore: 0.5,
+    };
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      eventState: futureEvent,
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+
+  it("ADVERSARIAL REJECTION: Rejects historicalContext with mismatched decisionTime", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const mismatchedHistoricalContext: HistoricalContextAtTime = {
+      decisionTime: validCtx.decisionTime - BAR_DURATION_MS, // Mismatched!
+      market: {},
+      macro: {},
+      latestEvent: null,
+    };
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      historicalContext: mismatchedHistoricalContext,
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+
+  it("ADVERSARIAL REJECTION: Rejects historicalContext containing future market observation", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const futureMarketHistContext: HistoricalContextAtTime = {
+      decisionTime: validCtx.decisionTime,
+      market: {
+        DXY: {
+          seriesId: "DXY",
+          value: 104.5,
+          observationTime: validCtx.decisionTime,
+          availableAt: validCtx.decisionTime + BAR_DURATION_MS, // Future availability!
+          provider: "YAHOO",
+        },
+      },
+      macro: {},
+      latestEvent: null,
+    };
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      historicalContext: futureMarketHistContext,
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+});
