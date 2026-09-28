@@ -126,10 +126,9 @@ export function buildAiAdvisorGrounding(
   actionDecision: ActionDecision | null,
   marketSnapshot: CurrentMarketSnapshot | null,
 ): AiAdvisorGrounding {
-  const currentActionDecision = marketSnapshot?.operationalState
-    && marketSnapshot.operationalState.status !== "FRESH_CURRENT"
-    ? null
-    : actionDecision;
+  const currentActionDecision = marketSnapshot?.operationalState?.status === "FRESH_CURRENT"
+    ? actionDecision
+    : null;
   return Object.freeze({
     schemaVersion: AI_ADVISOR_GROUNDING_SCHEMA_VERSION,
     actionDecision: projectActionDecision(currentActionDecision),

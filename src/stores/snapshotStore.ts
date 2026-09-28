@@ -7,6 +7,7 @@
 import { create } from "zustand";
 import { loadRuntimeMarketSnapshot, type LoadRuntimeSnapshotOptions } from "@/lib/macro/runtimeSnapshot";
 import type { CurrentMarketSnapshot } from "@/lib/macro/types";
+import { useTradingStore } from "@/stores/tradingStore";
 
 interface SnapshotState {
   snapshot: CurrentMarketSnapshot | null;
@@ -53,3 +54,20 @@ export const useSnapshotStore = create<SnapshotState>((set) => ({
     });
   },
 }));
+
+// Snapshot is a derived cache. Invalidate a cached current projection synchronously
+// when the canonical operational truth leaves FRESH_CURRENT; tradingStore remains
+// the sole operational authority and no store dependency points back to snapshotStore.
+useTradingStore.subscribe((state, previousState) => {
+  if (
+    previousState.operationalState.status === "FRESH_CURRENT"
+    && state.operationalState.status !== "FRESH_CURRENT"
+    && useSnapshotStore.getState().snapshot?.operationalState?.status === "FRESH_CURRENT"
+  ) {
+    useSnapshotStore.setState({
+      snapshot: null,
+      refreshedAt: null,
+      error: state.operationalState.reason ?? "Current snapshot invalidated by operational degradation.",
+    });
+  }
+});

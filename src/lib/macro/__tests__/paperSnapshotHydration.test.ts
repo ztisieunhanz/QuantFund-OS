@@ -3,10 +3,12 @@
 // MODULE: GATE M7B SNAPSHOT HYDRATION & GROUNDING INTEGRATION TESTS
 // ============================================================================
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useTradingStore, getStorageApi } from "@/stores/tradingStore";
+import { useMarketStore } from "@/stores/marketStore";
 import { useSnapshotStore } from "@/stores/snapshotStore";
 import { loadRuntimeMarketSnapshot } from "../runtimeSnapshot";
+import type { CurrentMarketSnapshot } from "../types";
 import type { DecisionState } from "@/lib/quant/types";
 import { createCycleKey, createOperationalTruthState } from "@/lib/quant/operationalPaperContract";
 
@@ -96,9 +98,22 @@ describe("Gate M7B Snapshot Hydration & Grounding Integration", () => {
   const storage = getStorageApi();
 
   beforeEach(() => {
+    vi.unstubAllGlobals();
     storage.clear();
     useTradingStore.getState().reset();
     useSnapshotStore.setState({ snapshot: null, loading: false, error: null });
+    useMarketStore.setState({
+      bars: [],
+      source: null,
+      loading: false,
+      error: null,
+      ema20: [],
+      ema50: [],
+      rsi14: [],
+      lastPrice: 0,
+      refreshedAt: null,
+      interval: "1h",
+    });
   });
 
   it("11 & 12. loadRuntimeMarketSnapshot consumes hydrated canonical decision through useTradingStore", async () => {
@@ -166,5 +181,34 @@ describe("Gate M7B Snapshot Hydration & Grounding Integration", () => {
     expect(snapshot.quant?.status).toBe("AVAILABLE");
     expect(snapshot.risk?.status).toBe("AVAILABLE");
     expect(snapshot.omega?.targetWeights).toEqual({ BTC: 0.5 });
+  });
+
+  it("invalidates a cached fresh snapshot synchronously when the provider degrades", async () => {
+    const mockDec = makeMockDecision({ timestamp: 1758398400000 });
+    const freshState = createOperationalTruthState({
+      status: "FRESH_CURRENT",
+      cycleKey: createCycleKey(mockDec.timestamp),
+      observationTime: mockDec.timestamp,
+      source: "LIVE",
+    });
+    useTradingStore.setState({ latestDecision: mockDec, operationalState: freshState });
+
+    const cachedSnapshot = {
+      timestamp: mockDec.timestamp,
+      data: {},
+      quant: { status: "AVAILABLE" },
+      risk: { status: "AVAILABLE" },
+      omega: { status: "AVAILABLE" },
+      synthesis: { status: "AVAILABLE" },
+      operationalState: freshState,
+    } as unknown as CurrentMarketSnapshot;
+    useSnapshotStore.getState().setSnapshotDirect(cachedSnapshot);
+    expect(useSnapshotStore.getState().snapshot?.operationalState?.status).toBe("FRESH_CURRENT");
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("provider unavailable", { status: 502 })));
+    await useMarketStore.getState().load("1h");
+
+    expect(useTradingStore.getState().operationalState.status).toBe("DEGRADED_PROVIDER_UNAVAILABLE");
+    expect(useSnapshotStore.getState().snapshot).toBeNull();
   });
 });

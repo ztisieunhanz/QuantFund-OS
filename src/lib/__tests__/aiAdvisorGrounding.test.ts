@@ -12,6 +12,7 @@ import {
 import { buildAiAdvisorGrounding } from "../aiAdvisorGroundingProjection";
 import { createCycleKey, createOperationalTruthState } from "../quant/operationalPaperContract";
 import type { CurrentMarketSnapshot } from "../macro/types";
+import type { OperationalTruthStatus } from "../quant/operationalPaperContract";
 import {
   createDeferredActionDecision,
   type ActionDecisionAction,
@@ -97,6 +98,45 @@ function availableGrounding(action: ActionDecisionAction, failClosed = action ==
   };
 }
 
+function snapshotWithOperationalStatus(status?: OperationalTruthStatus): CurrentMarketSnapshot {
+  const datum = {
+    status: "AVAILABLE" as const,
+    value: 1,
+    asOf: T,
+    quality: "USABLE" as const,
+    sourceClassification: "LIVE" as const,
+    provider: "test-provider",
+    instrument: "TEST",
+  };
+  const snapshot = {
+    timestamp: T,
+    data: {
+      dxy: datum,
+      us2y: datum,
+      us10y: datum,
+      vix: datum,
+      gold: datum,
+      btc: datum,
+      vnindex: datum,
+      breadth: datum,
+      liquidity: datum,
+      foreignFlow: datum,
+    },
+    macro: { status: "AVAILABLE", regime: "RISK_ON", confidence: 80, unavailableMetrics: [], staleMetrics: [] },
+    synthesis: { status: "AVAILABLE", stance: "RISK_ON", headline: "Observed context", confidence: 80, dataCoverage: 1 },
+  } as unknown as CurrentMarketSnapshot;
+  if (!status) return snapshot;
+  return {
+    ...snapshot,
+    operationalState: createOperationalTruthState({
+      status,
+      cycleKey: createCycleKey(T),
+      observationTime: status === "FRESH_CURRENT" ? T : null,
+      source: "LIVE",
+    }),
+  };
+}
+
 describe("P16-B bounded ActionDecision grounding", () => {
   it.each(ACTIONS)("preserves canonical %s without reclassification", (action) => {
     const parsed = parseAiAdvisorGrounding(availableGrounding(action));
@@ -108,7 +148,7 @@ describe("P16-B bounded ActionDecision grounding", () => {
     const absent = buildAiAdvisorGrounding(null, null);
     const invalid = buildAiAdvisorGrounding({ action: "ENTER" } as never, null);
     expect(absent.actionDecision).toEqual({ status: "UNAVAILABLE", reason: "NO_CANONICAL_ACTION_DECISION" });
-    expect(invalid.actionDecision).toEqual({ status: "UNAVAILABLE", reason: "INVALID_CANONICAL_ACTION_DECISION" });
+    expect(invalid.actionDecision).toEqual({ status: "UNAVAILABLE", reason: "NO_CANONICAL_ACTION_DECISION" });
     expect(JSON.stringify(absent.actionDecision)).not.toMatch(/"action":"(WAIT|ENTER|ADD|HOLD|REDUCE|EXIT)"/);
   });
 
@@ -168,7 +208,7 @@ describe("P16-B bounded ActionDecision grounding", () => {
   it("projects valid fail-closed canonical state without mutating it", () => {
     const decision = createDeferredActionDecision({ assetId: "BTC", decisionTime: T, asOf: T });
     const before = JSON.stringify(decision);
-    const grounding = buildAiAdvisorGrounding(decision, null);
+    const grounding = buildAiAdvisorGrounding(decision, snapshotWithOperationalStatus("FRESH_CURRENT"));
     expect(grounding.actionDecision).toMatchObject({ status: "AVAILABLE", action: "WAIT", failClosed: true });
     expect(JSON.stringify(decision)).toBe(before);
   });
@@ -179,42 +219,25 @@ describe("P16-B bounded ActionDecision grounding", () => {
     expect(instruction).toContain("Do not infer or name WAIT, ENTER, ADD, HOLD, REDUCE, EXIT");
   });
 
-  it("suppresses restored action authority while preserving the operational label", () => {
-    const datum = {
-      status: "AVAILABLE" as const,
-      value: 1,
-      asOf: T,
-      quality: "USABLE" as const,
-      sourceClassification: "LIVE" as const,
-      provider: "test-provider",
-      instrument: "TEST",
-    };
-    const restored = createOperationalTruthState({
-      status: "RESTORED_HISTORICAL",
-      cycleKey: createCycleKey(T),
-      source: "LIVE",
-    });
-    const snapshot = {
-      timestamp: T,
-      data: {
-        dxy: datum,
-        us2y: datum,
-        us10y: datum,
-        vix: datum,
-        gold: datum,
-        btc: datum,
-        vnindex: datum,
-        breadth: datum,
-        liquidity: datum,
-        foreignFlow: datum,
-      },
-      macro: { status: "AVAILABLE", regime: "RISK_ON", confidence: 80, unavailableMetrics: [], staleMetrics: [] },
-      synthesis: { status: "AVAILABLE", stance: "RISK_ON", headline: "Historical context", confidence: 80, dataCoverage: 1 },
-      operationalState: restored,
-    } as unknown as CurrentMarketSnapshot;
-    const grounding = buildAiAdvisorGrounding(createDeferredActionDecision({ assetId: "BTC", decisionTime: T, asOf: T }), snapshot);
-
+  it.each([
+    ["null snapshot", null],
+    ["missing operational state", snapshotWithOperationalStatus()],
+    ["restored historical", snapshotWithOperationalStatus("RESTORED_HISTORICAL")],
+    ["provider degraded", snapshotWithOperationalStatus("DEGRADED_PROVIDER_UNAVAILABLE")],
+    ["unavailable", snapshotWithOperationalStatus("UNAVAILABLE")],
+  ] as const)("does not ground ActionDecision as current with %s", (_label, snapshot) => {
+    const grounding = buildAiAdvisorGrounding(
+      createDeferredActionDecision({ assetId: "BTC", decisionTime: T, asOf: T }),
+      snapshot,
+    );
     expect(grounding.actionDecision).toEqual({ status: "UNAVAILABLE", reason: "NO_CANONICAL_ACTION_DECISION" });
-    expect(grounding.marketSnapshot).toMatchObject({ operationalState: { status: "RESTORED_HISTORICAL", historicalOnly: true } });
+  });
+
+  it("grounds an ActionDecision only with positively proven FRESH_CURRENT", () => {
+    const grounding = buildAiAdvisorGrounding(
+      createDeferredActionDecision({ assetId: "BTC", decisionTime: T, asOf: T }),
+      snapshotWithOperationalStatus("FRESH_CURRENT"),
+    );
+    expect(grounding.actionDecision).toMatchObject({ status: "AVAILABLE", action: "WAIT", failClosed: true });
   });
 });

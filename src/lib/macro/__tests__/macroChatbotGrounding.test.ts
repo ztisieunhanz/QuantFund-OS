@@ -9,10 +9,24 @@ import { useSnapshotStore } from "@/stores/snapshotStore";
 import { buildGroundedChatbotSystemPrompt, serializeCurrentMarketSnapshotForChatbot } from "../chatbotGrounding";
 import { createDerivedDatum, createLiveDatum, createUnavailableDatum, formatGoldLabel } from "../helpers";
 import { loadRuntimeMarketSnapshot } from "../runtimeSnapshot";
-import { buildCurrentMarketSnapshot } from "../snapshot";
+import { buildCurrentMarketSnapshot as buildCurrentMarketSnapshotContract } from "../snapshot";
 import type { MarketSnapshotData } from "../types";
+import { createCycleKey, createOperationalTruthState } from "@/lib/quant/operationalPaperContract";
 
 const REF_TIME = 1700000000000;
+const FRESH_TIME = Math.floor(REF_TIME / 3_600_000) * 3_600_000;
+
+function buildCurrentMarketSnapshot(params: Parameters<typeof buildCurrentMarketSnapshotContract>[0]) {
+  return buildCurrentMarketSnapshotContract({
+    ...params,
+    operationalState: params.operationalState ?? createOperationalTruthState({
+      status: "FRESH_CURRENT",
+      cycleKey: createCycleKey(FRESH_TIME),
+      observationTime: FRESH_TIME,
+      source: "LIVE",
+    }),
+  });
+}
 
 function createMockSnapshotDataWithPaxg(): MarketSnapshotData {
   return {

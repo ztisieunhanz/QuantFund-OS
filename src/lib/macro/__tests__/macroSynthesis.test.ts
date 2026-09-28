@@ -9,15 +9,29 @@ import { createLiveDatum } from "../helpers";
 import { buildOmegaLayerSummary } from "../omegaAdapter";
 import { buildQuantLayerSummary } from "../quantAdapter";
 import { buildRiskLayerSummary } from "../riskAdapter";
-import { buildCurrentMarketSnapshot } from "../snapshot";
+import { buildCurrentMarketSnapshot as buildCurrentMarketSnapshotContract } from "../snapshot";
 import { evaluateCurrentMarketSynthesis } from "../synthesis";
 import type {
   MacroAssessment,
   MarketSnapshotData,
 } from "../types";
 import type { RiskOutput, SignalOutput, TargetPortfolioWeight } from "@/lib/quant/types";
+import { createCycleKey, createOperationalTruthState } from "@/lib/quant/operationalPaperContract";
 
 const REF_TIME = 1700000000000; // Fixed epoch timestamp for deterministic tests
+const FRESH_TIME = Math.floor(REF_TIME / 3_600_000) * 3_600_000;
+
+function buildCurrentMarketSnapshot(params: Parameters<typeof buildCurrentMarketSnapshotContract>[0]) {
+  return buildCurrentMarketSnapshotContract({
+    ...params,
+    operationalState: params.operationalState ?? createOperationalTruthState({
+      status: "FRESH_CURRENT",
+      cycleKey: createCycleKey(FRESH_TIME),
+      observationTime: FRESH_TIME,
+      source: "LIVE",
+    }),
+  });
+}
 
 function createMockSnapshotData(): MarketSnapshotData {
   return {
@@ -148,6 +162,21 @@ function createMockTargetWeights(weights: Record<string, number> = { BTC: 0.75 }
 }
 
 describe("GATE M3 — CURRENT MARKET SYNTHESIS LAYER TESTS", () => {
+  it("masks operational layers when currentness proof is absent", () => {
+    const snapshot = buildCurrentMarketSnapshotContract({
+      timestamp: REF_TIME,
+      data: createMockSnapshotData(),
+      macro: createMockMacroAssessment("RISK_ON", "AVAILABLE"),
+      signals: createMockSignals(),
+      riskOutput: createMockRiskOutput("NORMAL"),
+      targetWeights: createMockTargetWeights(),
+    });
+
+    expect(snapshot.quant?.status).toBe("UNAVAILABLE");
+    expect(snapshot.risk?.status).toBe("UNAVAILABLE");
+    expect(snapshot.omega?.status).toBe("UNAVAILABLE");
+    expect(snapshot.synthesis?.status).toBe("INSUFFICIENT_DATA");
+  });
   // 1. Macro AVAILABLE + Risk AVAILABLE + aligned positive Quant -> AVAILABLE synthesis
   it("1. Macro AVAILABLE + Risk AVAILABLE + aligned positive Quant produces AVAILABLE synthesis", () => {
     const data = createMockSnapshotData();

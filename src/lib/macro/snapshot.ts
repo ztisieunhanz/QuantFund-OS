@@ -30,7 +30,7 @@ export interface BuildSnapshotParams {
 export function buildCurrentMarketSnapshot(
   params: BuildSnapshotParams
 ): CurrentMarketSnapshot {
-  const current = !params.operationalState || params.operationalState.status === "FRESH_CURRENT";
+  const current = params.operationalState?.status === "FRESH_CURRENT";
   const quant = buildQuantLayerSummary(current ? params.signals : null, params.timestamp);
   const risk = buildRiskLayerSummary(current ? params.riskOutput : null, current ? params.drawdown : null);
   const omega = buildOmegaLayerSummary(current ? params.targetWeights : null);
