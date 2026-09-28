@@ -140,8 +140,8 @@ curl -i "http://localhost:3000/api/binance/api/v3/klines?symbol=BTCUSDT&interval
 - **No Server DB**: The server holds no durable copy of paper trading or accounting history.
 - **Replay & Evidence Only**: Restored lifecycle checkpoints serve strictly as historical audit evidence. They do **not** grant fresh executable permission, risk clearance, or pricing authority.
 - **Market Authority Requirement**: Execution and active decision updates require fresh canonical market data from the active market feed (`BacktestDataset.assetBars`).
-- **Fail-Closed Hydration**: Corrupted JSON or schema version mismatches (`version !== 2`) fail closed by discarding invalid state and re-initializing to the default clean state.
-- **Explicit Reset**: Triggering state reset in the UI or store explicitly clears `quant_paper_engine_state` and returns stores to initial conditions.
+- **Schema Migration and Fail-Closed Hydration**: Schema version 2 is the active persisted schema. Valid legacy schema version 1 state is migrated by retaining historical `latestDecision` and `lastRunAt` while clearing `lifecycleCheckpoint` and `actionDecision`. Corrupted JSON, invalid decision structures, or unrecognized schema versions fail closed by resetting persisted fields to initial empty state (`null`). Migrated historical state never confers fresh executable authority.
+- **Explicit Reset**: Explicit state reset in the UI or store is destructive, resetting all runtime and persisted trading fields (`latestDecision`, `lifecycleCheckpoint`, `actionDecision`, `lastRunAt`) to their initial null/empty state through the persistence layer. No historical lifecycle or action authority survives the reset (physical `localStorage` key removal is not performed or required).
 
 ---
 
