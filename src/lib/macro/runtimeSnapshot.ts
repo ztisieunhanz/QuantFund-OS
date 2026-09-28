@@ -37,10 +37,11 @@ export async function loadRuntimeMarketSnapshot(
 
   // 3. Layer 2: Extract current canonical Quant, Risk, and Omega state from tradingStore (if available)
   const { latestDecision, isRestored, operationalState } = useTradingStore.getState();
-  const signals = latestDecision?.signals ?? null;
-  const riskOutput = latestDecision?.risk ?? null;
-  const targetWeights = latestDecision?.targetWeights ?? null;
-  const drawdown = latestDecision?.currentDrawdown ?? null;
+  const current = operationalState.status === "FRESH_CURRENT";
+  const signals = current ? latestDecision?.signals ?? null : null;
+  const riskOutput = current ? latestDecision?.risk ?? null : null;
+  const targetWeights = current ? latestDecision?.targetWeights ?? null : null;
+  const drawdown = current ? latestDecision?.currentDrawdown ?? null : null;
 
   // 4. Layer 3: Build & Return Unified CurrentMarketSnapshot
   const snapshot = buildCurrentMarketSnapshot({
@@ -58,7 +59,7 @@ export async function loadRuntimeMarketSnapshot(
   if (isRestored && latestDecision) {
     const decisionTimeStr = new Date(latestDecision.timestamp).toISOString().slice(0, 19).replace("T", " ");
     const restoredNote = `Restored research state (asOf ${decisionTimeStr} UTC)`;
-    if (snapshot.omega && snapshot.omega.status === "AVAILABLE") {
+    if (current && snapshot.omega && snapshot.omega.status === "AVAILABLE") {
       (snapshot.omega as { note?: string | null }).note =
         (targetWeights?.rationale ? `${targetWeights.rationale} · ` : "") + restoredNote;
     }

@@ -513,7 +513,7 @@ describe("M14 A-04 Step 5 durable lifecycle persistence", () => {
 
   it("persists one checkpoint, reconstructs ActionDecision, and never persists ActionDecision as a second source", () => {
     const bars = productionBars().map((item) => ({ time: item.timestamp, open: item.open, high: item.high, low: item.low, close: item.close, volume: item.volume }));
-    useTradingStore.getState().runOnBars(bars, { interval: "1h", source: "live" });
+    useTradingStore.getState().runOnBars(bars, { interval: "1h", source: "live", observationTime: T0 + 145 * HOUR });
     const before = useTradingStore.getState();
     expect(before.lifecycleCheckpoint).not.toBeNull();
     expect(before.actionDecision).not.toBeNull();
@@ -545,7 +545,7 @@ describe("M14 A-04 Step 5 durable lifecycle persistence", () => {
 
   it("fails closed only the forged lifecycle sidecar while retaining an independently valid DecisionState", () => {
     const bars = productionBars().map((item) => ({ time: item.timestamp, open: item.open, high: item.high, low: item.low, close: item.close, volume: item.volume }));
-    useTradingStore.getState().runOnBars(bars, { interval: "1h", source: "live" });
+    useTradingStore.getState().runOnBars(bars, { interval: "1h", source: "live", observationTime: T0 + 145 * HOUR });
     const payload = JSON.parse(getStorageApi().getItem("quant_paper_engine_state")!);
     payload.state.lifecycleCheckpoint.lifecycle.semanticIdentity = "sha256:forged";
     useTradingStore.getState().reset();
@@ -571,7 +571,7 @@ describe("M14 A-04 Step 5 durable lifecycle persistence", () => {
 
   it("rejects unknown future store versions and reset clears all durable and derived lifecycle state", () => {
     const bars = productionBars().map((item) => ({ time: item.timestamp, open: item.open, high: item.high, low: item.low, close: item.close, volume: item.volume }));
-    useTradingStore.getState().runOnBars(bars, { interval: "1h", source: "live" });
+    useTradingStore.getState().runOnBars(bars, { interval: "1h", source: "live", observationTime: T0 + 145 * HOUR });
     expect(useTradingStore.getState().lifecycleCheckpoint).not.toBeNull();
     useTradingStore.getState().reset();
     expect(useTradingStore.getState().latestDecision).toBeNull();

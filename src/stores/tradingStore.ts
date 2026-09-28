@@ -16,6 +16,7 @@ import { QUANT_BAR_INTERVAL, type QuantReplayMarketContext } from "@/lib/quant/t
 import {
   createCycleKey,
   createOperationalTruthState,
+  latestEligibleDecisionTime,
   validateCycleKey,
   type OperationalTruthState,
 } from "@/lib/quant/operationalPaperContract";
@@ -276,8 +277,29 @@ export const useTradingStore = create<TradingState>()(
           benchmarkDca,
           latestDecision,
           lifecycleCheckpoint,
-          actionDecision,
+          actionDecision: replayedActionDecision,
         } = engine.replay(bars, ctx);
+        const cycleKey = latestDecision?.cycleKey ?? (latestDecision ? createCycleKey(latestDecision.timestamp) : null);
+        let isFreshCurrent = false;
+        if (latestDecision && ctx.source === "live" && ctx.observationTime !== undefined && cycleKey) {
+          try {
+            isFreshCurrent = cycleKey.decisionTime === latestDecision.timestamp
+              && latestDecision.timestamp === latestEligibleDecisionTime(ctx.observationTime);
+          } catch {
+            isFreshCurrent = false;
+          }
+        }
+        const operationalState = latestDecision
+          ? createOperationalTruthState({
+            status: isFreshCurrent ? "FRESH_CURRENT" : "UNAVAILABLE",
+            cycleKey,
+            observationTime: ctx.observationTime ?? null,
+            source: ctx.source === "live" ? "LIVE" : "SYNTHETIC",
+            reason: isFreshCurrent
+              ? "Decision is bound to the latest eligible live observation boundary."
+              : "The replayed live cycle is not the latest eligible provider boundary; currentness is not asserted.",
+          })
+          : createOperationalTruthState({ status: "UNAVAILABLE", reason: "Replay produced no canonical decision." });
         set({
           trend,
           event,
@@ -286,23 +308,11 @@ export const useTradingStore = create<TradingState>()(
           benchmarkDca,
           latestDecision,
           lifecycleCheckpoint,
-          actionDecision,
+          actionDecision: isFreshCurrent ? replayedActionDecision : null,
           lastRunAt: Date.now(),
           isRestored: false,
           restoredAt: null,
-          operationalState: latestDecision
-            ? createOperationalTruthState({
-              status: ctx.source === "live" && ctx.observationTime !== undefined && latestDecision.timestamp <= ctx.observationTime
-                ? "FRESH_CURRENT"
-                : "UNAVAILABLE",
-              cycleKey: latestDecision.cycleKey ?? createCycleKey(latestDecision.timestamp),
-              observationTime: ctx.observationTime ?? null,
-              source: ctx.source === "live" ? "LIVE" : "SYNTHETIC",
-              reason: ctx.source === "live" && ctx.observationTime !== undefined && latestDecision.timestamp <= ctx.observationTime
-                ? "Decision is bound to the latest eligible live observation boundary."
-                : "Provider observation time is unavailable or precedes the decision boundary; currentness is not asserted.",
-            })
-            : createOperationalTruthState({ status: "UNAVAILABLE", reason: "Replay produced no canonical decision." }),
+          operationalState,
           running: true,
         });
       },

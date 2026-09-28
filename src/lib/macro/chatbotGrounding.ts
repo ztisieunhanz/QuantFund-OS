@@ -45,6 +45,11 @@ export function serializeCurrentMarketSnapshotForChatbot(
   lines.push("==================================================");
   lines.push("CURRENT MARKET SNAPSHOT CONTEXT (AUTHORITATIVE)");
   lines.push(`Snapshot Timestamp: ${new Date(snapshot.timestamp).toISOString()}`);
+  const operationalStatus = snapshot.operationalState?.status ?? "LEGACY_UNSPECIFIED";
+  lines.push(`Operational Truth: ${operationalStatus}`);
+  if (operationalStatus !== "FRESH_CURRENT" && operationalStatus !== "LEGACY_UNSPECIFIED") {
+    lines.push("Operational boundary: current Quant/Risk/Omega/action projections are unavailable; any preserved state is historical or degraded evidence only.");
+  }
   lines.push("==================================================");
   lines.push("");
 

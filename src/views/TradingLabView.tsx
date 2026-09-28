@@ -60,6 +60,31 @@ export function deriveTradingDecisionPresentation(latestDecision: DecisionState 
   });
 }
 
+function maskNonCurrentBot(bot: BotMetrics, status: string): BotMetrics {
+  return {
+    ...bot,
+    cash: null,
+    qty: null,
+    lastPrice: null,
+    equity: null,
+    pnl: null,
+    pnlPct: null,
+    winRate: null,
+    maxDrawdown: null,
+    totalTrades: null,
+    closedTradeCount: null,
+    roundTripCount: null,
+    wins: null,
+    losses: null,
+    breakEven: null,
+    position: "FLAT",
+    lastSignal: `${status} · NOT CURRENT`,
+    trades: [],
+    equityCurve: [],
+    status: "UNAVAILABLE",
+  };
+}
+
 export function TradingLabView() {
   const bars = useMarketStore((s) => s.bars);
   const loadMarket = useMarketStore((s) => s.load);
@@ -79,6 +104,13 @@ export function TradingLabView() {
   const resetTrading = useTradingStore((s) => s.reset);
   const lastRunAt = useTradingStore((s) => s.lastRunAt);
   const operationalState = useTradingStore((s) => s.operationalState);
+  const isCurrent = operationalState.status === "FRESH_CURRENT";
+  const visibleTrend = isCurrent ? trend : maskNonCurrentBot(trend, operationalState.status);
+  const visibleEvent = isCurrent ? event : maskNonCurrentBot(event, operationalState.status);
+  const visibleMean = isCurrent ? mean : maskNonCurrentBot(mean, operationalState.status);
+  const visibleOmega = isCurrent ? omega : maskNonCurrentBot(omega, operationalState.status);
+  const visibleBenchmarkDca = isCurrent ? benchmarkDca : maskNonCurrentBot(benchmarkDca, operationalState.status);
+  const visibleDecision = isCurrent ? latestDecision : null;
 
   const snapshot = useSnapshotStore((s) => s.snapshot);
   const macroRegime = snapshot?.macro?.regime ?? null;
@@ -123,7 +155,7 @@ export function TradingLabView() {
       { time: number; trend: number; mean: number; event: number; omega: number; benchmark: number }
     >();
 
-    for (const p of trend.equityCurve) {
+    for (const p of visibleTrend.equityCurve) {
       timeMap.set(p.time, {
         time: p.time,
         trend: p.equity,
@@ -134,24 +166,24 @@ export function TradingLabView() {
       });
     }
 
-    for (const p of mean.equityCurve) {
+    for (const p of visibleMean.equityCurve) {
       const row = timeMap.get(p.time);
       if (row) row.mean = p.equity;
       else timeMap.set(p.time, { time: p.time, trend: STARTING_EQUITY, mean: p.equity, event: STARTING_EQUITY, omega: STARTING_EQUITY, benchmark: STARTING_EQUITY });
     }
 
-    for (const p of event.equityCurve) {
+    for (const p of visibleEvent.equityCurve) {
       const row = timeMap.get(p.time);
       if (row) row.event = p.equity;
       else timeMap.set(p.time, { time: p.time, trend: STARTING_EQUITY, mean: STARTING_EQUITY, event: p.equity, omega: STARTING_EQUITY, benchmark: STARTING_EQUITY });
     }
 
-    for (const p of omega.equityCurve) {
+    for (const p of visibleOmega.equityCurve) {
       const row = timeMap.get(p.time);
       if (row) row.omega = p.equity;
     }
 
-    for (const p of benchmarkDca.equityCurve) {
+    for (const p of visibleBenchmarkDca.equityCurve) {
       const row = timeMap.get(p.time);
       if (row) row.benchmark = p.equity;
     }
@@ -159,15 +191,15 @@ export function TradingLabView() {
     const sorted = [...timeMap.values()].sort((a, b) => a.time - b.time);
     const stepSize = Math.max(1, Math.floor(sorted.length / 150));
     return sorted.filter((_, idx, arr) => idx % stepSize === 0 || idx === arr.length - 1);
-  }, [trend.equityCurve, mean.equityCurve, event.equityCurve, omega.equityCurve, benchmarkDca.equityCurve]);
+  }, [visibleTrend.equityCurve, visibleMean.equityCurve, visibleEvent.equityCurve, visibleOmega.equityCurve, visibleBenchmarkDca.equityCurve]);
 
-  const decisionPresentation = deriveTradingDecisionPresentation(latestDecision);
+  const decisionPresentation = deriveTradingDecisionPresentation(visibleDecision);
   const cbStatus = decisionPresentation.riskStatus;
   const cbReason = decisionPresentation.riskReason;
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 overflow-y-auto bg-[#07090d] p-3">
-      <ActionDecisionCard decision={actionDecision} />
+      <ActionDecisionCard decision={actionDecision} operationalState={operationalState} />
 
       {/* 1. THANH TELEMETRY HUD CHUẨN ĐỒNG BỘ */}
       <div className="flex flex-wrap items-center justify-between border border-line bg-panel px-3 py-2 font-mono text-[11px] rounded-sm gap-2">
@@ -230,10 +262,10 @@ export function TradingLabView() {
             <Cpu size={14} className="text-cyan" /> OMEGA PORTFOLIO NAV
           </div>
           <div className="text-2xl font-mono font-bold text-white mt-1">
-            {formatUsd(omega.equity)}
+            {formatUsd(visibleOmega.equity)}
           </div>
-          <div className={clsx("text-[11px] font-mono font-bold", omega.pnl != null && omega.pnl >= 0 ? "text-up" : omega.pnl != null ? "text-down" : "text-muted")}>
-            PnL: {formatUsd(omega.pnl)} ({formatPct(omega.pnlPct)})
+          <div className={clsx("text-[11px] font-mono font-bold", visibleOmega.pnl != null && visibleOmega.pnl >= 0 ? "text-up" : visibleOmega.pnl != null ? "text-down" : "text-muted")}>
+            PnL: {formatUsd(visibleOmega.pnl)} ({formatPct(visibleOmega.pnlPct)})
           </div>
         </div>
 
@@ -242,8 +274,8 @@ export function TradingLabView() {
             <Activity size={14} className="text-amber" /> VOLATILITY TARGETING
           </div>
           <div className="text-base font-mono font-bold text-ink mt-1">
-            {latestDecision
-              ? `${(latestDecision.risk.targetVolatility * 100).toFixed(1)}% / ${(latestDecision.risk.realizedVol * 100).toFixed(1)}%`
+            {visibleDecision
+              ? `${(visibleDecision.risk.targetVolatility * 100).toFixed(1)}% / ${(visibleDecision.risk.realizedVol * 100).toFixed(1)}%`
               : "UNAVAILABLE"}
           </div>
           <div className="text-[10px] text-muted font-mono">
@@ -271,7 +303,7 @@ export function TradingLabView() {
               {cbStatus}
             </span>
             <span className="text-muted text-[11px] ml-2 font-normal">
-              Max DD: {latestDecision && omega.maxDrawdown != null ? formatPct(-omega.maxDrawdown, 1) : "N/A"}
+              Max DD: {visibleDecision && visibleOmega.maxDrawdown != null ? formatPct(-visibleOmega.maxDrawdown, 1) : "N/A"}
             </span>
           </div>
           <div className="break-words font-mono text-[10px] text-muted" title={cbReason}>
@@ -317,10 +349,10 @@ export function TradingLabView() {
 
       {/* 3. 3 ALPHA ENGINE & 1 CONTROL BENCHMARK */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 w-full">
-        <BotCard bot={trend} rule="Alpha 1: Multi-Horizon Momentum · Persistence & Chandelier Stop" />
-        <BotCard bot={event} rule="Alpha 2: Economic Catalyst · Surprise Reaction & Exponential Decay" />
-        <BotCard bot={mean} rule="Alpha 3: Short Mean Reversion · Deviation Z-Score & Trend Filter" />
-        <BotCard bot={benchmarkDca} rule="Control: Passive Accumulate 5% Cash every 7 bars (Non-Alpha Benchmark)" isBenchmark />
+        <BotCard bot={visibleTrend} rule="Alpha 1: Multi-Horizon Momentum · Persistence & Chandelier Stop" />
+        <BotCard bot={visibleEvent} rule="Alpha 2: Economic Catalyst · Surprise Reaction & Exponential Decay" />
+        <BotCard bot={visibleMean} rule="Alpha 3: Short Mean Reversion · Deviation Z-Score & Trend Filter" />
+        <BotCard bot={visibleBenchmarkDca} rule="Control: Passive Accumulate 5% Cash every 7 bars (Non-Alpha Benchmark)" isBenchmark />
       </div>
 
       {/* 4. ĐƯỜNG CONG VỐN ĐỐI CHUẨN (EQUITY CURVES) */}
@@ -371,9 +403,9 @@ export function TradingLabView() {
 
       {/* 5. AUDIT BLOTTERS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 w-full pb-4">
-        <Blotter bot={trend} />
-        <Blotter bot={event} />
-        <Blotter bot={mean} />
+        <Blotter bot={visibleTrend} />
+        <Blotter bot={visibleEvent} />
+        <Blotter bot={visibleMean} />
       </div>
     </div>
   );

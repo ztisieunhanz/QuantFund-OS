@@ -1,4 +1,4 @@
-import { QUANT_BAR_INTERVAL } from "./timeDomain";
+import { BAR_DURATION_MS, QUANT_BAR_INTERVAL } from "./timeDomain";
 
 export const OPERATIONAL_CYCLE_KEY_SCHEMA_VERSION = "M18_CYCLE_KEY_V1" as const;
 export const OPERATIONAL_CYCLE_KEY_PREFIX = "cycle:v1:1h:" as const;
@@ -43,6 +43,21 @@ export function createCycleKey(decisionTime: number): CycleKey {
 }
 
 export const createOperationalCycleKey = createCycleKey;
+
+export function latestEligibleDecisionTime(
+  observationTime: number,
+  interval: string = QUANT_BAR_INTERVAL,
+): number {
+  if (interval !== QUANT_BAR_INTERVAL) {
+    throw new Error("Only the canonical 1h interval has an operational decision boundary.");
+  }
+  if (!Number.isSafeInteger(observationTime) || observationTime < 0) {
+    throw new Error("Observation time must be a non-negative safe-integer epoch millisecond.");
+  }
+  return Math.floor(observationTime / BAR_DURATION_MS) * BAR_DURATION_MS;
+}
+
+export const latestEligibleOperationalDecisionTime = latestEligibleDecisionTime;
 
 export function validateCycleKey(key: CycleKey): CycleKey {
   if (!key || typeof key !== "object" || Array.isArray(key)) {
@@ -94,6 +109,14 @@ export function createOperationalTruthState(input: {
   const observationTime = input.observationTime ?? null;
   if (observationTime !== null && (!Number.isSafeInteger(observationTime) || observationTime < 0)) {
     throw new Error("Operational observationTime must be a non-negative safe-integer epoch millisecond.");
+  }
+  if (input.status === "FRESH_CURRENT") {
+    if (input.source !== "LIVE" || cycleKey === null || observationTime === null) {
+      throw new Error("FRESH_CURRENT requires a live source, cycle key, and observation time.");
+    }
+    if (cycleKey.decisionTime > observationTime || cycleKey.decisionTime !== latestEligibleDecisionTime(observationTime)) {
+      throw new Error("FRESH_CURRENT requires the latest eligible canonical decision boundary.");
+    }
   }
   const historicalOnly = input.status === "RESTORED_HISTORICAL" || input.status === "DEGRADED_PROVIDER_UNAVAILABLE";
   return Object.freeze({

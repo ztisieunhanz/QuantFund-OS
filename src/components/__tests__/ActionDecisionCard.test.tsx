@@ -14,6 +14,7 @@ import {
   type ActionDecisionAction,
   type ActionDecisionReason,
 } from "../../lib/quant/actionDecision";
+import { createCycleKey, createOperationalTruthState } from "../../lib/quant/operationalPaperContract";
 
 const DECISION_TIME = Date.parse("2026-09-27T08:00:00.000Z");
 const AS_OF = Date.parse("2026-09-27T07:00:00.000Z");
@@ -84,8 +85,8 @@ function canonicalDecision(
   }) as ActionDecision;
 }
 
-function render(decision: ActionDecision | null): string {
-  return renderToStaticMarkup(createElement(ActionDecisionCard, { decision }));
+function render(decision: ActionDecision | null, operationalState?: ReturnType<typeof createOperationalTruthState>): string {
+  return renderToStaticMarkup(createElement(ActionDecisionCard, { decision, operationalState }));
 }
 
 describe("P16-A canonical ActionDecision presentation", () => {
@@ -191,6 +192,24 @@ describe("P16-A canonical ActionDecision presentation", () => {
     expect(html).toContain("Unavailable");
     expect(html).not.toContain('data-action="WAIT"');
     expect(html).not.toContain('data-action="HOLD"');
+  });
+
+  it("labels restored and degraded action evidence as non-current", () => {
+    const decision = canonicalDecision("HOLD");
+    const restored = createOperationalTruthState({
+      status: "RESTORED_HISTORICAL",
+      cycleKey: createCycleKey(DECISION_TIME),
+      source: "LIVE",
+    });
+    const degraded = createOperationalTruthState({
+      status: "DEGRADED_PROVIDER_UNAVAILABLE",
+      cycleKey: createCycleKey(DECISION_TIME),
+      source: "LIVE",
+    });
+
+    expect(render(decision, restored)).toContain("RESTORED HISTORICAL PAPER ACTION");
+    expect(render(decision, restored)).toContain("HISTORICAL / RESTORED · NOT CURRENT");
+    expect(render(decision, degraded)).toContain("LAST-KNOWN · PROVIDER UNAVAILABLE · NOT CURRENT");
   });
 
   it("formats weight and time fields deterministically", () => {

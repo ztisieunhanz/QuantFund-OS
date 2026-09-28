@@ -8,6 +8,7 @@ import { useTradingStore, getStorageApi } from "@/stores/tradingStore";
 import { useSnapshotStore } from "@/stores/snapshotStore";
 import { loadRuntimeMarketSnapshot } from "../runtimeSnapshot";
 import type { DecisionState } from "@/lib/quant/types";
+import { createCycleKey, createOperationalTruthState } from "@/lib/quant/operationalPaperContract";
 
 function makeMockDecision(override?: Partial<DecisionState>): DecisionState {
   const defaultTime = 1758400000000;
@@ -107,17 +108,20 @@ describe("Gate M7B Snapshot Hydration & Grounding Integration", () => {
       lastRunAt: 1758400000999,
       isRestored: true,
       restoredAt: Date.now(),
+      operationalState: createOperationalTruthState({
+        status: "RESTORED_HISTORICAL",
+        cycleKey: createCycleKey(mockDec.timestamp),
+        source: "LIVE",
+      }),
     });
 
     const snapshot = await loadRuntimeMarketSnapshot();
     expect(snapshot).not.toBeNull();
-    expect(snapshot.quant?.status).toBe("AVAILABLE");
-    expect(snapshot.quant?.strongestStrategyId).toBe("ADAPTIVE_TREND");
-    expect(snapshot.risk?.status).toBe("AVAILABLE");
-    expect(snapshot.risk?.riskState).toBe("NORMAL");
-    expect(snapshot.omega?.status).toBe("AVAILABLE");
-    expect(snapshot.omega?.targetWeights).toEqual({ BTC: 0.5 });
-    expect(snapshot.omega?.note).toContain("Restored research state");
+    expect(snapshot.operationalState?.status).toBe("RESTORED_HISTORICAL");
+    expect(snapshot.quant?.status).toBe("UNAVAILABLE");
+    expect(snapshot.risk?.status).toBe("UNAVAILABLE");
+    expect(snapshot.omega?.status).toBe("UNAVAILABLE");
+    expect(snapshot.synthesis?.status).toBe("INSUFFICIENT_DATA");
   });
 
   it("13 & 14. Shared snapshot store is populated correctly for UI consumers", async () => {
@@ -127,15 +131,40 @@ describe("Gate M7B Snapshot Hydration & Grounding Integration", () => {
       lastRunAt: 1758400000999,
       isRestored: true,
       restoredAt: Date.now(),
+      operationalState: createOperationalTruthState({
+        status: "RESTORED_HISTORICAL",
+        cycleKey: createCycleKey(mockDec.timestamp),
+        source: "LIVE",
+      }),
     });
 
     const snap = await useSnapshotStore.getState().refreshSnapshot();
     expect(snap).not.toBeNull();
     expect(useSnapshotStore.getState().snapshot).toEqual(snap);
 
-    // Verify quant/risk/omega details are available to Macro V2 & GlobalChatbot
+    // Restored state is retained as evidence but cannot populate current projections.
     const currentSnap = useSnapshotStore.getState().snapshot!;
-    expect(currentSnap.quant?.strategies.length).toBe(3);
-    expect(currentSnap.omega?.targetWeights?.BTC).toBe(0.5);
+    expect(currentSnap.operationalState?.historicalOnly).toBe(true);
+    expect(currentSnap.quant?.status).toBe("UNAVAILABLE");
+    expect(currentSnap.risk?.status).toBe("UNAVAILABLE");
+    expect(currentSnap.omega?.targetWeights).toBeNull();
+  });
+
+  it("keeps current Quant/Risk/Omega projections available for a fresh boundary", async () => {
+    const mockDec = makeMockDecision({ timestamp: 1758398400000 });
+    useTradingStore.setState({
+      latestDecision: mockDec,
+      operationalState: createOperationalTruthState({
+        status: "FRESH_CURRENT",
+        cycleKey: createCycleKey(mockDec.timestamp),
+        observationTime: mockDec.timestamp,
+        source: "LIVE",
+      }),
+    });
+
+    const snapshot = await loadRuntimeMarketSnapshot();
+    expect(snapshot.quant?.status).toBe("AVAILABLE");
+    expect(snapshot.risk?.status).toBe("AVAILABLE");
+    expect(snapshot.omega?.targetWeights).toEqual({ BTC: 0.5 });
   });
 });

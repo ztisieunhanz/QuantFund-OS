@@ -148,11 +148,12 @@ function ProvenanceBadge({ classification }: { classification: string }) {
 export function MacroViewV2() {
   const { snapshot, loading, refreshSnapshot } = useSnapshotStore();
   const actionDecision = useTradingStore((state) => state.actionDecision);
+  const operationalState = useTradingStore((state) => state.operationalState);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "ai"; text: string }>>([
     {
       sender: "ai",
-      text: "Xin chào! Tôi là **AI Quant Advisor V2**. Dữ liệu `CurrentMarketSnapshot` đã được đồng bộ hóa thành công. Bạn cần tôi phân tích góc nhìn vĩ mô hay kiểm tra tín hiệu gì?",
+      text: "Xin chào! Tôi là **AI Quant Advisor V2**. Snapshot hiện chưa chứng minh được trạng thái current; tôi sẽ chỉ giải thích dữ liệu được gắn nhãn và không suy ra hành động.",
     },
   ]);
   const [chatLoading, setChatLoading] = useState(false);
@@ -242,6 +243,13 @@ export function MacroViewV2() {
   }
 
   const { data, macro, quant, risk, omega, synthesis } = snapshot;
+  const operationalLabel = operationalState.status === "FRESH_CURRENT"
+    ? "CURRENT OPERATIONAL STATE"
+    : operationalState.status === "RESTORED_HISTORICAL"
+      ? "RESTORED HISTORICAL · NOT CURRENT"
+      : operationalState.status === "DEGRADED_PROVIDER_UNAVAILABLE"
+        ? "LAST-KNOWN HISTORICAL · PROVIDER UNAVAILABLE"
+        : "CURRENT OPERATIONAL STATE UNAVAILABLE";
 
   const dataMetrics: Array<{ id: string; label: string; datum: MacroDatum<unknown> }> = [
     { id: "dxy", label: "US Dollar Index (DXY)", datum: data.dxy },
@@ -264,6 +272,9 @@ export function MacroViewV2() {
           <div className="flex items-center gap-2">
             <h1 className="break-words text-lg font-bold tracking-wide text-white">Macro V2 Intelligence & Decision Synthesis</h1>
             <StatusBadge status={synthesis?.status ?? "INSUFFICIENT_DATA"} />
+            <span className="rounded border border-amber/40 bg-amber/10 px-1.5 py-0.5 font-mono text-[9px] font-bold text-amber">
+              {operationalLabel}
+            </span>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
             Single Source of Truth Grounding (Gate M4 Strangler Architecture) · Evaluated asOf:{" "}

@@ -112,7 +112,7 @@ function makeMockDecision(override?: Partial<DecisionState>): DecisionState {
 function generateMockBars(count: number): OhlcvBar[] {
   const bars: OhlcvBar[] = [];
   let price = 50000;
-  const startTime = 1758000000;
+  const startTime = 1757998800;
   for (let i = 0; i < count; i++) {
     price += (i % 2 === 0 ? 50 : -30);
     bars.push({
@@ -346,7 +346,12 @@ describe("Gate M7B Paper Engine Persistence & Hydration Safety", () => {
     useTradingStore.getState().runOnBars(bars, {
       interval: "1h",
       source: "live",
-      observationTime: Date.now(),
+    });
+    const currentDecisionBoundary = useTradingStore.getState().latestDecision!.timestamp;
+    useTradingStore.getState().runOnBars(bars, {
+      interval: "1h",
+      source: "live",
+      observationTime: currentDecisionBoundary,
     });
     const fresh = useTradingStore.getState();
     expect(fresh.operationalState.status).toBe("FRESH_CURRENT");
@@ -380,5 +385,19 @@ describe("Gate M7B Paper Engine Persistence & Hydration Safety", () => {
     expect(legacy.latestDecision).toEqual(decision);
     expect(legacy.lifecycleCheckpoint).toBeNull();
     expect(legacy.actionDecision).toBeNull();
+  });
+
+  it("does not promote a stale live cycle into current action authority", () => {
+    useTradingStore.getState().runOnBars(generateMockBars(140), {
+      interval: "1h",
+      source: "live",
+      observationTime: Date.now(),
+    });
+
+    const state = useTradingStore.getState();
+    expect(state.latestDecision).not.toBeNull();
+    expect(state.operationalState.status).toBe("UNAVAILABLE");
+    expect(state.actionDecision).toBeNull();
+    expect(state.operationalState.reason).toContain("latest eligible provider boundary");
   });
 });

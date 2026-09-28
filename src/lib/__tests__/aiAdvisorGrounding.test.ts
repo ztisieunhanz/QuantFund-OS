@@ -10,6 +10,8 @@ import {
   type AiAdvisorGrounding,
 } from "../aiAdvisorGrounding";
 import { buildAiAdvisorGrounding } from "../aiAdvisorGroundingProjection";
+import { createCycleKey, createOperationalTruthState } from "../quant/operationalPaperContract";
+import type { CurrentMarketSnapshot } from "../macro/types";
 import {
   createDeferredActionDecision,
   type ActionDecisionAction,
@@ -175,5 +177,44 @@ describe("P16-B bounded ActionDecision grounding", () => {
     const instruction = buildServerGroundedAdvisorInstruction(buildAiAdvisorGrounding(null, null));
     expect(instruction).toContain("No canonical ActionDecision is available");
     expect(instruction).toContain("Do not infer or name WAIT, ENTER, ADD, HOLD, REDUCE, EXIT");
+  });
+
+  it("suppresses restored action authority while preserving the operational label", () => {
+    const datum = {
+      status: "AVAILABLE" as const,
+      value: 1,
+      asOf: T,
+      quality: "USABLE" as const,
+      sourceClassification: "LIVE" as const,
+      provider: "test-provider",
+      instrument: "TEST",
+    };
+    const restored = createOperationalTruthState({
+      status: "RESTORED_HISTORICAL",
+      cycleKey: createCycleKey(T),
+      source: "LIVE",
+    });
+    const snapshot = {
+      timestamp: T,
+      data: {
+        dxy: datum,
+        us2y: datum,
+        us10y: datum,
+        vix: datum,
+        gold: datum,
+        btc: datum,
+        vnindex: datum,
+        breadth: datum,
+        liquidity: datum,
+        foreignFlow: datum,
+      },
+      macro: { status: "AVAILABLE", regime: "RISK_ON", confidence: 80, unavailableMetrics: [], staleMetrics: [] },
+      synthesis: { status: "AVAILABLE", stance: "RISK_ON", headline: "Historical context", confidence: 80, dataCoverage: 1 },
+      operationalState: restored,
+    } as unknown as CurrentMarketSnapshot;
+    const grounding = buildAiAdvisorGrounding(createDeferredActionDecision({ assetId: "BTC", decisionTime: T, asOf: T }), snapshot);
+
+    expect(grounding.actionDecision).toEqual({ status: "UNAVAILABLE", reason: "NO_CANONICAL_ACTION_DECISION" });
+    expect(grounding.marketSnapshot).toMatchObject({ operationalState: { status: "RESTORED_HISTORICAL", historicalOnly: true } });
   });
 });

@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle2, Clock3, Shield, Target } from "lucide-reac
 import { clsx } from "@/lib/clsx";
 import { presentActionDecision } from "@/lib/actionDecisionPresenter";
 import type { ActionDecision, ActionDecisionAction } from "@/lib/quant/actionDecision";
+import type { OperationalTruthState } from "@/lib/quant/operationalPaperContract";
 
 const ACTION_TONE: Readonly<Record<ActionDecisionAction, string>> = Object.freeze({
   WAIT: "border-amber/50 bg-amber/10 text-amber",
@@ -12,14 +13,27 @@ const ACTION_TONE: Readonly<Record<ActionDecisionAction, string>> = Object.freez
   EXIT: "border-down/50 bg-down/10 text-down",
 });
 
-export function ActionDecisionCard({ decision }: { readonly decision: ActionDecision | null }) {
+export function ActionDecisionCard({ decision, operationalState }: {
+  readonly decision: ActionDecision | null;
+  readonly operationalState?: OperationalTruthState | null;
+}) {
+  const truthLabel = operationalState?.status === "RESTORED_HISTORICAL"
+    ? "RESTORED HISTORICAL PAPER ACTION"
+    : operationalState?.status === "DEGRADED_PROVIDER_UNAVAILABLE"
+      ? "LAST-KNOWN HISTORICAL PAPER ACTION"
+      : "CANONICAL PAPER ACTION";
+  const truthNotice = operationalState?.status === "RESTORED_HISTORICAL"
+    ? "HISTORICAL / RESTORED · NOT CURRENT"
+    : operationalState?.status === "DEGRADED_PROVIDER_UNAVAILABLE"
+      ? "LAST-KNOWN · PROVIDER UNAVAILABLE · NOT CURRENT"
+      : null;
   if (decision === null) {
     return (
       <section className="min-w-0 border border-amber/40 bg-amber/5 p-4" aria-label="Canonical paper action unavailable">
         <div className="flex items-start gap-3">
           <AlertTriangle className="mt-0.5 shrink-0 text-amber" size={18} />
           <div className="min-w-0">
-            <div className="font-mono text-[10px] font-bold tracking-[0.2em] text-amber">CANONICAL PAPER ACTION</div>
+            <div className="font-mono text-[10px] font-bold tracking-[0.2em] text-amber">{truthLabel}</div>
             <div className="mt-1 text-lg font-semibold text-ink">Unavailable</div>
             <p className="mt-1 text-[11px] text-muted">
               Awaiting a canonical ActionDecision from the 1H paper replay. No action is inferred from market or macro data.
@@ -33,12 +47,13 @@ export function ActionDecisionCard({ decision }: { readonly decision: ActionDeci
   const view = presentActionDecision(decision);
 
   return (
-    <section className="min-w-0 border border-line bg-panel p-4" aria-label={`Canonical paper action for ${view.assetId}`} data-action={view.action}>
+    <section className="min-w-0 border border-line bg-panel p-4" aria-label={`${truthLabel} for ${view.assetId}`} data-action={view.action}>
       <div className="grid gap-4 xl:grid-cols-[1.1fr_1fr_1.35fr]">
         <div className="min-w-0">
           <div className="flex min-w-0 items-start gap-2 break-words font-mono text-[10px] font-bold tracking-[0.2em] text-muted">
-            <Target size={14} className="text-cyan" /> CANONICAL PAPER ACTION · {view.assetId}
+            <Target size={14} className="text-cyan" /> {truthLabel} · {view.assetId}
           </div>
+          {truthNotice ? <div className="mt-1 font-mono text-[10px] font-bold text-amber">{truthNotice}</div> : null}
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <span className={clsx("border px-4 py-2 font-mono text-2xl font-black tracking-[0.14em]", ACTION_TONE[view.action])}>
               {view.action}

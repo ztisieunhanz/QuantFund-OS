@@ -82,6 +82,7 @@ export const GlobalChatbot: React.FC = () => {
   const snapshot = useSnapshotStore((s) => s.snapshot);
   const loading = useSnapshotStore((s) => s.loading);
   const actionDecision = useTradingStore((s) => s.actionDecision);
+  const operationalState = useTradingStore((s) => s.operationalState);
 
   useEffect(() => () => {
     requestCoordinatorRef.current.dispose();
@@ -95,9 +96,15 @@ export const GlobalChatbot: React.FC = () => {
     const lastReset = localStorage.getItem("quant_chat_last_reset");
     const now = Date.now();
 
-    const initialGreeting = snapshot
-      ? "Xin chào! Tôi là **Trợ lý AI Quản trị Rủi ro (Quant Expert)**.\n\nDữ liệu `CurrentMarketSnapshot` đã được đồng bộ hóa thành công. Bạn cần tôi phân tích chiến lược gì hôm nay?"
-      : "Xin chào! Tôi là **Trợ lý AI Quản trị Rủi ro (Quant Expert)**.\n\nHệ thống đang chờ dữ liệu `CurrentMarketSnapshot`. Vui lòng mở màn hình Macro V2 để tải snapshot.";
+    const initialGreeting = snapshot && operationalState.status === "FRESH_CURRENT"
+      ? "Xin chào! Tôi là **Trợ lý AI Quản trị Rủi ro (Quant Expert)**.\n\nDữ liệu `CurrentMarketSnapshot` hiện ở trạng thái hiện tại. Bạn cần tôi phân tích chiến lược gì hôm nay?"
+      : snapshot && operationalState.status === "RESTORED_HISTORICAL"
+        ? "Xin chào! Tôi là **Trợ lý AI Quản trị Rủi ro (Quant Expert)**.\n\nSnapshot hiện là trạng thái lịch sử đã khôi phục, không phải dữ liệu hiện tại. Tôi chỉ có thể giải thích bằng chứng lịch sử được gắn nhãn rõ ràng."
+        : snapshot && operationalState.status === "DEGRADED_PROVIDER_UNAVAILABLE"
+          ? "Xin chào! Tôi là **Trợ lý AI Quản trị Rủi ro (Quant Expert)**.\n\nProvider hiện không khả dụng. Snapshot chỉ chứa bối cảnh lịch sử/last-known và không tạo quyền hành động hiện tại."
+          : snapshot
+            ? "Xin chào! Tôi là **Trợ lý AI Quản trị Rủi ro (Quant Expert)**.\n\nSnapshot đã tải nhưng chưa chứng minh được trạng thái hiện tại; các lớp hành động hiện thời vẫn UNAVAILABLE."
+            : "Xin chào! Tôi là **Trợ lý AI Quản trị Rủi ro (Quant Expert)**.\n\nHệ thống đang chờ dữ liệu `CurrentMarketSnapshot`. Vui lòng mở màn hình Macro V2 để tải snapshot.";
 
     if (!lastReset || now - parseInt(lastReset) > CHAT_EXPIRY_MS) {
       setMessages([{ sender: "ai", text: initialGreeting, kind: "system" }]);
@@ -118,7 +125,7 @@ export const GlobalChatbot: React.FC = () => {
         setMessages([{ sender: "ai", text: initialGreeting, kind: "system" }]);
       }
     }
-  }, [snapshot]);
+  }, [snapshot, operationalState.status]);
 
   useEffect(() => {
     if (messages.length > 1) {
@@ -179,9 +186,19 @@ export const GlobalChatbot: React.FC = () => {
   };
 
   // Truthful canonical action status; snapshot remains contextual only.
-  let statusText = actionDecision
-    ? `Canonical ${actionDecision.action}${actionDecision.actionDerivationStatus === "WAIT_FAIL_CLOSED" ? " · Fail-closed" : ""}`
-    : "Canonical Action Unavailable";
+  const isCurrent = operationalState.status === "FRESH_CURRENT";
+  const stateLabel = operationalState.status === "RESTORED_HISTORICAL"
+    ? "Restored historical"
+    : operationalState.status === "DEGRADED_PROVIDER_UNAVAILABLE"
+      ? "Last-known historical"
+      : "Canonical";
+  let statusText = actionDecision && isCurrent
+    ? `${stateLabel} ${actionDecision.action}${actionDecision.actionDerivationStatus === "WAIT_FAIL_CLOSED" ? " · Fail-closed" : ""}`
+    : operationalState.status === "RESTORED_HISTORICAL"
+      ? "Historical Action Unavailable · Not Current"
+      : operationalState.status === "DEGRADED_PROVIDER_UNAVAILABLE"
+        ? "Last-known Historical Context · Provider Unavailable"
+        : "Canonical Action Unavailable";
   let statusColor = "text-rose-400";
   let dotColor = "bg-rose-400";
 
@@ -189,11 +206,13 @@ export const GlobalChatbot: React.FC = () => {
     statusText += " · Loading Context";
     statusColor = "text-amber-400";
     dotColor = "bg-amber-400 animate-pulse";
-  } else if (actionDecision) {
+  } else if (actionDecision && isCurrent) {
     statusColor = actionDecision.actionDerivationStatus === "WAIT_FAIL_CLOSED" ? "text-amber-400" : "text-emerald-400";
     dotColor = actionDecision.actionDerivationStatus === "WAIT_FAIL_CLOSED" ? "bg-amber-400" : "bg-emerald-400 animate-pulse";
+  } else if (snapshot && isCurrent) {
+    statusText += " · Current Context Ready";
   } else if (snapshot) {
-    statusText += " · Context Ready";
+    statusText += " · Historical Context Only";
   }
 
   return (

@@ -3,7 +3,7 @@ import { fetchBtcKlines } from "../binance";
 import { getMarketSourceLabel, useMarketStore } from "@/stores/marketStore";
 import { getStorageApi, useTradingStore } from "@/stores/tradingStore";
 
-const BASE_OPEN_TIME = 1_700_000_000_000;
+const BASE_OPEN_TIME = 1_699_999_200_000;
 const HOUR_MS = 3_600_000;
 
 const gatewayBars = (close: string, count = 60, start = BASE_OPEN_TIME, step = 0) => Array.from({ length: count }, (_, index) => {
@@ -41,13 +41,23 @@ const marketResponse = (close: string, count = 60, step = 0) => new Response(
 );
 
 const activeReplayBars = (basePrice: number) => Array.from({ length: 140 }, (_, index) => ({
-  time: 1_700_000_000 + index * 3_600,
+  time: Math.floor(BASE_OPEN_TIME / 1000) + index * 3_600,
   open: basePrice + index,
   high: basePrice + 100 + index,
   low: basePrice - 100 + index,
   close: basePrice + 50 + index,
   volume: 100,
 }));
+
+function runCurrentLiveReplay(bars: Array<{ time: number; open: number; high: number; low: number; close: number; volume: number }>) {
+  const lastTime = bars.at(-1)?.time ?? 0;
+  const lastOpenTime = lastTime < 1e11 ? lastTime * 1000 : lastTime;
+  useTradingStore.getState().runOnBars(bars, {
+    interval: "1h",
+    source: "live",
+    observationTime: lastOpenTime + HOUR_MS,
+  });
+}
 
 describe("active Binance market feed boundary", () => {
   afterEach(() => {
@@ -166,14 +176,14 @@ describe("active Binance market feed boundary", () => {
     expect(useMarketStore.getState().error).toBeNull();
 
     const staleBars = Array.from({ length: 140 }, (_, index) => ({
-      time: 1_700_000_000 + index * 3_600,
+      time: Math.floor(BASE_OPEN_TIME / 1000) + index * 3_600,
       open: 70_000 + index,
       high: 70_100 + index,
       low: 69_900 + index,
       close: 70_050 + index,
       volume: 100,
     }));
-    useTradingStore.getState().runOnBars(staleBars, { interval: "1h", source: "live" });
+    runCurrentLiveReplay(staleBars);
     const durableBeforeOutage = useTradingStore.getState();
     expect(durableBeforeOutage.latestDecision).not.toBeNull();
     expect(durableBeforeOutage.lifecycleCheckpoint).not.toBeNull();
@@ -199,7 +209,7 @@ describe("active Binance market feed boundary", () => {
     expect(useMarketStore.getState().source).toBe("live");
     expect(useMarketStore.getState().error).toBeNull();
 
-    useTradingStore.getState().runOnBars(useMarketStore.getState().bars, { interval: "1h", source: "live" });
+    runCurrentLiveReplay(useMarketStore.getState().bars);
     expect(useTradingStore.getState().latestDecision).not.toBeNull();
     expect(useTradingStore.getState().actionDecision).not.toBeNull();
     expect(useTradingStore.getState().latestDecision).not.toEqual(durableBeforeOutage.latestDecision);
@@ -207,7 +217,7 @@ describe("active Binance market feed boundary", () => {
 
   it("preserves a rehydrated lifecycle across the current provider outage", async () => {
     const durableBars = activeReplayBars(70_000);
-    useTradingStore.getState().runOnBars(durableBars, { interval: "1h", source: "live" });
+    runCurrentLiveReplay(durableBars);
     const persistedBeforeRestart = getStorageApi().getItem("quant_paper_engine_state")!;
     const beforeRestart = useTradingStore.getState();
     expect(beforeRestart.latestDecision).not.toBeNull();
@@ -275,14 +285,14 @@ describe("active Binance market feed boundary", () => {
       .mockImplementationOnce(() => requestB.promise));
 
     await useMarketStore.getState().load("1h");
-    useTradingStore.getState().runOnBars(useMarketStore.getState().bars, { interval: "1h", source: "live" });
+    runCurrentLiveReplay(useMarketStore.getState().bars);
     expect(useTradingStore.getState().actionDecision).not.toBeNull();
 
     const loadA = useMarketStore.getState().load("1h");
     const loadB = useMarketStore.getState().load("1h");
     requestB.resolve(marketResponse("81000", 140, 1));
     await loadB;
-    useTradingStore.getState().runOnBars(useMarketStore.getState().bars, { interval: "1h", source: "live" });
+    runCurrentLiveReplay(useMarketStore.getState().bars);
     const bState = useTradingStore.getState();
     const persistedAfterB = getStorageApi().getItem("quant_paper_engine_state")!;
     expect(bState.actionDecision).not.toBeNull();
@@ -351,7 +361,7 @@ describe("active Binance market feed boundary", () => {
       .mockImplementationOnce(() => requestB.promise));
 
     await useMarketStore.getState().load("1h");
-    useTradingStore.getState().runOnBars(useMarketStore.getState().bars, { interval: "1h", source: "live" });
+    runCurrentLiveReplay(useMarketStore.getState().bars);
     const seeded = useTradingStore.getState();
     expect(seeded.actionDecision).not.toBeNull();
 
