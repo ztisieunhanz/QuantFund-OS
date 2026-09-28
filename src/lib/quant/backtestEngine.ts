@@ -1,6 +1,12 @@
 // ============================================================================
 // FILE: src/lib/quant/backtestEngine.ts
 // MODULE: DETERMINISTIC REPLAY & INTEGRITY-SECURED BACKTEST ENGINE
+//
+// M18-B: The financial state transition within the replay loop is delegated
+// to the pure single-cycle transition kernel (cycleTransitionKernel.ts).
+// This file retains replay orchestration: dataset validation, loop iteration,
+// date filtering, PIT context assembly, metrics calculation, and result
+// assembly. There is NO duplicated financial transition logic.
 // ============================================================================
 
 import type {
@@ -11,33 +17,11 @@ import type {
   PointInTimeBar,
   PointInTimeEvent,
   PointInTimeMacro,
-  PositionRecord,
-  SignalOutput,
-  StrategyContext,
-  StrategyId,
-  StrategyState,
-  ProvenancedTargetPortfolioWeight,
 } from "@/lib/quant/types";
 
-import { evaluateAdaptiveTrend, updateAdaptiveTrendState, type AdaptiveTrendConfig } from "@/lib/quant/adaptiveTrend";
-import { evaluateEventReaction, updateEventReactionState, type EventReactionConfig } from "@/lib/quant/eventReaction";
-import { evaluateMeanReversion, updateMeanReversionState, type MeanReversionConfig } from "@/lib/quant/meanReversion";
-import { evaluatePermission, type PermissionGateConfig } from "@/lib/quant/permissionGate";
-import { evaluatePortfolioRisk, createInitialRiskState, type RiskEngineConfig, type RiskEngineState } from "@/lib/quant/riskEngine";
-import { evaluateOmegaAllocation, type OmegaAllocatorConfig } from "@/lib/quant/omegaAllocator";
-import {
-  executeRebalance,
-  type ExecutionContext,
-  type ExecutionEngineResult,
-  type PortfolioAccountState,
-} from "@/lib/quant/executionEngine";
-import {
-  createCanonicalPortfolioValuationSnapshot,
-  type CanonicalPortfolioValuationSnapshot,
-} from "@/lib/quant/portfolioValuation";
+import { createInitialRiskState } from "@/lib/quant/riskEngine";
 import { reconstructTradeAttribution } from "@/lib/quant/tradeAttribution";
-import { BARS_PER_YEAR, ANNUALIZATION_FACTOR, BAR_DURATION_MS, canonicalBarAvailableAt } from "@/lib/quant/timeDomain";
-import { createCycleKey } from "@/lib/quant/operationalPaperContract";
+import { BARS_PER_YEAR, ANNUALIZATION_FACTOR, canonicalBarAvailableAt } from "@/lib/quant/timeDomain";
 import {
   validateHistoricalDataset,
   normalizeHistoricalDataset,
@@ -46,14 +30,13 @@ import {
   type HistoricalDataset,
   type HistoricalContextAtTime,
 } from "@/lib/quant/historicalPit";
+import type { ActiveTargetLifecycle } from "@/lib/quant/targetExecutionLifecycle";
 import {
-  advanceActiveTargetLifecycle,
-  createActiveTargetLifecycleRoot,
-  createExecutionBoundTargetAssessment,
-  createTargetExecutionAssessment,
-  reconcileActiveTargetLifecycleExecution,
-  type ActiveTargetLifecycle,
-} from "@/lib/quant/targetExecutionLifecycle";
+  executeSingleCycleTransition,
+  type PriorCycleState,
+  type BacktestStrategyConfigs,
+  type CycleStrategyConfigs,
+} from "@/lib/quant/cycleTransitionKernel";
 
 export interface BacktestDataset {
   readonly assetBars: Readonly<Record<AssetId, readonly PointInTimeBar[]>>;
@@ -63,14 +46,7 @@ export interface BacktestDataset {
   readonly historicalDataset?: HistoricalDataset;
 }
 
-export interface BacktestStrategyConfigs {
-  readonly trend?: AdaptiveTrendConfig;
-  readonly event?: EventReactionConfig;
-  readonly meanReversion?: MeanReversionConfig;
-  readonly permission?: PermissionGateConfig;
-  readonly risk?: RiskEngineConfig;
-  readonly omega?: OmegaAllocatorConfig;
-}
+export type { BacktestStrategyConfigs, CycleStrategyConfigs };
 
 export interface BacktestPerformanceMetrics {
   readonly initialNav: number;
@@ -102,20 +78,6 @@ export interface BacktestResult {
   readonly totalBarsEvaluated: number;
   /** Transient audit evidence only; never persisted into DecisionState or consumed as authority. */
   readonly targetLifecycleEvidence: readonly ActiveTargetLifecycle[];
-}
-
-interface PendingCanonicalExecutionEvidence {
-  readonly lifecycle: ActiveTargetLifecycle;
-  readonly target: ProvenancedTargetPortfolioWeight;
-  readonly preExecutionAccount: PortfolioAccountState;
-  readonly assetBars: Readonly<Record<AssetId, PointInTimeBar>>;
-  readonly context: ExecutionContext;
-  readonly executionResult: ExecutionEngineResult;
-}
-
-function stripTransientLifecycleBinding(record: ExecutionRecord): ExecutionRecord {
-  const { lifecycleBinding: _transientLifecycleBinding, ...durableRecord } = record;
-  return durableRecord;
 }
 
 function getLatestMacroAsOf(
@@ -205,31 +167,33 @@ export function runBacktest(
     );
   }
 
-  let account: PortfolioAccountState = {
-    cash: config.initialCapital,
-    positions: {},
+  // ========================================================================
+  // INITIAL STATE — passed to the first cycle transition
+  // ========================================================================
+  let cycleState: PriorCycleState = {
+    account: {
+      cash: config.initialCapital,
+      positions: {},
+    },
+    riskState: createInitialRiskState(),
+    peakNav: config.initialCapital,
+    strategyStates: {
+      ADAPTIVE_TREND: { strategyId: "ADAPTIVE_TREND", lastEvaluationTimestamp: 0, barsSinceLastSignal: 0, internalValues: {} },
+      EVENT_REACTION: { strategyId: "EVENT_REACTION", lastEvaluationTimestamp: 0, barsSinceLastSignal: 0, internalValues: {} },
+      MEAN_REVERSION: { strategyId: "MEAN_REVERSION", lastEvaluationTimestamp: 0, barsSinceLastSignal: 0, internalValues: {} },
+    },
+    pendingRebalance: null,
+    activeTargetLifecycle: null,
+    priorDecisionNav: config.initialCapital,
   };
-
-  let riskState: RiskEngineState = createInitialRiskState();
-  let peakNav = config.initialCapital;
-
-  const strategyStates: Record<StrategyId, StrategyState> = {
-    ADAPTIVE_TREND: { strategyId: "ADAPTIVE_TREND", lastEvaluationTimestamp: 0, barsSinceLastSignal: 0, internalValues: {} },
-    EVENT_REACTION: { strategyId: "EVENT_REACTION", lastEvaluationTimestamp: 0, barsSinceLastSignal: 0, internalValues: {} },
-    MEAN_REVERSION: { strategyId: "MEAN_REVERSION", lastEvaluationTimestamp: 0, barsSinceLastSignal: 0, internalValues: {} },
-  };
-
-  // CORE-06: strategyPnlHistory fabrication removed.
-  // Previously this accumulated alphaScore × barPnl proxies and fed them to
-  // calculateCorrelationMatrix() → Omega, creating fabricated attribution.
-  // Until genuine per-strategy PnL attribution exists, pass null to Omega.
 
   const decisionHistory: DecisionState[] = [];
   const allExecutions: ExecutionRecord[] = [];
   const targetLifecycleEvidence: ActiveTargetLifecycle[] = [];
-  let pendingRebalance: ProvenancedTargetPortfolioWeight | null = null;
-  let activeTargetLifecycle: ActiveTargetLifecycle | null = null;
 
+  // ========================================================================
+  // REPLAY LOOP — composes the single-cycle transition kernel
+  // ========================================================================
   for (let t = effectiveWarmup; t < primaryBars.length; t++) {
     const currentBar = primaryBars[t];
     const barOpenTime = currentBar.timestamp;
@@ -238,6 +202,7 @@ export function runBacktest(
     if (config.startDate > 0 && decisionTime < config.startDate) continue;
     if (config.endDate > 0 && decisionTime > config.endDate) break;
 
+    // Build per-cycle context from dataset (orchestration-level)
     const currentAssetBars: Record<AssetId, PointInTimeBar> = {};
     for (const id of assetIds) {
       const bList = dataset.assetBars[id];
@@ -245,76 +210,14 @@ export function runBacktest(
       else if (bList && bList.length > 0) currentAssetBars[id] = bList[bList.length - 1];
     }
 
-    // A. XỬ LÝ KHỚP LỆNH CHỜ TẠI NEXT_BAR_OPEN
-    let barExecutions: ExecutionRecord[] = [];
-    let pendingCanonicalExecutionEvidence: PendingCanonicalExecutionEvidence | null = null;
-    if (config.executionRule === "NEXT_BAR_OPEN" && pendingRebalance) {
-      const preExecutionAccount = account;
-      const executionContext: ExecutionContext = {
-        decisionTimestamp: pendingRebalance.asOfTimestamp,
-        executionTimestamp: barOpenTime,
-        executionRule: "NEXT_BAR_OPEN",
-        commissionRate: config.commissionRate,
-        slippageConfig: config.slippageModel,
-        ...(activeTargetLifecycle ? {
-          lifecycleBinding: {
-            targetDecisionIdentity: pendingRebalance.provenance.targetDecisionIdentity,
-            activeTargetRootIdentity: activeTargetLifecycle.activeTargetRootIdentity,
-          },
-        } : {}),
-      };
-      const execResult = executeRebalance(
-        account,
-        pendingRebalance,
-        currentAssetBars,
-        executionContext,
-      );
-      if (activeTargetLifecycle) {
-        pendingCanonicalExecutionEvidence = {
-          lifecycle: activeTargetLifecycle,
-          target: pendingRebalance,
-          preExecutionAccount,
-          assetBars: currentAssetBars,
-          context: executionContext,
-          executionResult: execResult,
-        };
-      }
-      account = execResult.updatedAccount;
-      barExecutions = execResult.records.map(stripTransientLifecycleBinding);
-      allExecutions.push(...barExecutions);
-      if (config.dataQuality === "LIVE" && activeTargetLifecycle) {
-        const executionMarks = Object.entries(account.positions)
-          .filter(([, position]) => position.quantity > 0)
-          .flatMap(([assetId]) => {
-            const priorBar = dataset.assetBars[assetId]?.[t - 1];
-            const completedBar = priorBar && priorBar.timestamp + BAR_DURATION_MS === barOpenTime ? priorBar : undefined;
-            return completedBar ? [{ assetId, bar: completedBar }] : [];
-          });
-        const postExecutionValuation = createCanonicalPortfolioValuationSnapshot({
-          decisionTime: barOpenTime,
-          account,
-          marks: executionMarks,
-          dataQuality: config.dataQuality,
-        });
-        const executionAssessment = createExecutionBoundTargetAssessment({
-          activeTargetRootIdentity: pendingCanonicalExecutionEvidence!.lifecycle.activeTargetRootIdentity,
-          target: pendingCanonicalExecutionEvidence!.target,
-          preExecutionAccount: pendingCanonicalExecutionEvidence!.preExecutionAccount,
-          assetBars: pendingCanonicalExecutionEvidence!.assetBars,
-          context: pendingCanonicalExecutionEvidence!.context,
-          executionResult: pendingCanonicalExecutionEvidence!.executionResult,
-          postExecutionValuation,
-        });
-        activeTargetLifecycle = reconcileActiveTargetLifecycleExecution(
-          pendingCanonicalExecutionEvidence!.lifecycle,
-          executionAssessment,
-        );
-        targetLifecycleEvidence.push(activeTargetLifecycle);
-      }
-      pendingRebalance = null;
+    // Prior bar for lifecycle execution marks
+    const priorAssetBars: Record<AssetId, PointInTimeBar> = {};
+    for (const id of assetIds) {
+      const bList = dataset.assetBars[id];
+      if (bList && t > 0 && bList.length > t - 1) priorAssetBars[id] = bList[t - 1];
     }
 
-    // B. POINT-IN-TIME SLICE at the completed close boundary for this bar.
+    // PIT context
     let historicalContext: HistoricalContextAtTime | undefined;
     if (normalizedHistorical) {
       historicalContext = buildHistoricalContextAtTime(normalizedHistorical, decisionTime);
@@ -325,197 +228,34 @@ export function runBacktest(
     if (!eventState && historicalContext?.latestEvent) {
       eventState = historicalEventToPointInTimeEvent(historicalContext.latestEvent);
     }
+
     const benchmarkSlice = primaryBars.slice(0, t + 1);
 
-    // C. ĐÁNH GIÁ 3 CHIẾN LƯỢC
-    const trendCtx: StrategyContext = {
-      strategyId: "ADAPTIVE_TREND",
-      assetId: benchmarkId,
-      currentBarTimestamp: decisionTime,
-      decisionTimestamp: decisionTime,
-      currentPrice: currentBar.close,
-      priceHistory: benchmarkSlice,
-      macro: macroState,
-      latestEvent: eventState,
-    };
-    const trendSignal = evaluateAdaptiveTrend(trendCtx, strategyStates.ADAPTIVE_TREND, strategyConfigs.trend);
-    strategyStates.ADAPTIVE_TREND = updateAdaptiveTrendState(trendCtx, strategyStates.ADAPTIVE_TREND, trendSignal);
-
-    const eventCtx: StrategyContext = {
-      strategyId: "EVENT_REACTION",
-      assetId: benchmarkId,
-      currentBarTimestamp: decisionTime,
-      decisionTimestamp: decisionTime,
-      currentPrice: currentBar.close,
-      priceHistory: benchmarkSlice,
-      macro: macroState,
-      latestEvent: eventState,
-    };
-    const eventSignal = evaluateEventReaction(eventCtx, strategyStates.EVENT_REACTION, strategyConfigs.event);
-    strategyStates.EVENT_REACTION = updateEventReactionState(eventCtx, strategyStates.EVENT_REACTION, eventSignal);
-
-    const mrCtx: StrategyContext = {
-      strategyId: "MEAN_REVERSION",
-      assetId: benchmarkId,
-      currentBarTimestamp: decisionTime,
-      decisionTimestamp: decisionTime,
-      currentPrice: currentBar.close,
-      priceHistory: benchmarkSlice,
-      macro: macroState,
-      latestEvent: eventState,
-    };
-    const mrSignal = evaluateMeanReversion(mrCtx, strategyStates.MEAN_REVERSION, strategyConfigs.meanReversion);
-    strategyStates.MEAN_REVERSION = updateMeanReversionState(mrCtx, strategyStates.MEAN_REVERSION, mrSignal);
-
-    const signals: readonly SignalOutput[] = [trendSignal, eventSignal, mrSignal];
-
-    // D. PERMISSION GATE
-    const permissions = [
-      evaluatePermission("ADAPTIVE_TREND", macroState, strategyConfigs.permission, decisionTime),
-      evaluatePermission("EVENT_REACTION", macroState, strategyConfigs.permission, decisionTime),
-      evaluatePermission("MEAN_REVERSION", macroState, strategyConfigs.permission, decisionTime),
-    ];
-
-    // E. RISK ENGINE (HYSTERESIS & VOL FLOOR)
-    let valuationSnapshot: CanonicalPortfolioValuationSnapshot | null = null;
-    let preAllocNav = account.cash;
-    if (config.dataQuality === "LIVE") {
-      // PointInTimeBar.timestamp is candle-open time. At this decision boundary
-      // the exact eligible close is the bar whose open + 1H equals timestamp;
-      // currentAssetBars are retained separately for prior-target execution.
-      const marks = Object.entries(account.positions)
-        .filter(([, position]) => position.quantity > 0)
-        .flatMap(([assetId]) => {
-          const completedBar = currentAssetBars[assetId];
-          if (!completedBar || completedBar.timestamp + BAR_DURATION_MS !== decisionTime) return [];
-          return completedBar ? [{ assetId, bar: completedBar }] : [];
-        });
-      valuationSnapshot = createCanonicalPortfolioValuationSnapshot({
-        decisionTime,
-        account,
-        marks,
-        dataQuality: config.dataQuality,
-      });
-      preAllocNav = valuationSnapshot.nav;
-    } else {
-      for (const [id, pos] of Object.entries(account.positions)) {
-        const p = currentAssetBars[id]?.close ?? 0;
-        preAllocNav += pos.quantity * p;
-      }
-    }
-    if (preAllocNav > peakNav) peakNav = preAllocNav;
-
-    const { risk: riskOutput, nextState: updatedRiskState } = evaluatePortfolioRisk(
-      preAllocNav,
-      peakNav,
+    // ====================================================================
+    // DELEGATE TO THE PURE SINGLE-CYCLE TRANSITION KERNEL
+    // ====================================================================
+    const cycleResult = executeSingleCycleTransition(cycleState, {
+      config,
+      strategyConfigs,
+      currentBar,
+      currentBarIndex: t,
+      decisionTime,
+      currentAssetBars,
       benchmarkSlice,
-      riskState,
-      strategyConfigs.risk,
-      decisionTime,
-      valuationSnapshot
-    );
-    riskState = updatedRiskState;
-
-    // F. OMEGA ALLOCATOR
-    // CORE-06: strategyCorrelations = null — no fabricated attribution fed to Omega.
-    // The previous code manufactured strategy PnL proxies from alphaScore × barPnl
-    // and passed them as real correlation data. That was invalid. When genuine
-    // per-strategy PnL attribution exists, a real matrix may be passed here.
-    const targetWeights = evaluateOmegaAllocation(
-      signals,
-      permissions,
-      riskOutput,
-      null,
-      decisionTime,
-      strategyConfigs.omega
-    );
-
-    if (valuationSnapshot && config.executionRule === "NEXT_BAR_OPEN") {
-      const targetAssessment = createTargetExecutionAssessment({
-        valuation: valuationSnapshot,
-        target: targetWeights,
-      });
-      activeTargetLifecycle = activeTargetLifecycle
-        ? advanceActiveTargetLifecycle(activeTargetLifecycle, targetAssessment)
-        : createActiveTargetLifecycleRoot(targetAssessment);
-      targetLifecycleEvidence.push(activeTargetLifecycle);
-    } else {
-      activeTargetLifecycle = null;
-    }
-
-    // G. KHỚP LỆNH MẶC ĐỊNH THEO NEXT_BAR_OPEN (HOẶC SAME_BAR_CLOSE NẾU CHỈ ĐỊNH)
-    if (config.executionRule === "SAME_BAR_CLOSE") {
-      const execResult = executeRebalance(
-        account,
-        targetWeights,
-        currentAssetBars,
-        {
-          decisionTimestamp: decisionTime,
-          executionTimestamp: decisionTime,
-          executionRule: "SAME_BAR_CLOSE",
-          commissionRate: config.commissionRate,
-          slippageConfig: config.slippageModel,
-        }
-      );
-      account = execResult.updatedAccount;
-      barExecutions = [...execResult.records];
-      allExecutions.push(...execResult.records);
-    } else {
-      pendingRebalance = targetWeights;
-    }
-
-    // H. ĐÓNG BĂNG AUDIT TRAIL VÀ TRÁNH TRÔI SỐ THỰC PNL
-    let closingNav = account.cash;
-    const closingPositions: Record<AssetId, PositionRecord> = {};
-    for (const [id, pos] of Object.entries(account.positions)) {
-      const p = currentAssetBars[id]?.close ?? 0;
-      closingNav += pos.quantity * p;
-      if (pos.quantity > 1e-8 && pos.side !== "FLAT") {
-        closingPositions[id] = {
-          ...pos,
-          unrealizedPnl: Math.round((p - pos.entryPrice) * pos.quantity * 100) / 100,
-        };
-      } else {
-        closingPositions[id] = {
-          ...pos,
-          quantity: 0,
-          entryPrice: 0,
-          unrealizedPnl: 0,
-          side: "FLAT",
-          status: "CLOSED",
-        };
-      }
-    }
-    account = {
-      ...account,
-      positions: closingPositions,
-    };
-    if (closingNav > peakNav) peakNav = closingNav;
-
-    const previousNav = decisionHistory.length > 0 ? decisionHistory[decisionHistory.length - 1].nav : config.initialCapital;
-    // barPnl: PnL for this 1H bar (field DecisionState.dailyPnl kept for API compatibility; semantics = per-bar)
-    const barPnl = closingNav - previousNav;
-    const cumulativePnl = closingNav - config.initialCapital; // Tránh floating-point accumulation drift
-    const currentDrawdown = peakNav > 0 ? (peakNav - closingNav) / peakNav : 0;
-
-    decisionHistory.push({
-      barIndex: t,
-      timestamp: decisionTime,
-      cycleKey: createCycleKey(decisionTime),
-      nav: Math.round(closingNav * 100) / 100,
-      cash: Math.round(account.cash * 100) / 100,
-      positions: { ...account.positions },
-      signals,
-      permissions,
-      risk: riskOutput,
-      targetWeights,
-      executions: barExecutions,
-      // dailyPnl field name kept for public API compatibility; value is per-bar (1H) PnL
-      dailyPnl: Math.round(barPnl * 100) / 100,
-      cumulativePnl: Math.round(cumulativePnl * 100) / 100,
-      currentDrawdown: Math.round(currentDrawdown * 10000) / 10000,
+      benchmarkId,
+      macroState,
+      eventState,
       historicalContext,
+      priorAssetBars,
     });
+
+    // Collect outputs
+    decisionHistory.push(cycleResult.decision);
+    allExecutions.push(...cycleResult.barExecutions);
+    targetLifecycleEvidence.push(...cycleResult.lifecycleEvidence);
+
+    // Advance state for next cycle
+    cycleState = cycleResult.nextState;
   }
 
   const metrics = calculateMetrics(decisionHistory, config.initialCapital, allExecutions);
