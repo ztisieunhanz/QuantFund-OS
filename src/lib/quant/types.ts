@@ -12,6 +12,7 @@ import type {
   HistoricalDatasetMetadata,
   HistoricalContextAtTime,
 } from "./historicalPit";
+import type { CycleKey } from "./operationalPaperContract";
 
 // ----------------------------------------------------------------------------
 // 0. FUNDAMENTAL DOMAIN LITERALS & ENUMS
@@ -301,6 +302,8 @@ export interface PositionRecord {
 export interface DecisionState {
   readonly barIndex: number;
   readonly timestamp: number;
+  /** Canonical 1H close-boundary identity for this decision cycle. */
+  readonly cycleKey?: CycleKey;
   readonly nav: number;
   readonly cash: number;
   readonly positions: Readonly<Record<AssetId, PositionRecord>>;

@@ -104,7 +104,7 @@ function executionEvidence(root: ReturnType<typeof createActiveTargetLifecycleRo
 }) {
   const targetValue = root.currentAssessment.target;
   const preExecutionAccount = root.currentAssessment.valuation.accountState;
-  const executionTime = targetValue.asOfTimestamp + HOUR;
+  const executionTime = targetValue.asOfTimestamp;
   const assetBars: Readonly<Record<string, PointInTimeBar>> = options?.omitPrice ? {} : {
     BTC: { timestamp: executionTime, open: 100, high: 101, low: 99, close: 100, volume: 10_000 },
   };
@@ -241,7 +241,7 @@ describe("M14 A-04 Step 3 execution assessment and target lineage", () => {
 
   it("preserves baseline fills when an unrelated held asset lacks an execution price", () => {
     const preExecutionAccount = dualAssetAccount();
-    const executionTime = T0 + HOUR;
+    const executionTime = T0;
     const targetValue = target(0.8, T0);
     const preValuation = createCanonicalPortfolioValuationSnapshot({
       decisionTime: T0,
@@ -342,7 +342,7 @@ describe("M14 A-04 Step 3 execution assessment and target lineage", () => {
     const completedExecution = executionEvidence(root);
     const completed = reconcileActiveTargetLifecycleExecution(root, completedExecution.evidence);
     const changedAssessment = createTargetExecutionAssessment({
-      valuation: completedExecution.postExecutionValuation,
+      valuation: valuation(0.4, T0 + HOUR),
       target: target(0.1, T0 + HOUR),
     });
     const changed = advanceActiveTargetLifecycle(completed, changedAssessment);
@@ -356,6 +356,8 @@ describe("M14 A-04 Step 3 execution assessment and target lineage", () => {
     const root = createActiveTargetLifecycleRoot(assessment(0, 0.4, T0));
     const { evidence } = executionEvidence(root);
     expect(evidence.status).toBe("SATISFIED_AFTER_CANONICAL_EXECUTION");
+    expect(evidence.decisionTime).toBe(evidence.executionTime);
+    expect(evidence.executionContext.executionRule).toBe("NEXT_BAR_OPEN");
     expect(evidence.executionRecords).toHaveLength(1);
     expect(evidence.executionRecords[0].lifecycleBinding).toMatchObject({
       targetDecisionIdentity: root.latestTargetDecisionIdentity,
@@ -375,7 +377,7 @@ describe("M14 A-04 Step 3 execution assessment and target lineage", () => {
     const execution = executionEvidence(root);
     const completed = reconcileActiveTargetLifecycleExecution(root, execution.evidence);
     const reaffirmedAssessment = createTargetExecutionAssessment({
-      valuation: execution.postExecutionValuation,
+      valuation: valuation(0.4, T0 + HOUR),
       target: target(0.4, T0 + HOUR, "changed explanation"),
     });
     const reaffirmed = advanceActiveTargetLifecycle(completed, reaffirmedAssessment);
@@ -401,7 +403,7 @@ describe("M14 A-04 Step 3 execution assessment and target lineage", () => {
     const execution = executionEvidence(root, { commissionRate: 0.001, slippageBps: 5, threshold: 0 });
     const partial = reconcileActiveTargetLifecycleExecution(root, execution.evidence);
     const repeatedAssessment = createTargetExecutionAssessment({
-      valuation: execution.postExecutionValuation,
+      valuation: valuation(0.5, T0 + HOUR),
       target: target(0.5, T0 + HOUR, "different rationale and upstream explanation"),
       plannerPolicy: resolveExecutionPlannerPolicy(0),
     });
@@ -420,7 +422,7 @@ describe("M14 A-04 Step 3 execution assessment and target lineage", () => {
     const partialEvidence = executionEvidence(root, { commissionRate: 0.001, slippageBps: 5, threshold: 0 }).evidence;
     const partial = reconcileActiveTargetLifecycleExecution(root, partialEvidence);
     const reaffirmed = advanceActiveTargetLifecycle(partial, createTargetExecutionAssessment({
-      valuation: partialEvidence.postExecutionValuation,
+      valuation: valuation(0.5, T0 + HOUR),
       target: target(0.5, T0 + HOUR, "reaffirmed target"),
       plannerPolicy: resolveExecutionPlannerPolicy(0),
     }));
@@ -441,7 +443,7 @@ describe("M14 A-04 Step 3 execution assessment and target lineage", () => {
 
     const laterDecision = advanceActiveTargetLifecycle(root, assessment(0, 0.5, T0 + HOUR));
     const futureExecution = executionEvidence(laterDecision).evidence;
-    expect(() => validateActiveTargetLifecycle(withLatestExecutionAssessment(laterDecision, futureExecution))).toThrow(/cannot postdate/);
+    expect(() => validateActiveTargetLifecycle(withLatestExecutionAssessment(laterDecision, futureExecution))).not.toThrow();
   });
 
   it("wires canonical replay fills to the active target root and reconciles transient lifecycle evidence", () => {

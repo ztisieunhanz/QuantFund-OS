@@ -66,6 +66,7 @@ export function TradingLabView() {
   const lastPrice = useMarketStore((s) => s.lastPrice);
   const source = useMarketStore((s) => s.source);
   const interval = useMarketStore((s) => s.interval);
+  const refreshedAt = useMarketStore((s) => s.refreshedAt);
 
   const trend = useTradingStore((s) => s.trend);
   const event = useTradingStore((s) => s.event);
@@ -77,6 +78,7 @@ export function TradingLabView() {
   const runOnBars = useTradingStore((s) => s.runOnBars);
   const resetTrading = useTradingStore((s) => s.reset);
   const lastRunAt = useTradingStore((s) => s.lastRunAt);
+  const operationalState = useTradingStore((s) => s.operationalState);
 
   const snapshot = useSnapshotStore((s) => s.snapshot);
   const macroRegime = snapshot?.macro?.regime ?? null;
@@ -94,9 +96,9 @@ export function TradingLabView() {
     // Trigger runOnBars if interval !== QUANT_BAR_INTERVAL (to trigger store reset guard even if bars < 130)
     // or when bars.length >= 130 for 1H replay.
     if (source !== null && (interval !== QUANT_BAR_INTERVAL || bars.length >= 130)) {
-      runOnBars(bars, { interval, source });
+      runOnBars(bars, { interval, source, observationTime: refreshedAt ?? undefined });
     }
-  }, [bars, runOnBars, interval, source]);
+  }, [bars, runOnBars, interval, source, refreshedAt]);
 
   const handleReplay = useCallback(() => {
     if (replaying || bars.length < 130 || source === null) return;
@@ -108,6 +110,7 @@ export function TradingLabView() {
         runOnBars(currentMarket.bars, {
           interval: currentMarket.interval,
           source: currentMarket.source,
+          observationTime: currentMarket.refreshedAt ?? undefined,
         });
       }
       setReplaying(false);
@@ -201,6 +204,12 @@ export function TradingLabView() {
         <div className="flex items-center gap-3">
           <span className="text-muted">
             SYNC: {lastRunAt ? new Date(lastRunAt).toISOString().slice(11, 19) : "—"} UTC
+          </span>
+          <span className={clsx(
+            "font-bold",
+            operationalState.status === "FRESH_CURRENT" ? "text-up" : "text-amber",
+          )}>
+            STATE: {operationalState.status}
           </span>
           <button
             type="button"

@@ -13,6 +13,12 @@ import type { BotMetrics, OhlcvBar, QuantBotId, TradeFill } from "@/types/market
 import type { DecisionState, PositionRecord, SignalOutput } from "@/lib/quant/types";
 import { PaperEngine, STARTING_EQUITY } from "@/lib/paperEngine";
 import { QUANT_BAR_INTERVAL, type QuantReplayMarketContext } from "@/lib/quant/timeDomain";
+import {
+  createCycleKey,
+  createOperationalTruthState,
+  validateCycleKey,
+  type OperationalTruthState,
+} from "@/lib/quant/operationalPaperContract";
 import type { ActionDecision } from "@/lib/quant/actionDecision";
 import {
   reconstructActionDecisionFromCheckpoint,
@@ -48,6 +54,9 @@ export function isValidDecisionState(dec: unknown): dec is DecisionState {
   if (!dec || typeof dec !== "object") return false;
   const d = dec as Record<string, unknown>;
   if (!Number.isFinite(d.barIndex) || !Number.isFinite(d.timestamp)) return false;
+  if (d.cycleKey !== undefined) {
+    try { validateCycleKey(d.cycleKey as Parameters<typeof validateCycleKey>[0]); } catch { return false; }
+  }
   if (!Number.isFinite(d.nav) || !Number.isFinite(d.cash) || !Number.isFinite(d.currentDrawdown)) return false;
   if (!Array.isArray(d.signals)) return false;
   if (!Array.isArray(d.executions)) return false;
@@ -187,6 +196,7 @@ export interface TradingState {
   lastRunAt: number | null;
   isRestored: boolean;
   restoredAt: number | null;
+  operationalState: OperationalTruthState;
   runOnBars: (bars: OhlcvBar[], ctx: QuantReplayMarketContext) => void;
   markMarketUnavailable: () => void;
   reset: () => void;
@@ -233,6 +243,7 @@ export const useTradingStore = create<TradingState>()(
       lastRunAt: null,
       isRestored: false,
       restoredAt: null,
+      operationalState: createOperationalTruthState({ status: "UNAVAILABLE", reason: "No canonical paper-engine cycle is available." }),
 
       runOnBars: (bars, ctx) => {
         if (ctx.interval !== QUANT_BAR_INTERVAL) {
@@ -250,6 +261,7 @@ export const useTradingStore = create<TradingState>()(
             lastRunAt: null,
             isRestored: false,
             restoredAt: null,
+            operationalState: createOperationalTruthState({ status: "UNAVAILABLE", reason: "Unsupported replay interval." }),
           });
           return;
         }
@@ -278,6 +290,19 @@ export const useTradingStore = create<TradingState>()(
           lastRunAt: Date.now(),
           isRestored: false,
           restoredAt: null,
+          operationalState: latestDecision
+            ? createOperationalTruthState({
+              status: ctx.source === "live" && ctx.observationTime !== undefined && latestDecision.timestamp <= ctx.observationTime
+                ? "FRESH_CURRENT"
+                : "UNAVAILABLE",
+              cycleKey: latestDecision.cycleKey ?? createCycleKey(latestDecision.timestamp),
+              observationTime: ctx.observationTime ?? null,
+              source: ctx.source === "live" ? "LIVE" : "SYNTHETIC",
+              reason: ctx.source === "live" && ctx.observationTime !== undefined && latestDecision.timestamp <= ctx.observationTime
+                ? "Decision is bound to the latest eligible live observation boundary."
+                : "Provider observation time is unavailable or precedes the decision boundary; currentness is not asserted.",
+            })
+            : createOperationalTruthState({ status: "UNAVAILABLE", reason: "Replay produced no canonical decision." }),
           running: true,
         });
       },
@@ -285,9 +310,19 @@ export const useTradingStore = create<TradingState>()(
       markMarketUnavailable: () => {
         engine.reset();
         const empty = deriveMetricsFromDecision(null);
+        const current = useTradingStore.getState();
         set({
           ...empty,
           actionDecision: null,
+          operationalState: current.latestDecision
+            ? createOperationalTruthState({
+              status: "DEGRADED_PROVIDER_UNAVAILABLE",
+              cycleKey: current.latestDecision.cycleKey ?? createCycleKey(current.latestDecision.timestamp),
+              observationTime: current.operationalState.observationTime,
+              source: current.operationalState.source,
+              reason: "The provider is unavailable; preserved state is historical evidence only.",
+            })
+            : createOperationalTruthState({ status: "DEGRADED_PROVIDER_UNAVAILABLE", reason: "The provider is unavailable and no preserved decision exists." }),
         });
       },
 
@@ -305,17 +340,19 @@ export const useTradingStore = create<TradingState>()(
           lastRunAt: null,
           isRestored: false,
           restoredAt: null,
+          operationalState: createOperationalTruthState({ status: "UNAVAILABLE", reason: "Paper-engine state was reset." }),
         });
       },
     }),
     {
       name: "quant_paper_engine_state",
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => getStorageApi()),
       partialize: (state) => ({
         latestDecision: state.latestDecision,
         lifecycleCheckpoint: state.lifecycleCheckpoint,
         lastRunAt: state.lastRunAt,
+        operationalState: state.operationalState,
       }),
       onRehydrateStorage: () => (hydratedState, error) => {
         if (error || !hydratedState) return;
@@ -343,6 +380,13 @@ export const useTradingStore = create<TradingState>()(
           useTradingStore.setState({
             isRestored: true,
             restoredAt: Date.now(),
+            operationalState: createOperationalTruthState({
+              status: "RESTORED_HISTORICAL",
+              cycleKey: hydratedState.latestDecision.cycleKey ?? createCycleKey(hydratedState.latestDecision.timestamp),
+              observationTime: hydratedState.operationalState?.observationTime ?? null,
+              source: hydratedState.operationalState?.source ?? "LIVE",
+              reason: "Restored from persisted paper-engine evidence; it is not fresh provider state.",
+            }),
             lifecycleCheckpoint,
             actionDecision,
             ...derived,
@@ -356,6 +400,7 @@ export const useTradingStore = create<TradingState>()(
             lastRunAt: null,
             isRestored: false,
             restoredAt: null,
+            operationalState: createOperationalTruthState({ status: "UNAVAILABLE", reason: "Persisted paper-engine state was invalid or unavailable." }),
             ...empty,
           });
         }
@@ -365,7 +410,7 @@ export const useTradingStore = create<TradingState>()(
           return { latestDecision: null, lifecycleCheckpoint: null, actionDecision: null, lastRunAt: null };
         }
         const p = persistedState as Record<string, unknown>;
-        if (version !== 1 || !isValidDecisionState(p.latestDecision) || !Number.isFinite(p.lastRunAt)) {
+        if (![1, 2].includes(version) || !isValidDecisionState(p.latestDecision) || !Number.isFinite(p.lastRunAt)) {
           return { latestDecision: null, lifecycleCheckpoint: null, actionDecision: null, lastRunAt: null };
         }
         return {

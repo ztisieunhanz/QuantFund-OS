@@ -14,6 +14,7 @@ import {
   type BacktestPerformanceMetrics,
 } from "./backtestEngine";
 import { sliceHistoricalDataset, type HistoricalDataset } from "./historicalPit";
+import { canonicalBarAvailableAt } from "./timeDomain";
 
 export interface WalkForwardFoldResult {
   readonly foldIndex: number;
@@ -114,8 +115,8 @@ export function runWalkForwardValidation(
       ...baseConfig,
       runId: `${baseConfig.runId}-fold-${foldIdx}`,
       warmupPeriod: Math.min(125, Math.floor(trainWindowBars * 0.6)),
-      startDate: testStartTimestamp,
-      endDate: testEndTimestamp,
+      startDate: canonicalBarAvailableAt(testStartTimestamp),
+      endDate: canonicalBarAvailableAt(testEndTimestamp),
       requirePitExecution: true,
     };
 

@@ -132,7 +132,7 @@ describe("Gate M10B — Rolling Fixed-Parameter OOS Methodology & Validation Sui
 
     // Each fold scored timeline has exactly testWindowBars (60) decision states
     expect(report.foldReports[0].oosTimeline.length).toBe(60);
-    expect(report.foldReports[0].oosTimeline[0].timestamp).toBe(bars[180].timestamp);
+    expect(report.foldReports[0].oosTimeline[0].timestamp).toBe(bars[180].timestamp + 3_600_000);
 
     // Stitched timeline contains only test bars (60 * 2 folds = 120 bars)
     expect(report.stitchedOosTimeline.length).toBe(120);

@@ -1,5 +1,5 @@
 import type { OhlcvBar } from "@/types/market";
-import { BAR_DURATION_MS } from "@/lib/quant/timeDomain";
+import { BAR_DURATION_MS, isBarCloseAvailableAt } from "@/lib/quant/timeDomain";
 
 export type BinanceInterval = "15m" | "1h" | "4h" | "1d";
 
@@ -58,7 +58,7 @@ function parseKlines(
     }
 
     previousOpenTime = openTime;
-    if (openTime + intervalDurationMs > observationTimeMs) continue;
+    if (!isBarCloseAvailableAt(openTime, observationTimeMs, intervalDurationMs)) continue;
 
     bars.push({
       time: Math.floor(openTime / 1000),
@@ -76,8 +76,8 @@ function parseKlines(
 export async function fetchBtcKlines(
   interval: BinanceInterval = "1h",
   limit = 500,
-  observationTimeMs = Date.now(),
-): Promise<{ bars: OhlcvBar[]; source: "live" }> {
+  observationTimeMs?: number,
+): Promise<{ bars: OhlcvBar[]; source: "live"; observationTime: number }> {
   const url = `/api/binance/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`;
 
   try {
@@ -85,8 +85,11 @@ export async function fetchBtcKlines(
     if (res.ok) {
       const json = (await res.json()) as unknown;
       if (Array.isArray(json) && json.length >= 60) {
-        const bars = parseKlines(json, interval, observationTimeMs);
-        if (bars.length > 0) return { bars, source: "live" };
+        // The observation clock is sampled after the provider response arrives.
+        // Tests may inject it explicitly for deterministic boundary checks.
+        const observedAt = observationTimeMs ?? Date.now();
+        const bars = parseKlines(json, interval, observedAt);
+        if (bars.length > 0) return { bars, source: "live", observationTime: observedAt };
       }
     }
   } catch {

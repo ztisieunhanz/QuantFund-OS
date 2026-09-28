@@ -24,11 +24,10 @@ import {
   producerIdentity,
 } from "@/lib/quant/producerProvenance";
 import type { AssetId, PointInTimeBar, ProvenancedTargetPortfolioWeight } from "@/lib/quant/types";
-import { BAR_DURATION_MS } from "@/lib/quant/timeDomain";
 
 export const TARGET_EXECUTION_ASSESSMENT_SCHEMA_VERSION = "M14_A04_TARGET_EXECUTION_ASSESSMENT_V1" as const;
-export const EXECUTION_BOUND_TARGET_ASSESSMENT_SCHEMA_VERSION = "M14_A04_EXECUTION_BOUND_TARGET_ASSESSMENT_V1" as const;
-export const ACTIVE_TARGET_LIFECYCLE_SCHEMA_VERSION = "M14_A04_ACTIVE_TARGET_LIFECYCLE_V1" as const;
+export const EXECUTION_BOUND_TARGET_ASSESSMENT_SCHEMA_VERSION = "M18_A1_EXECUTION_BOUND_TARGET_ASSESSMENT_V1" as const;
+export const ACTIVE_TARGET_LIFECYCLE_SCHEMA_VERSION = "M18_A1_ACTIVE_TARGET_LIFECYCLE_V1" as const;
 
 // Only artifacts created and deep-frozen by this module enter these sets.
 // This avoids repeatedly reconstructing unchanged transient replay evidence;
@@ -293,7 +292,7 @@ function buildExecutionBoundTargetAssessment(input: ExecutionBoundAssessmentInpu
   validateTargetPortfolioWeightArtifact(input.target);
   validateCanonicalPortfolioValuationSnapshot(input.postExecutionValuation);
   if (!input.activeTargetRootIdentity) throw new Error("Active target root identity is required for execution assessment");
-  if (input.context.executionRule !== "NEXT_BAR_OPEN" || input.context.executionTimestamp !== input.context.decisionTimestamp + BAR_DURATION_MS) throw new Error("Execution assessment requires the canonical next-1H-open boundary");
+  if (input.context.executionRule !== "NEXT_BAR_OPEN" || input.context.executionTimestamp !== input.context.decisionTimestamp) throw new Error("Execution assessment requires the canonical same-epoch next-bar-open boundary");
   if (input.context.decisionTimestamp !== input.target.asOfTimestamp || input.postExecutionValuation.decisionTime !== input.context.executionTimestamp) throw new Error("Execution assessment target/valuation time mismatch");
   if (!input.context.lifecycleBinding
     || input.context.lifecycleBinding.targetDecisionIdentity !== input.target.provenance.targetDecisionIdentity

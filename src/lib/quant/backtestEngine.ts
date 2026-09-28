@@ -36,7 +36,8 @@ import {
   type CanonicalPortfolioValuationSnapshot,
 } from "@/lib/quant/portfolioValuation";
 import { reconstructTradeAttribution } from "@/lib/quant/tradeAttribution";
-import { BARS_PER_YEAR, ANNUALIZATION_FACTOR, BAR_DURATION_MS } from "@/lib/quant/timeDomain";
+import { BARS_PER_YEAR, ANNUALIZATION_FACTOR, BAR_DURATION_MS, canonicalBarAvailableAt } from "@/lib/quant/timeDomain";
+import { createCycleKey } from "@/lib/quant/operationalPaperContract";
 import {
   validateHistoricalDataset,
   normalizeHistoricalDataset,
@@ -231,10 +232,11 @@ export function runBacktest(
 
   for (let t = effectiveWarmup; t < primaryBars.length; t++) {
     const currentBar = primaryBars[t];
-    const timestamp = currentBar.timestamp;
+    const barOpenTime = currentBar.timestamp;
+    const decisionTime = canonicalBarAvailableAt(barOpenTime);
 
-    if (config.startDate > 0 && timestamp < config.startDate) continue;
-    if (config.endDate > 0 && timestamp > config.endDate) break;
+    if (config.startDate > 0 && decisionTime < config.startDate) continue;
+    if (config.endDate > 0 && decisionTime > config.endDate) break;
 
     const currentAssetBars: Record<AssetId, PointInTimeBar> = {};
     for (const id of assetIds) {
@@ -250,7 +252,7 @@ export function runBacktest(
       const preExecutionAccount = account;
       const executionContext: ExecutionContext = {
         decisionTimestamp: pendingRebalance.asOfTimestamp,
-        executionTimestamp: timestamp,
+        executionTimestamp: barOpenTime,
         executionRule: "NEXT_BAR_OPEN",
         commissionRate: config.commissionRate,
         slippageConfig: config.slippageModel,
@@ -280,17 +282,46 @@ export function runBacktest(
       account = execResult.updatedAccount;
       barExecutions = execResult.records.map(stripTransientLifecycleBinding);
       allExecutions.push(...barExecutions);
+      if (config.dataQuality === "LIVE" && activeTargetLifecycle) {
+        const executionMarks = Object.entries(account.positions)
+          .filter(([, position]) => position.quantity > 0)
+          .flatMap(([assetId]) => {
+            const priorBar = dataset.assetBars[assetId]?.[t - 1];
+            const completedBar = priorBar && priorBar.timestamp + BAR_DURATION_MS === barOpenTime ? priorBar : undefined;
+            return completedBar ? [{ assetId, bar: completedBar }] : [];
+          });
+        const postExecutionValuation = createCanonicalPortfolioValuationSnapshot({
+          decisionTime: barOpenTime,
+          account,
+          marks: executionMarks,
+          dataQuality: config.dataQuality,
+        });
+        const executionAssessment = createExecutionBoundTargetAssessment({
+          activeTargetRootIdentity: pendingCanonicalExecutionEvidence!.lifecycle.activeTargetRootIdentity,
+          target: pendingCanonicalExecutionEvidence!.target,
+          preExecutionAccount: pendingCanonicalExecutionEvidence!.preExecutionAccount,
+          assetBars: pendingCanonicalExecutionEvidence!.assetBars,
+          context: pendingCanonicalExecutionEvidence!.context,
+          executionResult: pendingCanonicalExecutionEvidence!.executionResult,
+          postExecutionValuation,
+        });
+        activeTargetLifecycle = reconcileActiveTargetLifecycleExecution(
+          pendingCanonicalExecutionEvidence!.lifecycle,
+          executionAssessment,
+        );
+        targetLifecycleEvidence.push(activeTargetLifecycle);
+      }
       pendingRebalance = null;
     }
 
-    // B. POINT-IN-TIME SLICE (Tuyệt đối không chứa dữ liệu > t)
+    // B. POINT-IN-TIME SLICE at the completed close boundary for this bar.
     let historicalContext: HistoricalContextAtTime | undefined;
     if (normalizedHistorical) {
-      historicalContext = buildHistoricalContextAtTime(normalizedHistorical, timestamp);
+      historicalContext = buildHistoricalContextAtTime(normalizedHistorical, decisionTime);
     }
 
-    const macroState = getLatestMacroAsOf(dataset.macroTimeline, timestamp);
-    let eventState = getLatestEventAsOf(dataset.eventTimeline, timestamp);
+    const macroState = getLatestMacroAsOf(dataset.macroTimeline, decisionTime);
+    let eventState = getLatestEventAsOf(dataset.eventTimeline, decisionTime);
     if (!eventState && historicalContext?.latestEvent) {
       eventState = historicalEventToPointInTimeEvent(historicalContext.latestEvent);
     }
@@ -300,8 +331,8 @@ export function runBacktest(
     const trendCtx: StrategyContext = {
       strategyId: "ADAPTIVE_TREND",
       assetId: benchmarkId,
-      currentBarTimestamp: timestamp,
-      decisionTimestamp: timestamp,
+      currentBarTimestamp: decisionTime,
+      decisionTimestamp: decisionTime,
       currentPrice: currentBar.close,
       priceHistory: benchmarkSlice,
       macro: macroState,
@@ -313,8 +344,8 @@ export function runBacktest(
     const eventCtx: StrategyContext = {
       strategyId: "EVENT_REACTION",
       assetId: benchmarkId,
-      currentBarTimestamp: timestamp,
-      decisionTimestamp: timestamp,
+      currentBarTimestamp: decisionTime,
+      decisionTimestamp: decisionTime,
       currentPrice: currentBar.close,
       priceHistory: benchmarkSlice,
       macro: macroState,
@@ -326,8 +357,8 @@ export function runBacktest(
     const mrCtx: StrategyContext = {
       strategyId: "MEAN_REVERSION",
       assetId: benchmarkId,
-      currentBarTimestamp: timestamp,
-      decisionTimestamp: timestamp,
+      currentBarTimestamp: decisionTime,
+      decisionTimestamp: decisionTime,
       currentPrice: currentBar.close,
       priceHistory: benchmarkSlice,
       macro: macroState,
@@ -340,9 +371,9 @@ export function runBacktest(
 
     // D. PERMISSION GATE
     const permissions = [
-      evaluatePermission("ADAPTIVE_TREND", macroState, strategyConfigs.permission, timestamp),
-      evaluatePermission("EVENT_REACTION", macroState, strategyConfigs.permission, timestamp),
-      evaluatePermission("MEAN_REVERSION", macroState, strategyConfigs.permission, timestamp),
+      evaluatePermission("ADAPTIVE_TREND", macroState, strategyConfigs.permission, decisionTime),
+      evaluatePermission("EVENT_REACTION", macroState, strategyConfigs.permission, decisionTime),
+      evaluatePermission("MEAN_REVERSION", macroState, strategyConfigs.permission, decisionTime),
     ];
 
     // E. RISK ENGINE (HYSTERESIS & VOL FLOOR)
@@ -355,34 +386,17 @@ export function runBacktest(
       const marks = Object.entries(account.positions)
         .filter(([, position]) => position.quantity > 0)
         .flatMap(([assetId]) => {
-          const completedBar = dataset.assetBars[assetId]?.find(
-            (bar) => bar.timestamp + BAR_DURATION_MS === timestamp
-          );
+          const completedBar = currentAssetBars[assetId];
+          if (!completedBar || completedBar.timestamp + BAR_DURATION_MS !== decisionTime) return [];
           return completedBar ? [{ assetId, bar: completedBar }] : [];
         });
       valuationSnapshot = createCanonicalPortfolioValuationSnapshot({
-        decisionTime: timestamp,
+        decisionTime,
         account,
         marks,
         dataQuality: config.dataQuality,
       });
       preAllocNav = valuationSnapshot.nav;
-      if (pendingCanonicalExecutionEvidence) {
-        const executionAssessment = createExecutionBoundTargetAssessment({
-          activeTargetRootIdentity: pendingCanonicalExecutionEvidence.lifecycle.activeTargetRootIdentity,
-          target: pendingCanonicalExecutionEvidence.target,
-          preExecutionAccount: pendingCanonicalExecutionEvidence.preExecutionAccount,
-          assetBars: pendingCanonicalExecutionEvidence.assetBars,
-          context: pendingCanonicalExecutionEvidence.context,
-          executionResult: pendingCanonicalExecutionEvidence.executionResult,
-          postExecutionValuation: valuationSnapshot,
-        });
-        activeTargetLifecycle = reconcileActiveTargetLifecycleExecution(
-          pendingCanonicalExecutionEvidence.lifecycle,
-          executionAssessment,
-        );
-        targetLifecycleEvidence.push(activeTargetLifecycle);
-      }
     } else {
       for (const [id, pos] of Object.entries(account.positions)) {
         const p = currentAssetBars[id]?.close ?? 0;
@@ -397,7 +411,7 @@ export function runBacktest(
       benchmarkSlice,
       riskState,
       strategyConfigs.risk,
-      timestamp,
+      decisionTime,
       valuationSnapshot
     );
     riskState = updatedRiskState;
@@ -412,7 +426,7 @@ export function runBacktest(
       permissions,
       riskOutput,
       null,
-      timestamp,
+      decisionTime,
       strategyConfigs.omega
     );
 
@@ -436,8 +450,8 @@ export function runBacktest(
         targetWeights,
         currentAssetBars,
         {
-          decisionTimestamp: timestamp,
-          executionTimestamp: timestamp,
+          decisionTimestamp: decisionTime,
+          executionTimestamp: decisionTime,
           executionRule: "SAME_BAR_CLOSE",
           commissionRate: config.commissionRate,
           slippageConfig: config.slippageModel,
@@ -486,7 +500,8 @@ export function runBacktest(
 
     decisionHistory.push({
       barIndex: t,
-      timestamp,
+      timestamp: decisionTime,
+      cycleKey: createCycleKey(decisionTime),
       nav: Math.round(closingNav * 100) / 100,
       cash: Math.round(account.cash * 100) / 100,
       positions: { ...account.positions },

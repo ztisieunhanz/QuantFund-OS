@@ -10,6 +10,7 @@ import { buildQuantLayerSummary } from "./quantAdapter";
 import { buildRiskLayerSummary } from "./riskAdapter";
 import { evaluateCurrentMarketSynthesis } from "./synthesis";
 import type { CurrentMarketSnapshot, MacroAssessment, MarketSnapshotData } from "./types";
+import type { OperationalTruthState } from "@/lib/quant/operationalPaperContract";
 
 export interface BuildSnapshotParams {
   readonly timestamp: number;
@@ -19,6 +20,7 @@ export interface BuildSnapshotParams {
   readonly riskOutput?: RiskOutput | null;
   readonly targetWeights?: TargetPortfolioWeight | null;
   readonly drawdown?: number | null;
+  readonly operationalState?: OperationalTruthState | null;
 }
 
 /**
@@ -64,5 +66,6 @@ export function buildCurrentMarketSnapshot(
     risk,
     omega,
     synthesis,
+    ...(params.operationalState ? { operationalState: params.operationalState } : {}),
   };
 }

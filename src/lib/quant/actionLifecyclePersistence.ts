@@ -14,10 +14,11 @@ import {
   validateActiveTargetLifecycleAgainstPrior,
   type ActiveTargetLifecycle,
 } from "./targetExecutionLifecycle";
+import { createCycleKey, cycleKeysEqual, validateCycleKey, type CycleKey } from "./operationalPaperContract";
 import type { AssetId, DecisionState, ProvenancedTargetPortfolioWeight } from "./types";
 
 export const DURABLE_TARGET_LIFECYCLE_CHECKPOINT_SCHEMA_VERSION =
-  "M14_A04_DURABLE_TARGET_LIFECYCLE_CHECKPOINT_V2" as const;
+  "M18_A1_DURABLE_TARGET_LIFECYCLE_CHECKPOINT_V1" as const;
 
 export interface DurableTargetLifecycleCheckpoint {
   readonly kind: "DURABLE_TARGET_LIFECYCLE_CHECKPOINT";
@@ -25,6 +26,7 @@ export interface DurableTargetLifecycleCheckpoint {
   readonly intendedUse: "PAPER_REPLAY_LIFECYCLE_RECOVERY_EVIDENCE_ONLY";
   readonly actionAssetId: AssetId;
   readonly decisionTime: number;
+  readonly cycleKey: CycleKey;
   readonly decisionStateIdentity: string;
   readonly lifecycleIdentity: string;
   /** Ordered prior evidence; append lifecycle to obtain the complete root-to-terminal proof. */
@@ -55,6 +57,10 @@ function requireDecisionStateBinding(
   if (decision.timestamp !== lifecycle.currentAssessment.decisionTime
     || decision.timestamp !== lifecycle.latestDecisionTime) {
     throw new Error("Durable lifecycle checkpoint DecisionState/lifecycle time mismatch");
+  }
+  const decisionCycleKey = decision.cycleKey ? validateCycleKey(decision.cycleKey) : createCycleKey(decision.timestamp);
+  if (!cycleKeysEqual(decisionCycleKey, createCycleKey(lifecycle.currentAssessment.decisionTime))) {
+    throw new Error("Durable lifecycle checkpoint DecisionState/CycleKey binding mismatch");
   }
   const target = decision.targetWeights as ProvenancedTargetPortfolioWeight;
   if (!target.provenance
@@ -131,6 +137,7 @@ function checkpointMaterial(input: {
     intendedUse: "PAPER_REPLAY_LIFECYCLE_RECOVERY_EVIDENCE_ONLY",
     actionAssetId: input.actionAssetId,
     decisionTime: input.decisionState.timestamp,
+    cycleKey: input.decisionState.cycleKey ?? createCycleKey(input.decisionState.timestamp),
     decisionStateIdentity: producerIdentity(input.decisionState),
     lifecycleIdentity: lifecycle.semanticIdentity,
     lineageWitness: input.lifecycleEvidence.slice(0, -1),

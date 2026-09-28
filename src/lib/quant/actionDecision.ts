@@ -425,6 +425,9 @@ export function createDeferredActionDecision(input: ActionDecisionInput): Action
 export function createCanonicalActionDecision(input: CanonicalActionDecisionInput): ActionDecision {
   validateBaseInput(input, ["assetId", "decisionTime", "asOf", "lifecycle"]);
   if (!input.lifecycle) return buildDecision(deferredMaterial(input));
+  if (input.asOf !== input.decisionTime) {
+    fail("Canonical ActionDecision requires asOf === decisionTime at the cycle boundary.");
+  }
   try {
     validateActiveTargetLifecycle(input.lifecycle);
   } catch {

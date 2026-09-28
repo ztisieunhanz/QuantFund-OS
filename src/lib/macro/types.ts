@@ -339,6 +339,7 @@ export interface CurrentMarketSnapshot {
   readonly risk?: RiskLayerSummary | null;
   readonly omega?: OmegaLayerSummary | null;
   readonly synthesis?: SynthesisAssessment | null;
+  readonly operationalState?: import("@/lib/quant/operationalPaperContract").OperationalTruthState | null;
 }
 
 /**

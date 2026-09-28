@@ -111,7 +111,7 @@ function executionLifecycle(lifecycle: ActiveTargetLifecycle, options?: {
 }) {
   const targetValue = lifecycle.currentAssessment.target;
   const preExecutionAccount = lifecycle.currentAssessment.valuation.accountState;
-  const executionTime = targetValue.asOfTimestamp + HOUR;
+  const executionTime = targetValue.asOfTimestamp;
   const assetBars: Readonly<Record<string, PointInTimeBar>> = options?.omitPrice ? {} : {
     BTC: { timestamp: executionTime, open: 100, high: 101, low: 99, close: 100, volume: 10_000 },
   };
@@ -371,7 +371,7 @@ describe("M14 A-04 Step 4 canonical ActionDecision classification", () => {
     });
     const targetValue = target(0.8);
     const lifecycle = createActiveTargetLifecycleRoot(createTargetExecutionAssessment({ valuation: preValuation, target: targetValue }));
-    const executionTime = T0 + HOUR;
+    const executionTime = T0;
     const assetBars = { BTC: { timestamp: executionTime, open: 100, high: 101, low: 99, close: 100, volume: 10_000 } };
     const context = {
       decisionTimestamp: T0,

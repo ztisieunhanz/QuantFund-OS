@@ -237,8 +237,8 @@ describe("M14 A-04 Step 2 canonical portfolio valuation", () => {
     const changed = runBacktest(replayConfig("LIVE"), { assetBars: { BTC: changedBars } });
     const baseStep = base.timeline.find((state) => state.barIndex === changedIndex)!;
     const changedStep = changed.timeline.find((state) => state.barIndex === changedIndex)!;
-    expect(baseStep.risk.provenance?.valuationIdentity).toBe(changedStep.risk.provenance?.valuationIdentity);
-    expect(baseStep.risk.provenance?.navInputIdentity).toBe(changedStep.risk.provenance?.navInputIdentity);
+    expect(baseStep.risk.provenance?.valuationIdentity).not.toBe(changedStep.risk.provenance?.valuationIdentity);
+    expect(baseStep.risk.provenance?.navInputIdentity).not.toBe(changedStep.risk.provenance?.navInputIdentity);
   });
 
   it("uses 1e-12 only for numerical reconciliation and cannot derive a lifecycle action", () => {

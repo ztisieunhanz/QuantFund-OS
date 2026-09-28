@@ -21,6 +21,29 @@ export const QUANT_BAR_INTERVAL = "1h" as const;
 export const BAR_DURATION_MS = 60 * 60 * 1000; // 3_600_000
 
 /**
+ * Canonical availability boundary for the final OHLCV close of a bar.
+ * Binance closeTime is transport metadata and is intentionally not used here.
+ */
+export function canonicalBarAvailableAt(barOpenTime: number, durationMs = BAR_DURATION_MS): number {
+  if (!Number.isSafeInteger(barOpenTime) || barOpenTime < 0) {
+    throw new Error("Bar open time must be a non-negative safe-integer epoch millisecond.");
+  }
+  if (!Number.isSafeInteger(durationMs) || durationMs <= 0) {
+    throw new Error("Bar duration must be a positive safe-integer millisecond interval.");
+  }
+  const availableAt = barOpenTime + durationMs;
+  if (!Number.isSafeInteger(availableAt)) {
+    throw new Error("Bar availability boundary exceeds the safe epoch range.");
+  }
+  return availableAt;
+}
+
+export function isBarCloseAvailableAt(barOpenTime: number, observationTime: number, durationMs = BAR_DURATION_MS): boolean {
+  return Number.isSafeInteger(observationTime)
+    && observationTime >= canonicalBarAvailableAt(barOpenTime, durationMs);
+}
+
+/**
  * Number of 1H bars in one calendar year.
  * Used for annualizing volatility, Sharpe, Sortino, CAGR.
  * = 24 hours x 365 days = 8760.
@@ -50,4 +73,6 @@ export const ANNUALIZATION_FACTOR = Math.sqrt(BARS_PER_YEAR);
 export interface QuantReplayMarketContext {
   readonly interval: string;             // compared against QUANT_BAR_INTERVAL
   readonly source: "live" | "synthetic"; // no default - caller must be explicit
+  /** Provider observation clock sampled after the response was received. */
+  readonly observationTime?: number;
 }

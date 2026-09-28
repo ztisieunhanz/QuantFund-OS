@@ -292,7 +292,7 @@ describe("M14 / A-04 Step 6 — Closure Audit and Invariant Verification", () =>
       decisionState,
     });
     expect(durableCheckpoint.kind).toBe("DURABLE_TARGET_LIFECYCLE_CHECKPOINT");
-    expect(durableCheckpoint.schemaVersion).toBe("M14_A04_DURABLE_TARGET_LIFECYCLE_CHECKPOINT_V2");
+    expect(durableCheckpoint.schemaVersion).toBe("M18_A1_DURABLE_TARGET_LIFECYCLE_CHECKPOINT_V1");
   });
 
   it("2. verifies exactly one authority path for target weights, fills, accounting, and price", () => {
@@ -590,7 +590,7 @@ describe("M14 / A-04 Step 6 — Closure Audit and Invariant Verification", () =>
         lifecycleCheckpoint: durableCheckpoint,
         lastRunAt: decisionTime,
       },
-      version: 2,
+      version: 3,
     };
     getStorageApi().setItem("quant_paper_engine_state", JSON.stringify(v2Payload));
 

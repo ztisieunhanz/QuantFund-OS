@@ -436,8 +436,8 @@ describe("Gate M9B — Point-in-Time Enforcement & Anti-Lookahead Validation Mat
       const step = result.timeline[i];
       if (step.executions.length > 0) {
         const exec = step.executions[0];
-        // Execution timestamp must match current bar timestamp
-        expect(exec.executionTimestamp).toBe(step.timestamp);
+        // Execution timestamp shares the preceding close decision epoch; lifecycle phase orders it after DECISION.
+        expect(exec.executionTimestamp).toBe(bars[step.barIndex].timestamp);
         // Execution price must be based on current bar open (plus slippage)
         const barIndex = step.barIndex;
         const currentBar = bars[barIndex];
@@ -459,7 +459,15 @@ describe("Gate M9B — Point-in-Time Enforcement & Anti-Lookahead Validation Mat
 
     // Verify DecisionState represents end-of-bar audit snapshot
     expect(step.barIndex).toBe(125 + 10);
-    expect(step.timestamp).toBe(bars[step.barIndex].timestamp);
+    expect(step.timestamp).toBe(bars[step.barIndex].timestamp + 3_600_000);
+    expect(step.cycleKey).toMatchObject({
+      schemaVersion: "M18_CYCLE_KEY_V1",
+      interval: "1h",
+      decisionTime: step.timestamp,
+    });
+    expect(step.signals.every((signal) => signal.timestamp === step.timestamp)).toBe(true);
+    expect(step.targetWeights.asOfTimestamp).toBe(step.timestamp);
+    expect(step.risk.provenance?.decisionTime).toBe(step.timestamp);
     // NAV is marked at bar close
     const posQty = step.positions["BTC"]?.quantity ?? 0;
     const barClose = bars[step.barIndex].close;

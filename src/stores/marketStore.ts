@@ -63,13 +63,13 @@ export const useMarketStore = create<MarketState>((set, get) => {
     const requestGeneration = ++latestLoadGeneration;
     set({ loading: true, error: null, interval: tf });
     try {
-      const { bars, source } = await fetchBtcKlines(tf, 500);
+      const { bars, source, observationTime } = await fetchBtcKlines(tf, 500);
       if (requestGeneration !== latestLoadGeneration) return;
       set({
         ...decorate(bars),
         source,
         loading: false,
-        refreshedAt: Date.now(),
+        refreshedAt: observationTime,
       });
     } catch (err) {
       if (requestGeneration !== latestLoadGeneration) return;

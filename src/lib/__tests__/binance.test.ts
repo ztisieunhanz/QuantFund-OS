@@ -108,6 +108,7 @@ describe("active Binance market feed boundary", () => {
 
     const boundaryResult = await fetchBtcKlines("1h", 500, BASE_OPEN_TIME + 60 * HOUR_MS);
     expect(boundaryResult.bars).toHaveLength(60);
+    expect(boundaryResult.observationTime).toBe(BASE_OPEN_TIME + 60 * HOUR_MS);
   });
 
   it("retains closed bars beside an open candle without synthesizing a replacement", async () => {

@@ -98,7 +98,7 @@ function root(currentWeight: number, targetWeight: number): ActiveTargetLifecycl
 function executeLifecycle(lifecycle: ActiveTargetLifecycle, omitPrice = false): ActiveTargetLifecycle {
   const targetValue = lifecycle.currentAssessment.target;
   const preExecutionAccount = lifecycle.currentAssessment.valuation.accountState;
-  const executionTime = targetValue.asOfTimestamp + HOUR;
+  const executionTime = targetValue.asOfTimestamp;
   const assetBars: Readonly<Record<string, PointInTimeBar>> = omitPrice ? {} : {
     BTC: { timestamp: executionTime, open: 100, high: 101, low: 99, close: 100, volume: 10_000 },
   };
@@ -519,7 +519,7 @@ describe("M14 A-04 Step 5 durable lifecycle persistence", () => {
     expect(before.actionDecision).not.toBeNull();
     const raw = getStorageApi().getItem("quant_paper_engine_state")!;
     const payload = JSON.parse(raw);
-    expect(payload.version).toBe(2);
+    expect(payload.version).toBe(3);
     expect(payload.state.lifecycleCheckpoint).not.toBeNull();
     expect(payload.state.actionDecision).toBeUndefined();
     expect(payload.state.omega).toBeUndefined();

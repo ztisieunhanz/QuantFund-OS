@@ -149,7 +149,7 @@ describe("Gate M7B Paper Engine Persistence & Hydration Safety", () => {
     const parsed = JSON.parse(storedRaw!);
     expect(parsed.state.latestDecision).toEqual(mockDec);
     expect(parsed.state.lastRunAt).toBe(1758400000999);
-    expect(parsed.version).toBe(2);
+    expect(parsed.version).toBe(3);
 
     // Single Canonical Ledger Invariant: Duplicate accounting state must NOT be persisted in storage
     expect(parsed.state.omega).toBeUndefined();
@@ -339,5 +339,46 @@ describe("Gate M7B Paper Engine Persistence & Hydration Safety", () => {
     expect(typeof state.trend.equity).toBe("number");
     expect(typeof state.benchmarkDca.equity).toBe("number");
     expect(state.isRestored).toBe(false);
+  });
+
+  it("projects fresh, restored, and provider-degraded truth without granting fresh authority", () => {
+    const bars = generateMockBars(140);
+    useTradingStore.getState().runOnBars(bars, {
+      interval: "1h",
+      source: "live",
+      observationTime: Date.now(),
+    });
+    const fresh = useTradingStore.getState();
+    expect(fresh.operationalState.status).toBe("FRESH_CURRENT");
+    expect(fresh.operationalState.historicalOnly).toBe(false);
+    const persisted = storage.getItem("quant_paper_engine_state")!;
+    const decision = fresh.latestDecision;
+    const lifecycle = fresh.lifecycleCheckpoint;
+
+    useTradingStore.getState().reset();
+    storage.setItem("quant_paper_engine_state", persisted);
+    useTradingStore.persist.rehydrate();
+    const restored = useTradingStore.getState();
+    expect(restored.operationalState.status).toBe("RESTORED_HISTORICAL");
+    expect(restored.latestDecision).toEqual(decision);
+    expect(restored.lifecycleCheckpoint).toEqual(lifecycle);
+
+    useTradingStore.getState().markMarketUnavailable();
+    const degraded = useTradingStore.getState();
+    expect(degraded.operationalState.status).toBe("DEGRADED_PROVIDER_UNAVAILABLE");
+    expect(degraded.operationalState.historicalOnly).toBe(true);
+    expect(degraded.latestDecision).toEqual(decision);
+    expect(degraded.lifecycleCheckpoint).toEqual(lifecycle);
+    expect(degraded.actionDecision).toBeNull();
+
+    const legacyPayload = JSON.parse(persisted) as { state: Record<string, unknown>; version: number };
+    legacyPayload.version = 2;
+    useTradingStore.getState().reset();
+    storage.setItem("quant_paper_engine_state", JSON.stringify(legacyPayload));
+    useTradingStore.persist.rehydrate();
+    const legacy = useTradingStore.getState();
+    expect(legacy.latestDecision).toEqual(decision);
+    expect(legacy.lifecycleCheckpoint).toBeNull();
+    expect(legacy.actionDecision).toBeNull();
   });
 });

@@ -6,6 +6,7 @@ import {
   type GroundedCondition,
   type GroundedMarketSnapshot,
   type GroundedObservedDatum,
+  type GroundedOperationalState,
 } from "./aiAdvisorGrounding";
 import {
   validateActionDecision,
@@ -86,6 +87,18 @@ function projectMarketSnapshot(snapshot: CurrentMarketSnapshot | null): Grounded
   });
   const macro = snapshot.macro;
   const synthesis = snapshot.synthesis;
+  const operationalState: GroundedOperationalState | undefined = snapshot.operationalState
+    ? {
+      schemaVersion: snapshot.operationalState.schemaVersion,
+      status: snapshot.operationalState.status,
+      cycleKeySerialized: snapshot.operationalState.cycleKeySerialized,
+      decisionTime: snapshot.operationalState.decisionTime,
+      observationTime: snapshot.operationalState.observationTime,
+      source: snapshot.operationalState.source,
+      historicalOnly: snapshot.operationalState.historicalOnly,
+      reason: snapshot.operationalState.reason,
+    }
+    : undefined;
   return Object.freeze({
     status: "AVAILABLE",
     contextRole: "OBSERVED_CONTEXT_ONLY_NOT_ACTION_AUTHORITY",
@@ -105,6 +118,7 @@ function projectMarketSnapshot(snapshot: CurrentMarketSnapshot | null): Grounded
       confidence: synthesis?.confidence ?? null,
       dataCoverage: synthesis?.dataCoverage ?? null,
     }),
+    ...(operationalState ? { operationalState: Object.freeze(operationalState) } : {}),
   });
 }
 
