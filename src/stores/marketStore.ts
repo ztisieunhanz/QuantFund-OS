@@ -73,7 +73,7 @@ export const useMarketStore = create<MarketState>((set, get) => {
       });
     } catch (err) {
       if (requestGeneration !== latestLoadGeneration) return;
-      useTradingStore.getState().reset();
+      useTradingStore.getState().markMarketUnavailable();
       set({
         ...decorate([]),
         source: null,

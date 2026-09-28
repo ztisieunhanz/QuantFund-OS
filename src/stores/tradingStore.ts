@@ -188,6 +188,7 @@ export interface TradingState {
   isRestored: boolean;
   restoredAt: number | null;
   runOnBars: (bars: OhlcvBar[], ctx: QuantReplayMarketContext) => void;
+  markMarketUnavailable: () => void;
   reset: () => void;
 }
 
@@ -278,6 +279,15 @@ export const useTradingStore = create<TradingState>()(
           isRestored: false,
           restoredAt: null,
           running: true,
+        });
+      },
+
+      markMarketUnavailable: () => {
+        engine.reset();
+        const empty = deriveMetricsFromDecision(null);
+        set({
+          ...empty,
+          actionDecision: null,
         });
       },
 

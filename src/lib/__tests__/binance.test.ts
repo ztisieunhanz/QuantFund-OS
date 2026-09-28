@@ -1,19 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchBtcKlines } from "../binance";
 import { getMarketSourceLabel, useMarketStore } from "@/stores/marketStore";
-import { useTradingStore } from "@/stores/tradingStore";
+import { getStorageApi, useTradingStore } from "@/stores/tradingStore";
 
 const BASE_OPEN_TIME = 1_700_000_000_000;
 const HOUR_MS = 3_600_000;
 
-const gatewayBars = (close: string, count = 60, start = BASE_OPEN_TIME) => Array.from({ length: count }, (_, index) => {
+const gatewayBars = (close: string, count = 60, start = BASE_OPEN_TIME, step = 0) => Array.from({ length: count }, (_, index) => {
   const openTime = start + index * HOUR_MS;
+  const candleClose = Number(close) + index * step;
   return [
     openTime,
-    close,
-    String(Number(close) + 100),
-    String(Number(close) - 100),
-    close,
+    String(candleClose),
+    String(candleClose + 100),
+    String(candleClose - 100),
+    String(candleClose),
     "100",
     openTime + HOUR_MS - 1,
     "100",
@@ -34,10 +35,19 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-const marketResponse = (close: string) => new Response(
-  JSON.stringify(gatewayBars(close)),
+const marketResponse = (close: string, count = 60, step = 0) => new Response(
+  JSON.stringify(gatewayBars(close, count, BASE_OPEN_TIME, step)),
   { status: 200, headers: { "Content-Type": "application/json" } },
 );
+
+const activeReplayBars = (basePrice: number) => Array.from({ length: 140 }, (_, index) => ({
+  time: 1_700_000_000 + index * 3_600,
+  open: basePrice + index,
+  high: basePrice + 100 + index,
+  low: basePrice - 100 + index,
+  close: basePrice + 50 + index,
+  volume: 100,
+}));
 
 describe("active Binance market feed boundary", () => {
   afterEach(() => {
@@ -144,7 +154,7 @@ describe("active Binance market feed boundary", () => {
     const responses = [
       marketResponse("76050"),
       new Response("", { status: 502 }),
-      marketResponse("76150"),
+      marketResponse("76150", 140, 1),
     ];
     vi.stubGlobal("fetch", vi.fn(async () => responses.shift()!));
 
@@ -163,21 +173,76 @@ describe("active Binance market feed boundary", () => {
       volume: 100,
     }));
     useTradingStore.getState().runOnBars(staleBars, { interval: "1h", source: "live" });
-    expect(useTradingStore.getState().latestDecision).not.toBeNull();
+    const durableBeforeOutage = useTradingStore.getState();
+    expect(durableBeforeOutage.latestDecision).not.toBeNull();
+    expect(durableBeforeOutage.lifecycleCheckpoint).not.toBeNull();
+    expect(durableBeforeOutage.actionDecision).not.toBeNull();
+    const persistedBeforeOutage = JSON.parse(getStorageApi().getItem("quant_paper_engine_state")!);
 
     await useMarketStore.getState().load("1h");
     expect(useMarketStore.getState().bars).toEqual([]);
     expect(useMarketStore.getState().lastPrice).toBe(0);
     expect(useMarketStore.getState().source).toBeNull();
     expect(useMarketStore.getState().error).toBe("BTC market feed unavailable.");
-    expect(useTradingStore.getState().latestDecision).toBeNull();
+    expect(useTradingStore.getState().latestDecision).toEqual(durableBeforeOutage.latestDecision);
+    expect(useTradingStore.getState().lifecycleCheckpoint).toEqual(durableBeforeOutage.lifecycleCheckpoint);
     expect(useTradingStore.getState().actionDecision).toBeNull();
+    expect(useTradingStore.getState().trend.status).toBeUndefined();
+    const persistedDuringOutage = JSON.parse(getStorageApi().getItem("quant_paper_engine_state")!);
+    expect(persistedDuringOutage.state.latestDecision).toEqual(persistedBeforeOutage.state.latestDecision);
+    expect(persistedDuringOutage.state.lifecycleCheckpoint).toEqual(persistedBeforeOutage.state.lifecycleCheckpoint);
 
     await useMarketStore.getState().load("1h");
-    expect(useMarketStore.getState().bars).toHaveLength(60);
-    expect(useMarketStore.getState().lastPrice).toBe(76150);
+    expect(useMarketStore.getState().bars).toHaveLength(140);
+    expect(useMarketStore.getState().lastPrice).toBe(76289);
     expect(useMarketStore.getState().source).toBe("live");
     expect(useMarketStore.getState().error).toBeNull();
+
+    useTradingStore.getState().runOnBars(useMarketStore.getState().bars, { interval: "1h", source: "live" });
+    expect(useTradingStore.getState().latestDecision).not.toBeNull();
+    expect(useTradingStore.getState().actionDecision).not.toBeNull();
+    expect(useTradingStore.getState().latestDecision).not.toEqual(durableBeforeOutage.latestDecision);
+  });
+
+  it("preserves a rehydrated lifecycle across the current provider outage", async () => {
+    const durableBars = activeReplayBars(70_000);
+    useTradingStore.getState().runOnBars(durableBars, { interval: "1h", source: "live" });
+    const persistedBeforeRestart = getStorageApi().getItem("quant_paper_engine_state")!;
+    const beforeRestart = useTradingStore.getState();
+    expect(beforeRestart.latestDecision).not.toBeNull();
+    expect(beforeRestart.lifecycleCheckpoint).not.toBeNull();
+    expect(beforeRestart.actionDecision).not.toBeNull();
+
+    useTradingStore.getState().reset();
+    getStorageApi().setItem("quant_paper_engine_state", persistedBeforeRestart);
+    await useTradingStore.persist.rehydrate();
+
+    const restored = useTradingStore.getState();
+    expect(restored.isRestored).toBe(true);
+    expect(restored.latestDecision).toEqual(beforeRestart.latestDecision);
+    expect(restored.lifecycleCheckpoint).toEqual(beforeRestart.lifecycleCheckpoint);
+    expect(restored.actionDecision).not.toBeNull();
+    const restoredDecision = restored.latestDecision;
+    const restoredCheckpoint = restored.lifecycleCheckpoint;
+    const restoredLastRunAt = restored.lastRunAt;
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 502 })));
+    await useMarketStore.getState().load("1h");
+
+    expect(useMarketStore.getState().bars).toEqual([]);
+    expect(useMarketStore.getState().lastPrice).toBe(0);
+    expect(useMarketStore.getState().source).toBeNull();
+    expect(useMarketStore.getState().error).toBe("BTC market feed unavailable.");
+    expect(useTradingStore.getState().actionDecision).toBeNull();
+    expect(useTradingStore.getState().latestDecision).toEqual(restoredDecision);
+    expect(useTradingStore.getState().lifecycleCheckpoint).toEqual(restoredCheckpoint);
+    expect(useTradingStore.getState().lastRunAt).toBe(restoredLastRunAt);
+
+    const persistedAfterOutage = JSON.parse(getStorageApi().getItem("quant_paper_engine_state")!);
+    expect(persistedAfterOutage.state.latestDecision).toEqual(JSON.parse(persistedBeforeRestart).state.latestDecision);
+    expect(persistedAfterOutage.state.lifecycleCheckpoint).toEqual(JSON.parse(persistedBeforeRestart).state.lifecycleCheckpoint);
+    expect(persistedAfterOutage.state.lastRunAt).toBe(JSON.parse(persistedBeforeRestart).state.lastRunAt);
+    expect(persistedAfterOutage.state.actionDecision).toBeUndefined();
   });
 
   it("keeps the newer successful request authoritative over a stale success", async () => {
@@ -198,6 +263,39 @@ describe("active Binance market feed boundary", () => {
     expect(useMarketStore.getState().source).toBe("live");
     expect(useMarketStore.getState().error).toBeNull();
     expect(useMarketStore.getState().loading).toBe(false);
+  });
+
+  it("does not let a stale failure invalidate B's active trading state", async () => {
+    const requestA = deferred<Response>();
+    const requestB = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(marketResponse("75000", 140, 1))
+      .mockImplementationOnce(() => requestA.promise)
+      .mockImplementationOnce(() => requestB.promise));
+
+    await useMarketStore.getState().load("1h");
+    useTradingStore.getState().runOnBars(useMarketStore.getState().bars, { interval: "1h", source: "live" });
+    expect(useTradingStore.getState().actionDecision).not.toBeNull();
+
+    const loadA = useMarketStore.getState().load("1h");
+    const loadB = useMarketStore.getState().load("1h");
+    requestB.resolve(marketResponse("81000", 140, 1));
+    await loadB;
+    useTradingStore.getState().runOnBars(useMarketStore.getState().bars, { interval: "1h", source: "live" });
+    const bState = useTradingStore.getState();
+    const persistedAfterB = getStorageApi().getItem("quant_paper_engine_state")!;
+    expect(bState.actionDecision).not.toBeNull();
+
+    requestA.reject(new Error("stale provider failure"));
+    await loadA;
+
+    expect(useMarketStore.getState().lastPrice).toBe(81139);
+    expect(useMarketStore.getState().source).toBe("live");
+    expect(useMarketStore.getState().error).toBeNull();
+    expect(useTradingStore.getState().actionDecision).toEqual(bState.actionDecision);
+    expect(useTradingStore.getState().latestDecision).toEqual(bState.latestDecision);
+    expect(useTradingStore.getState().lifecycleCheckpoint).toEqual(bState.lifecycleCheckpoint);
+    expect(getStorageApi().getItem("quant_paper_engine_state")).toBe(persistedAfterB);
   });
 
   it("keeps newer evidence after a stale request fails", async () => {
@@ -238,6 +336,45 @@ describe("active Binance market feed boundary", () => {
     expect(useMarketStore.getState().source).toBeNull();
     expect(useMarketStore.getState().error).toBe("BTC market feed unavailable.");
     expect(useMarketStore.getState().loading).toBe(false);
+    expect(useTradingStore.getState().latestDecision).toBeNull();
+    expect(useTradingStore.getState().lifecycleCheckpoint).toBeNull();
+    expect(useTradingStore.getState().actionDecision).toBeNull();
+  });
+
+  it("does not let stale success resurrect evidence after B fails", async () => {
+    const requestA = deferred<Response>();
+    const requestB = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(marketResponse("75000", 140, 1))
+      .mockImplementationOnce(() => requestA.promise)
+      .mockImplementationOnce(() => requestB.promise));
+
+    await useMarketStore.getState().load("1h");
+    useTradingStore.getState().runOnBars(useMarketStore.getState().bars, { interval: "1h", source: "live" });
+    const seeded = useTradingStore.getState();
+    expect(seeded.actionDecision).not.toBeNull();
+
+    const loadA = useMarketStore.getState().load("1h");
+    const loadB = useMarketStore.getState().load("1h");
+    requestB.reject(new Error("current provider failure"));
+    await loadB;
+    const preservedAfterFailure = useTradingStore.getState();
+    const persistedAfterFailure = getStorageApi().getItem("quant_paper_engine_state")!;
+    expect(useTradingStore.getState().actionDecision).toBeNull();
+    expect(preservedAfterFailure.latestDecision).toEqual(seeded.latestDecision);
+    expect(preservedAfterFailure.lifecycleCheckpoint).toEqual(seeded.lifecycleCheckpoint);
+
+    requestA.resolve(marketResponse("83000", 140, 1));
+    await loadA;
+
+    expect(useMarketStore.getState().bars).toEqual([]);
+    expect(useMarketStore.getState().lastPrice).toBe(0);
+    expect(useMarketStore.getState().source).toBeNull();
+    expect(useMarketStore.getState().error).toBe("BTC market feed unavailable.");
+    expect(useTradingStore.getState().actionDecision).toBeNull();
+    expect(useTradingStore.getState().latestDecision).toEqual(preservedAfterFailure.latestDecision);
+    expect(useTradingStore.getState().lifecycleCheckpoint).toEqual(preservedAfterFailure.lifecycleCheckpoint);
+    expect(getStorageApi().getItem("quant_paper_engine_state")).toBe(persistedAfterFailure);
   });
 
   it("allows a new request to recover after a current failure", async () => {
