@@ -16,10 +16,15 @@ import { buildServerGroundedAdvisorInstruction } from "../src/lib/aiAdvisorGroun
 const GEMINI_GENERATE_CONTENT_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
 
+export const AI_GATEWAY_UPSTREAM_TIMEOUT_MS = 20_000;
+export const AI_GATEWAY_MAX_UPSTREAM_BODY_BYTES = 1_048_576;
+
 export interface AiGatewayUpstreamResponse {
   readonly ok: boolean;
   readonly status: number;
-  readonly json: () => Promise<unknown>;
+  readonly body?: unknown;
+  readonly text?: () => Promise<string>;
+  readonly json?: () => Promise<unknown>;
 }
 
 export type AiGatewayUpstreamFetch = (
@@ -28,6 +33,7 @@ export type AiGatewayUpstreamFetch = (
     method: "POST";
     headers: Readonly<Record<string, string>>;
     body: string;
+    signal?: AbortSignal;
   }>
 ) => Promise<AiGatewayUpstreamResponse>;
 
@@ -60,6 +66,121 @@ function extractGeminiText(payload: unknown): string | null {
   return typeof text === "string" && text.trim().length > 0 ? text : null;
 }
 
+interface BoundedReader {
+  read: () => Promise<{ done: boolean; value?: unknown }>;
+  cancel?: () => Promise<void> | void;
+  releaseLock?: () => void;
+}
+
+class UpstreamDeadlineError extends Error {
+  constructor() {
+    super("AI provider deadline exceeded.");
+    this.name = "UpstreamDeadlineError";
+  }
+}
+
+async function awaitWithAbort<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw new UpstreamDeadlineError();
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new UpstreamDeadlineError());
+    };
+    const resolveOnce = (value: T) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const rejectOnce = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error instanceof Error ? error : new Error("Upstream operation failed."));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve()
+      .then(operation)
+      .then(
+        resolveOnce,
+        rejectOnce,
+      );
+  });
+}
+
+async function readBoundedUpstreamJson(
+  upstream: AiGatewayUpstreamResponse,
+  signal: AbortSignal,
+): Promise<unknown | null> {
+  const body = upstream.body as { getReader?: () => BoundedReader } | null | undefined;
+  if (body?.getReader) {
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    let cancelReader = false;
+
+    try {
+      while (true) {
+        const chunk = await awaitWithAbort(() => reader.read(), signal);
+        if (chunk.done) break;
+        if (!(chunk.value instanceof Uint8Array)) return null;
+        totalBytes += chunk.value.byteLength;
+        if (totalBytes > AI_GATEWAY_MAX_UPSTREAM_BODY_BYTES) {
+          cancelReader = true;
+          return null;
+        }
+        chunks.push(chunk.value);
+      }
+    } finally {
+      if (cancelReader || signal.aborted) {
+        try {
+          await reader.cancel?.();
+        } catch {
+          // Preserve the sanitized gateway failure even if cancellation fails.
+        }
+      }
+      reader.releaseLock?.();
+    }
+
+    const rawBody = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
+    try {
+      return JSON.parse(rawBody) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
+  if (upstream.text) {
+    try {
+      const rawBody = await awaitWithAbort(() => upstream.text!(), signal);
+      if (Buffer.byteLength(rawBody, "utf8") > AI_GATEWAY_MAX_UPSTREAM_BODY_BYTES) return null;
+      return JSON.parse(rawBody) as unknown;
+    } catch {
+      if (signal.aborted) throw new UpstreamDeadlineError();
+      return null;
+    }
+  }
+
+  // Kept for the existing deterministic unit-test adapter. Production fetch
+  // always exposes Response.body and therefore uses the bounded stream path.
+  if (upstream.json) {
+    try {
+      return await awaitWithAbort(() => upstream.json!(), signal);
+    } catch {
+      if (signal.aborted) throw new UpstreamDeadlineError();
+      return null;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Handles the narrow gateway contract without selecting a production host.
  * Credential material is accepted only as a server dependency and is never
@@ -74,6 +195,7 @@ export async function handleAiGatewayRequest(
   dependencies: Readonly<{
     apiKey: string | undefined;
     fetchFn?: AiGatewayUpstreamFetch;
+    upstreamTimeoutMs?: number;
   }>
 ): Promise<AiGatewayServerResult> {
   if (input.method !== "POST") {
@@ -112,7 +234,11 @@ export async function handleAiGatewayRequest(
     headers["x-goog-api-key"] = apiKey;
   }
 
-  let upstream: AiGatewayUpstreamResponse;
+  let upstream: AiGatewayUpstreamResponse | undefined;
+  const abortController = new AbortController();
+  const timeoutMs = dependencies.upstreamTimeoutMs ?? AI_GATEWAY_UPSTREAM_TIMEOUT_MS;
+  const timeout = setTimeout(() => abortController.abort(), timeoutMs);
+  let upstreamPayload: unknown | null = null;
   try {
     const fetchFn = dependencies.fetchFn ?? globalThis.fetch;
     upstream = await fetchFn(upstreamUrl, {
@@ -128,19 +254,25 @@ export async function handleAiGatewayRequest(
         })),
         generationConfig: { temperature: 0.2 },
       }),
+      signal: abortController.signal,
     });
-  } catch {
-    return failure(502, "UPSTREAM_FAILURE", "AI provider request failed.");
+    if (!upstream.ok) {
+      return failure(502, "UPSTREAM_FAILURE", "AI provider rejected the request.");
+    }
+    upstreamPayload = await readBoundedUpstreamJson(upstream, abortController.signal);
+  } catch (error) {
+    if (error instanceof UpstreamDeadlineError || abortController.signal.aborted) {
+      return failure(502, "UPSTREAM_FAILURE", "AI provider request failed.");
+    }
+    if (!upstream) {
+      return failure(502, "UPSTREAM_FAILURE", "AI provider request failed.");
+    }
+    return failure(502, "MALFORMED_UPSTREAM_RESPONSE", "AI provider returned an unreadable response.");
+  } finally {
+    clearTimeout(timeout);
   }
 
-  if (!upstream.ok) {
-    return failure(502, "UPSTREAM_FAILURE", "AI provider rejected the request.");
-  }
-
-  let upstreamPayload: unknown;
-  try {
-    upstreamPayload = await upstream.json();
-  } catch {
+  if (upstreamPayload === null) {
     return failure(502, "MALFORMED_UPSTREAM_RESPONSE", "AI provider returned an unreadable response.");
   }
 

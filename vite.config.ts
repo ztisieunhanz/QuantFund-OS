@@ -9,6 +9,7 @@ import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 import { AI_GATEWAY_MAX_BODY_BYTES } from './src/lib/aiGatewayContract';
 import { handleAiGatewayRequest } from './server/aiGateway';
+import { handleMarketGatewayRequest } from './server/marketGateway';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
@@ -20,77 +21,36 @@ export default defineConfig(({ mode }) => {
       {
         name: 'quant-api-gateway',
         configureServer(server) {
-          // 1. PROXY: BINANCE SPOT KLINES
-          server.middlewares.use('/api/binance', async (req, res) => {
-            try {
-              const targetUrl = `https://api.binance.com${req.url || ''}`;
-              const response = await fetch(targetUrl, {
-                headers: { 'User-Agent': 'Mozilla/5.0' },
+          // 1. DEVELOPMENT MARKET ADAPTER: delegate to the shared market gateway.
+          const useMarketGateway = (mountPath: string) => {
+            server.middlewares.use(mountPath, async (req, res, next) => {
+              const requestUrl = new URL(req.url || '/', 'http://localhost');
+              const pathname = requestUrl.pathname.startsWith(mountPath)
+                ? requestUrl.pathname
+                : `${mountPath}${requestUrl.pathname}`;
+              const result = await handleMarketGatewayRequest({
+                method: req.method,
+                pathname,
+                query: requestUrl.searchParams,
               });
-              res.statusCode = response.status;
-              res.setHeader('Content-Type', 'application/json');
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.end(await response.text());
-            } catch (err: any) {
-              res.statusCode = 502;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: { message: 'Binance Proxy Failed' } }));
-            }
-          });
 
-          // 2. PROXY: YAHOO FINANCE MACRO
-          server.middlewares.use('/api/yahoo', async (req, res) => {
-            try {
-              const targetUrl = `https://query1.finance.yahoo.com${req.url || ''}`;
-              const response = await fetch(targetUrl, {
-                headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
-              });
-              res.statusCode = response.status;
-              res.setHeader('Content-Type', 'application/json');
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.end(await response.text());
-            } catch (err: any) {
-              res.statusCode = 502;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: { message: 'Yahoo Proxy Failed' } }));
-            }
-          });
+              if (result === null) {
+                next();
+                return;
+              }
 
-          // 2b. PROXY: VNDIRECT FINFO API
-          server.middlewares.use('/api/vndirect/finfo', async (req, res) => {
-            try {
-              const targetUrl = `https://api-finfo.vndirect.com.vn${req.url || ''}`;
-              const response = await fetch(targetUrl, {
-                headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
-              });
-              res.statusCode = response.status;
-              res.setHeader('Content-Type', 'application/json');
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.end(await response.text());
-            } catch (err: any) {
-              res.statusCode = 502;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: { message: 'VNDirect FINfo Proxy Failed' } }));
-            }
-          });
+              res.statusCode = result.statusCode;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.setHeader('Cache-Control', 'no-store');
+              res.setHeader('X-Content-Type-Options', 'nosniff');
+              res.end(JSON.stringify(result.body));
+            });
+          };
 
-          // 2c. PROXY: VNDIRECT DCHART API
-          server.middlewares.use('/api/vndirect/dchart', async (req, res) => {
-            try {
-              const targetUrl = `https://dchart-api.vndirect.com.vn/dchart${req.url || ''}`;
-              const response = await fetch(targetUrl, {
-                headers: { 'User-Agent': 'Mozilla/5.0' },
-              });
-              res.statusCode = response.status;
-              res.setHeader('Content-Type', 'application/json');
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.end(await response.text());
-            } catch (err: any) {
-              res.statusCode = 502;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: { message: 'VNDirect DChart Proxy Failed' } }));
-            }
-          });
+          useMarketGateway('/api/binance');
+          useMarketGateway('/api/yahoo');
+          useMarketGateway('/api/vndirect/finfo');
+          useMarketGateway('/api/vndirect/dchart');
 
           // 3. LOCAL/DEV ADAPTER: SAME-ORIGIN AI GATEWAY CONTRACT
           // This Vite middleware is not the final production hosting topology.
@@ -117,93 +77,59 @@ export default defineConfig(({ mode }) => {
             });
           });
 
-          // 4. NEW PIPELINE: EDGE-LLM EVENT GATEWAY
-          server.middlewares.use('/api/quant-events', async (_req, res) => {
-            try {
-              const apiKey = (env.GEMINI_API_KEY || '').trim();
-              if (!apiKey) throw new Error('Missing GEMINI_API_KEY');
-
-              const rssUrls = [
-                'https://api.rss2json.com/v1/api.json?rss_url=https://cointelegraph.com/rss',
-                'https://api.rss2json.com/v1/api.json?rss_url=https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664'
-              ];
-
-              let rawHeadlines = "";
-              for (const url of rssUrls) {
-                try {
-                  const fetchRes = await fetch(url);
-                  if (fetchRes.ok) {
-                    const data = await fetchRes.json() as { items?: { title?: string; description?: string }[] };
-                    const items = data.items?.slice(0, 4) || [];
-                    items.forEach((item: any) => {
-                      rawHeadlines += `- ${item.title}: ${item.description?.replace(/<[^>]*>?/gm, '').slice(0, 160)}\n`;
-                    });
-                  }
-                } catch {
-                  // Tiếp tục feed kế tiếp
-                }
-              }
-
-              if (!rawHeadlines.trim()) {
-                rawHeadlines = "Bitcoin dao động tích lũy; Lợi suất trái phiếu Mỹ ổn định trước quyết định lãi suất; Vàng duy trì vị thế trú ẩn.";
-              }
-
-              const systemPrompt = `
-                Bạn là Quant Risk Analyst. Trích xuất đúng 3 SỰ KIỆN TÀI CHÍNH quan trọng nhất từ Headlines dưới đây.
-                Xuất ra một MẢNG JSON hợp lệ (không kèm markdown thừa):
-                [
-                  {
-                    "id": "ev-1",
-                    "timestamp": "${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC",
-                    "event": "Tên sự kiện ngắn gọn (< 60 ký tự)",
-                    "impact": "HIGH" | "MEDIUM" | "LOW",
-                    "direction": "BULLISH" | "BEARISH" | "NEUTRAL",
-                    "description": "Nhận định định lượng 1 câu về tác động lên BTC / Vàng / Lợi suất.",
-                    "sourceStatus": "QUANT_ENGINE",
-                    "source": "AI Event Pipeline"
-                  }
-                ]
-              `;
-
-              const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-              let targetAiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent';
-
-              if (apiKey.startsWith('AQ.')) authHeaders['Authorization'] = `Bearer ${apiKey}`;
-              else if (apiKey.startsWith('AIzaSy')) targetAiUrl = `${targetAiUrl}?key=${apiKey}`;
-              else authHeaders['x-goog-api-key'] = apiKey;
-
-              const response = await fetch(targetAiUrl, {
-                method: 'POST',
-                headers: authHeaders,
-                body: JSON.stringify({
-                  contents: [{ parts: [{ text: `Tin tức thô:\n${rawHeadlines}` }] }],
-                  systemInstruction: { parts: [{ text: systemPrompt }] },
-                  generationConfig: { temperature: 0.1, responseMimeType: "application/json" }
-                })
-              });
-
-              const llmData = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-              const jsonStr = llmData.candidates?.[0]?.content?.parts?.[0]?.text;
-
-              res.setHeader('Content-Type', 'application/json');
-              res.statusCode = 200;
-              res.end(jsonStr || "[]");
-            } catch (err: any) {
-              res.statusCode = 200;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify([
-                {
-                  id: "ev-fallback-1",
-                  timestamp: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
-                  event: "Thị trường liên tài sản duy trì trạng thái thận trọng",
-                  impact: "MEDIUM",
-                  direction: "NEUTRAL",
-                  description: "Chênh lệch lợi suất duy trì đảo ngược; dòng tiền chờ đợi xác nhận chính sách tiền tệ tiếp theo.",
-                  sourceStatus: "QUANT_ENGINE",
-                  source: "Yield & Volatility Engine"
-                }
-              ]));
+          // 4. DORMANT EVENT ADAPTER: intentionally unavailable until a
+          // canonical production event source and consumer are approved.
+          // Register at the root so Connect does not rewrite req.url before
+          // exact-path and nested-path semantics are distinguished.
+          server.middlewares.use((req, res, next) => {
+            const pathname = new URL(req.url || '/', 'http://localhost').pathname;
+            const quantEventsPath = '/api/quant-events';
+            if (pathname !== quantEventsPath && !pathname.startsWith(`${quantEventsPath}/`)) {
+              next();
+              return;
             }
+
+            if (pathname !== quantEventsPath) {
+              res.statusCode = 404;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.setHeader('Cache-Control', 'no-store');
+              res.setHeader('X-Content-Type-Options', 'nosniff');
+              res.setHeader('X-Frame-Options', 'DENY');
+              res.end(JSON.stringify({
+                error: {
+                  code: 'NOT_FOUND',
+                  message: 'API route not found',
+                },
+              }));
+              return;
+            }
+
+            if (req.method !== 'GET') {
+              res.statusCode = 405;
+              res.setHeader('Allow', 'GET');
+              res.setHeader('Content-Type', 'application/json');
+              res.setHeader('Cache-Control', 'no-store');
+              res.setHeader('X-Content-Type-Options', 'nosniff');
+              res.end(JSON.stringify({
+                error: {
+                  code: 'METHOD_NOT_ALLOWED',
+                  message: 'Method not allowed',
+                },
+              }));
+              return;
+            }
+
+            res.statusCode = 503;
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            res.end(JSON.stringify({
+              status: 'FAILURE',
+              error: {
+                code: 'UNAVAILABLE',
+                message: 'Quant event feed is not connected to a production source.',
+              },
+            }));
           });
         }
       }
@@ -215,6 +141,9 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 5173,
-    }
+    },
+    build: {
+      manifest: true,
+    },
   };
 });

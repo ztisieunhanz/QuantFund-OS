@@ -1,5 +1,5 @@
 import type { OhlcvBar } from "@/types/market";
-import { mulberry32 } from "@/lib/math";
+import { BAR_DURATION_MS } from "@/lib/quant/timeDomain";
 
 export type BinanceInterval = "15m" | "1h" | "4h" | "1d";
 
@@ -7,67 +7,91 @@ type KlineTuple = [
   number, string, string, string, string, string, number, string, number, string, string, string
 ];
 
-function parseKlines(raw: KlineTuple[]): OhlcvBar[] {
-  return raw.map((k) => ({
-    time: Math.floor(k[0] / 1000),
-    open: Number(k[1]),
-    high: Number(k[2]),
-    low: Number(k[3]),
-    close: Number(k[4]),
-    volume: Number(k[5]),
-  }));
+const BINANCE_INTERVAL_DURATION_MS: Record<BinanceInterval, number> = {
+  "15m": BAR_DURATION_MS / 4,
+  "1h": BAR_DURATION_MS,
+  "4h": BAR_DURATION_MS * 4,
+  "1d": BAR_DURATION_MS * 24,
+};
+
+function isFiniteNumeric(value: unknown): value is number | string {
+  return (typeof value === "number" || typeof value === "string") && Number.isFinite(Number(value));
+}
+
+function parseKlines(
+  raw: unknown[],
+  interval: BinanceInterval,
+  observationTimeMs: number,
+): OhlcvBar[] {
+  const intervalDurationMs = BINANCE_INTERVAL_DURATION_MS[interval];
+  let previousOpenTime = -1;
+  const bars: OhlcvBar[] = [];
+
+  for (const value of raw) {
+    if (!Array.isArray(value) || value.length < 12) {
+      throw new Error("Malformed BTC market feed.");
+    }
+
+    const k = value as KlineTuple;
+    const openTime = k[0];
+    const closeTime = k[6];
+    const prices = [k[1], k[2], k[3], k[4], k[5]];
+    if (!Number.isSafeInteger(openTime) || openTime < 0 || openTime <= previousOpenTime
+      || !Number.isSafeInteger(closeTime) || closeTime < 0
+      || prices.some((price) => !isFiniteNumeric(price))) {
+      throw new Error("Malformed BTC market feed.");
+    }
+
+    const expectedCloseTime = openTime + intervalDurationMs - 1;
+    if (closeTime !== expectedCloseTime) {
+      throw new Error("Malformed BTC market feed.");
+    }
+
+    const open = Number(k[1]);
+    const high = Number(k[2]);
+    const low = Number(k[3]);
+    const close = Number(k[4]);
+    const volume = Number(k[5]);
+    if (open <= 0 || high <= 0 || low <= 0 || close <= 0 || volume < 0
+      || high < Math.max(open, close) || low > Math.min(open, close)) {
+      throw new Error("Malformed BTC market feed.");
+    }
+
+    previousOpenTime = openTime;
+    if (openTime + intervalDurationMs > observationTimeMs) continue;
+
+    bars.push({
+      time: Math.floor(openTime / 1000),
+      open,
+      high,
+      low,
+      close,
+      volume,
+    });
+  }
+
+  return bars;
 }
 
 export async function fetchBtcKlines(
   interval: BinanceInterval = "1h",
   limit = 500,
-): Promise<{ bars: OhlcvBar[]; source: "live" | "synthetic" }> {
-  // Ưu tiên gọi Binance Vision (CORS Open) để không tốn quota proxy của Bolt
-  const endpoints = [
-    `https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`,
-    `/api/binance/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`,
-  ];
+  observationTimeMs = Date.now(),
+): Promise<{ bars: OhlcvBar[]; source: "live" }> {
+  const url = `/api/binance/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`;
 
-  for (const url of endpoints) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const json = (await res.json()) as KlineTuple[];
-      if (!Array.isArray(json) || json.length < 60) continue;
-      return { bars: parseKlines(json), source: "live" };
-    } catch {}
+  try {
+    const res = await fetch(url);
+    if (res.ok) {
+      const json = (await res.json()) as unknown;
+      if (Array.isArray(json) && json.length >= 60) {
+        const bars = parseKlines(json, interval, observationTimeMs);
+        if (bars.length > 0) return { bars, source: "live" };
+      }
+    }
+  } catch {
+    // Preserve the fail-closed market-store boundary below.
   }
 
-  return { bars: syntheticBtc(interval, limit, 76800), source: "synthetic" };
-}
-
-function intervalMs(interval: BinanceInterval): number {
-  switch (interval) {
-    case "15m": return 15 * 60 * 1000;
-    case "1h": return 60 * 60 * 1000;
-    case "4h": return 4 * 60 * 60 * 1000;
-    case "1d": return 24 * 60 * 60 * 1000;
-  }
-}
-
-function syntheticBtc(interval: BinanceInterval, limit: number, basePrice = 76800): OhlcvBar[] {
-  const rand = mulberry32(777 + interval.length * 13);
-  const step = intervalMs(interval);
-  let close = basePrice;
-  const now = Date.now();
-  const bars: OhlcvBar[] = [];
-
-  for (let i = limit; i >= 1; i -= 1) {
-    const t = Math.floor((now - i * step) / 1000);
-    const drift = 0.0001;
-    const shock = (rand() - 0.495) * 0.015;
-    const open = close;
-    close = Math.max(1000, open * (1 + drift + shock));
-    const wick = Math.abs(shock) * open * 0.5;
-    const high = Math.max(open, close) + wick * rand();
-    const low = Math.min(open, close) - wick * rand();
-    const volume = 200 + rand() * 1500;
-    bars.push({ time: t, open, high, low, close, volume });
-  }
-  return bars;
+  throw new Error("BTC market feed unavailable.");
 }

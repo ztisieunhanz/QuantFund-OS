@@ -27,7 +27,7 @@ import { clsx } from "@/lib/clsx";
 import { FEE_BPS, STARTING_EQUITY } from "@/lib/paperEngine";
 import { QUANT_BAR_INTERVAL } from "@/lib/quant/timeDomain";
 import { formatNumber, formatPct, formatUsd } from "@/lib/math";
-import { useMarketStore } from "@/stores/marketStore";
+import { getMarketSourceLabel, useMarketStore } from "@/stores/marketStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useSnapshotStore } from "@/stores/snapshotStore";
 import type { BotMetrics } from "@/types/market";
@@ -93,17 +93,23 @@ export function TradingLabView() {
     // BLOCKER 1: pass QuantReplayMarketContext explicitly — interval + source together.
     // Trigger runOnBars if interval !== QUANT_BAR_INTERVAL (to trigger store reset guard even if bars < 130)
     // or when bars.length >= 130 for 1H replay.
-    if (interval !== QUANT_BAR_INTERVAL || bars.length >= 130) {
+    if (source !== null && (interval !== QUANT_BAR_INTERVAL || bars.length >= 130)) {
       runOnBars(bars, { interval, source });
     }
   }, [bars, runOnBars, interval, source]);
 
   const handleReplay = useCallback(() => {
-    if (replaying || bars.length < 130) return;
+    if (replaying || bars.length < 130 || source === null) return;
     setReplaying(true);
     resetTrading();
     setTimeout(() => {
-      runOnBars(bars, { interval, source });
+      const currentMarket = useMarketStore.getState();
+      if (currentMarket.source !== null) {
+        runOnBars(currentMarket.bars, {
+          interval: currentMarket.interval,
+          source: currentMarket.source,
+        });
+      }
       setReplaying(false);
     }, 120);
   }, [replaying, bars, interval, source, resetTrading, runOnBars]);
@@ -183,10 +189,12 @@ export function TradingLabView() {
               "px-1.5 py-0.2 rounded text-[9px] font-bold border uppercase",
               source === "live"
                 ? "bg-up/15 text-up border-up/30"
-                : "bg-amber/15 text-amber border-amber/30"
+                : source === "synthetic"
+                  ? "bg-amber/15 text-amber border-amber/30"
+                  : "bg-down/15 text-down border-down/30"
             )}
           >
-            {source === "live" ? "FEED: LIVE BINANCE" : "FEED: SYNTHETIC"}
+            {getMarketSourceLabel(source)}
           </span>
         </div>
 

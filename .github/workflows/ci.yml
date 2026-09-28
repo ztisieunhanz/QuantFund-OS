@@ -75,11 +75,23 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Build production server
+        run: npm run build:server
+
       - name: Run full test suite
         run: npx vitest run
 
+      - name: Test performance budget checker
+        run: npm run perf:test
+
       - name: Build production bundle
         run: npm run build
+
+      - name: Check performance budgets
+        run: npm run perf:check
+
+      - name: Run production runtime smoke
+        run: npm run smoke:production
 
       - name: Verify post-validation working tree
         shell: bash

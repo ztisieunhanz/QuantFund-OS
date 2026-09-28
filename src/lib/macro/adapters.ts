@@ -167,7 +167,6 @@ export async function fetchBtcDatumV2(
   // 1. Try Binance
   const binanceUrls = [
     "/api/binance/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250",
-    "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=250",
   ];
   const binanceData = await tryFetchUrls(binanceUrls, fetchFn);
   const binanceParsed = parseBinanceKlines(binanceData);
@@ -226,7 +225,6 @@ export async function fetchGoldDatumV2(
   // 1. Try Binance PAXG
   const binanceUrls = [
     "/api/binance/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=250",
-    "https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval=1d&limit=250",
   ];
   const binanceData = await tryFetchUrls(binanceUrls, fetchFn);
   const binanceParsed = parseBinanceKlines(binanceData);

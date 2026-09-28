@@ -6,7 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "build:server": "tsc -p tsconfig.server.json --noEmit && vite build --ssr server/productionServer.ts --outDir dist-server",
+    "perf:check": "node scripts/check-performance-budget.mjs",
+    "perf:test": "node --test scripts/check-performance-budget.selftest.mjs",
+    "preview": "vite preview",
+    "smoke:production": "node scripts/production-smoke.mjs",
+    "start": "node dist-server/productionServer.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

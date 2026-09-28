@@ -196,7 +196,7 @@ export function MacroView() {
     // BLOCKER 1: pass QuantReplayMarketContext explicitly — interval + source together.
     // Trigger runOnBars if interval !== QUANT_BAR_INTERVAL (to trigger store reset guard even if bars < 130)
     // or when bars.length >= 130 for 1H replay.
-    if (interval !== QUANT_BAR_INTERVAL || bars.length >= 130) {
+    if (source !== null && (interval !== QUANT_BAR_INTERVAL || bars.length >= 130)) {
       runOnBars(bars, { interval, source });
     }
   }, [bars, runOnBars, interval, source]);

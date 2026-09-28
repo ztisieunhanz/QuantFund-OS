@@ -20,7 +20,7 @@ import { formatNumber, formatPct } from "@/lib/math";
 import type { BinanceInterval } from "@/lib/binance";
 import type { OhlcvBar } from "@/types/market";
 import { QUANT_BAR_INTERVAL } from "@/lib/quant/timeDomain";
-import { useMarketStore } from "@/stores/marketStore";
+import { getMarketSourceLabel, useMarketStore } from "@/stores/marketStore";
 import { useTradingStore } from "@/stores/tradingStore";
 
 const INTERVALS: BinanceInterval[] = ["15m", "1h", "4h", "1d"];
@@ -128,7 +128,7 @@ export function ChartView() {
     // BLOCKER 1: pass QuantReplayMarketContext explicitly — interval + source together.
     // Trigger runOnBars if interval !== QUANT_BAR_INTERVAL (to trigger store reset guard even if bars < 130)
     // or when bars.length >= 130 for 1H replay.
-    if (interval !== QUANT_BAR_INTERVAL || bars.length >= 130) {
+    if (source !== null && (interval !== QUANT_BAR_INTERVAL || bars.length >= 130)) {
       runOnBars(bars, { interval, source });
     }
   }, [bars, runOnBars, interval, source]);
@@ -351,10 +351,12 @@ export function ChartView() {
                 "px-2 py-0.5 rounded text-[10px] font-bold border",
                 source === "live"
                   ? "bg-up/10 text-up border-up/30"
-                  : "bg-amber/10 text-amber border-amber/30"
+                  : source === "synthetic"
+                    ? "bg-amber/10 text-amber border-amber/30"
+                    : "bg-down/10 text-down border-down/30"
               )}
             >
-              {source === "live" ? "FEED: LIVE BINANCE" : "FEED: SYNTHETIC"}
+              {getMarketSourceLabel(source)}
             </span>
 
             <div className="flex border border-line rounded overflow-hidden">

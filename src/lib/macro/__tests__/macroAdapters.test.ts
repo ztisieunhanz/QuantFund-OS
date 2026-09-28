@@ -353,8 +353,8 @@ describe("Macro V2 Live Feed Adapters & Loader", () => {
     expect(requestedUrls.some((url) => url.includes("query1.finance.yahoo.com"))).toBe(false);
   });
 
-  // 19. Gate M5C: BTC and Gold use Binance primary and fallback only to /api/yahoo
-  it("19. BTC and Gold use Binance primary and fallback only to /api/yahoo", async () => {
+  // 19. V2 Binance requests stay same-origin and fall back only to same-origin Yahoo
+  it("19. BTC and Gold use same-origin Binance and Yahoo routes only", async () => {
     const requestedUrls: string[] = [];
     const fallbackFetch: FetchFn = async (url: string): Promise<FetchResponse> => {
       requestedUrls.push(url);
@@ -368,12 +368,16 @@ describe("Macro V2 Live Feed Adapters & Loader", () => {
     };
 
     const gold = await fetchGoldDatumV2({ fetchFn: fallbackFetch, fetchedAt: FETCHED_AT });
+    const btc = await fetchBtcDatumV2({ fetchFn: fallbackFetch, fetchedAt: FETCHED_AT });
 
     expect(gold.status).toBe("AVAILABLE");
     if (gold.status === "AVAILABLE") {
       expect(gold.provider).toBe("Yahoo");
     }
+    expect(btc.status).toBe("AVAILABLE");
     expect(requestedUrls.some((url) => url.includes("/api/yahoo/"))).toBe(true);
+    expect(requestedUrls.every((url) => url.startsWith("/api/binance/") || url.startsWith("/api/yahoo/"))).toBe(true);
+    expect(requestedUrls.some((url) => url.includes("data-api.binance.vision"))).toBe(false);
     expect(requestedUrls.some((url) => url.includes("query1.finance.yahoo.com"))).toBe(false);
   });
 });

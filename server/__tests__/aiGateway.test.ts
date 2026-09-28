@@ -7,6 +7,7 @@ import {
 } from "../../src/lib/aiGatewayContract";
 import { buildAiAdvisorGrounding } from "../../src/lib/aiAdvisorGroundingProjection";
 import {
+  AI_GATEWAY_MAX_UPSTREAM_BODY_BYTES,
   handleAiGatewayRequest,
   type AiGatewayUpstreamFetch,
 } from "../aiGateway";
@@ -46,6 +47,32 @@ describe("M15.2A server-side AI gateway handler", () => {
     expect(upstreamBody.contents).toHaveLength(1);
     expect(upstreamBody.systemInstruction.parts[0].text).toContain("No canonical ActionDecision is available");
     expect(upstreamBody.systemInstruction.parts[0].text).toContain("server-validated");
+  });
+
+  it("consumes a complete upstream body before clearing the deadline", async () => {
+    const bodyText = JSON.stringify({ candidates: [{ content: { parts: [{ text: "Streamed answer" }] } }] });
+    let delivered = false;
+    const fetchFn = vi.fn<AiGatewayUpstreamFetch>().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: async () => {
+            if (delivered) return { done: true };
+            delivered = true;
+            return { done: false, value: new TextEncoder().encode(bodyText) };
+          },
+          releaseLock: vi.fn(),
+        }),
+      },
+    });
+
+    const result = await handleAiGatewayRequest(
+      { method: "POST", rawBody: validRequest },
+      { apiKey: SERVER_SECRET_PLACEHOLDER, fetchFn, upstreamTimeoutMs: 50 },
+    );
+
+    expect(result).toEqual({ statusCode: 200, body: { status: "SUCCESS", text: "Streamed answer" } });
   });
 
   it("rejects malformed JSON, unexpected operations, extra fields, and oversized requests", async () => {
@@ -130,6 +157,77 @@ describe("M15.2A server-side AI gateway handler", () => {
 
     expect(unreadable).toMatchObject({ body: { status: "FAILURE", error: { code: "MALFORMED_UPSTREAM_RESPONSE" } } });
     expect(invalid).toMatchObject({ body: { status: "FAILURE", error: { code: "MALFORMED_UPSTREAM_RESPONSE" } } });
+  });
+
+  it("aborts a rejected upstream deadline without waiting for the production timeout", async () => {
+    const fetchFn = vi.fn<AiGatewayUpstreamFetch>().mockImplementation((_input, init) => (
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(new Error("provider deadline")), { once: true });
+      })
+    ));
+    const startedAt = Date.now();
+
+    const result = await handleAiGatewayRequest(
+      { method: "POST", rawBody: validRequest },
+      { apiKey: SERVER_SECRET_PLACEHOLDER, fetchFn, upstreamTimeoutMs: 5 }
+    );
+
+    expect(result).toMatchObject({ statusCode: 502, body: { status: "FAILURE", error: { code: "UPSTREAM_FAILURE" } } });
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it("aborts a stalled response body at the same upstream deadline", async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    const fetchFn = vi.fn<AiGatewayUpstreamFetch>().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: () => new Promise<{ done: boolean }>(() => undefined),
+          cancel,
+          releaseLock: vi.fn(),
+        }),
+      },
+    });
+    const startedAt = Date.now();
+
+    const result = await handleAiGatewayRequest(
+      { method: "POST", rawBody: validRequest },
+      { apiKey: SERVER_SECRET_PLACEHOLDER, fetchFn, upstreamTimeoutMs: 5 },
+    );
+
+    expect(result).toMatchObject({ statusCode: 502, body: { status: "FAILURE", error: { code: "UPSTREAM_FAILURE" } } });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it("rejects an upstream body over 1 MiB before parsing it", async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    const fetchFn = vi.fn<AiGatewayUpstreamFetch>().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: async () => ({
+            done: false,
+            value: new Uint8Array(AI_GATEWAY_MAX_UPSTREAM_BODY_BYTES + 1),
+          }),
+          cancel,
+          releaseLock: vi.fn(),
+        }),
+      },
+    });
+
+    const result = await handleAiGatewayRequest(
+      { method: "POST", rawBody: validRequest },
+      { apiKey: SERVER_SECRET_PLACEHOLDER, fetchFn }
+    );
+
+    expect(result).toMatchObject({
+      statusCode: 502,
+      body: { status: "FAILURE", error: { code: "MALFORMED_UPSTREAM_RESPONSE" } },
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it("introduces no economic-authority fields in gateway results", async () => {
