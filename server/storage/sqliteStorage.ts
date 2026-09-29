@@ -4,6 +4,7 @@
 // NOTE: Single-node canonical SQLite storage engine using node:sqlite.
 // ============================================================================
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, backup as sqliteBackup } from "node:sqlite";
@@ -39,9 +40,9 @@ export class SqliteStorage {
   constructor(private readonly config: SqliteStorageConfig = {}) {}
 
   /**
-   * Initializes and establishes the canonical SQLite database.
-   * Performs runtime checks, directory validation, pragma enforcement,
-   * deterministic migrations, and startup integrity validation.
+   * Initializes and establishes the canonical SQLite database for production.
+   * Performs runtime checks (using actual process.versions.node), directory validation,
+   * pragma enforcement, deterministic migrations, and startup integrity validation.
    */
   public open(customMigrations?: readonly Migration[]): void {
     if (this.isClosedState) {
@@ -51,9 +52,29 @@ export class SqliteStorage {
       return;
     }
 
-    // 1. Runtime Compatibility Check (fail fast)
-    assertNodeRuntimeCompatibility(this.config.nodeVersion);
+    // 1. Production Runtime Compatibility Check (fail fast using actual process.versions.node)
+    assertNodeRuntimeCompatibility();
 
+    this.initializeStorage(customMigrations);
+  }
+
+  /**
+   * Internal initialization helper for pure storage mechanism tests.
+   * Bypasses the production runtime gate so storage unit tests can run under local environments.
+   * NOTE: This is strictly for internal mechanism test suites, not production servers.
+   */
+  public openDirect(customMigrations?: readonly Migration[]): void {
+    if (this.isClosedState) {
+      throw new Error("STORAGE_CLOSED: Cannot open a closed storage instance.");
+    }
+    if (this.isReadyState && this.db) {
+      return;
+    }
+
+    this.initializeStorage(customMigrations);
+  }
+
+  private initializeStorage(customMigrations?: readonly Migration[]): void {
     // 2. Persistent Data Directory & Path Validation (fail closed, no escape)
     const dataDir = assertDataDirectory(
       resolveDataDirectory(this.config.dataDir, this.config.env)
@@ -297,7 +318,7 @@ export class SqliteStorage {
 
   /**
    * Performs an online SQLite backup using the official node:sqlite backup API.
-   * Protects destination with safe atomic replacement and temp verification.
+   * Protects existing destination with failure-safe recovery preservation and verified staging.
    */
   public async backup(options: BackupOptions): Promise<BackupResult> {
     if (this.isClosedState || !this.db || !this.isReadyState) {
@@ -311,11 +332,43 @@ export class SqliteStorage {
     const resolvedDest = path.resolve(options.destinationPath.trim());
     const canonicalSource = path.resolve(this.resolvedDbPath);
 
-    // 1. Identity rejection: Never allow backup destination to equal source database
+    // 1. Path identity check
     if (resolvedDest.toLowerCase() === canonicalSource.toLowerCase()) {
       throw new Error(
         `BACKUP_SOURCE_EQUALS_DESTINATION: Destination path '${resolvedDest}' cannot be the active database.`
       );
+    }
+
+    // 2. Filesystem identity check (symlink, hardlink, junction alias check against active source DB)
+    if (fs.existsSync(resolvedDest) && fs.existsSync(canonicalSource)) {
+      try {
+        const realDest = fs.realpathSync(resolvedDest);
+        const realSource = fs.realpathSync(canonicalSource);
+        if (realDest.toLowerCase() === realSource.toLowerCase()) {
+          throw new Error(
+            `BACKUP_SOURCE_EQUALS_DESTINATION: Destination path '${resolvedDest}' is an alias/link to active database '${canonicalSource}'.`
+          );
+        }
+      } catch (aliasErr) {
+        if (aliasErr instanceof Error && aliasErr.message.startsWith("BACKUP_SOURCE_EQUALS_DESTINATION")) {
+          throw aliasErr;
+        }
+        // If realpathSync fails for other reasons, proceed with cautious validation
+      }
+
+      try {
+        const destStat = fs.statSync(resolvedDest);
+        const srcStat = fs.statSync(canonicalSource);
+        if (destStat.ino !== 0 && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev) {
+          throw new Error(
+            `BACKUP_SOURCE_EQUALS_DESTINATION: Destination path '${resolvedDest}' shares filesystem identity with active database.`
+          );
+        }
+      } catch (statErr) {
+        if (statErr instanceof Error && statErr.message.startsWith("BACKUP_SOURCE_EQUALS_DESTINATION")) {
+          throw statErr;
+        }
+      }
     }
 
     const destDir = path.dirname(resolvedDest);
@@ -330,11 +383,9 @@ export class SqliteStorage {
       );
     }
 
-    // 2. Stage backup into a unique sibling temporary file
-    const tempBackupPath = path.join(
-      destDir,
-      `.tmp_backup_${Date.now()}_${Math.random().toString(36).slice(2, 9)}.db`
-    );
+    // 3. Stage backup into an exclusively unique sibling temporary file
+    const uniqueToken = crypto.randomBytes(16).toString("hex");
+    const tempBackupPath = path.join(destDir, `.tmp_backup_${uniqueToken}.db`);
 
     try {
       await sqliteBackup(this.db, tempBackupPath);
@@ -351,7 +402,7 @@ export class SqliteStorage {
       throw new Error(`BACKUP_VERIFICATION_FAILED: Temp backup file was not created at '${tempBackupPath}'.`);
     }
 
-    // 3. Open temp backup independently and verify integrity & foundation schema
+    // 4. Open temp backup independently and verify integrity & foundation schema
     let verifyHandle: DatabaseSync | null = null;
     try {
       verifyHandle = new DatabaseSync(tempBackupPath);
@@ -398,24 +449,73 @@ export class SqliteStorage {
       }
     }
 
-    // 4. Safe promotion: atomically replace target destination
-    try {
-      if (destAlreadyExists) {
-        // Safe cross-platform atomic replacement:
-        // On Windows renameSync over an existing file can throw EEXIST/EPERM,
-        // so we use copyFileSync + unlinkSync or renameSync.
-        fs.copyFileSync(tempBackupPath, resolvedDest);
-        try { fs.unlinkSync(tempBackupPath); } catch { /* ignore */ }
-      } else {
+    // 5. Safe promotion with failure-safe recovery preservation
+    if (!destAlreadyExists) {
+      try {
         fs.renameSync(tempBackupPath, resolvedDest);
+      } catch (renameErr) {
+        if (fs.existsSync(tempBackupPath)) {
+          try { fs.unlinkSync(tempBackupPath); } catch { /* ignore */ }
+        }
+        throw new Error(
+          `BACKUP_PROMOTION_FAILED: Failed to promote backup to '${resolvedDest}': ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`
+        );
       }
-    } catch (replaceErr) {
-      if (fs.existsSync(tempBackupPath)) {
-        try { fs.unlinkSync(tempBackupPath); } catch { /* ignore */ }
+    } else {
+      // Destination exists and overwrite is true:
+      // Move old destination to a unique sibling recovery path first.
+      const recoveryToken = crypto.randomBytes(16).toString("hex");
+      const recoveryBackupPath = path.join(destDir, `.recovery_backup_${recoveryToken}.db`);
+
+      try {
+        fs.renameSync(resolvedDest, recoveryBackupPath);
+      } catch (moveAsideErr) {
+        if (fs.existsSync(tempBackupPath)) {
+          try { fs.unlinkSync(tempBackupPath); } catch { /* ignore */ }
+        }
+        throw new Error(
+          `BACKUP_PROMOTION_FAILED: Failed to move existing backup aside to '${recoveryBackupPath}': ${moveAsideErr instanceof Error ? moveAsideErr.message : String(moveAsideErr)}`
+        );
       }
-      throw new Error(
-        `BACKUP_PROMOTION_FAILED: Failed to promote backup to '${resolvedDest}': ${replaceErr instanceof Error ? replaceErr.message : String(replaceErr)}`
-      );
+
+      // Promote temp backup to resolvedDest
+      try {
+        fs.renameSync(tempBackupPath, resolvedDest);
+      } catch (promoteErr) {
+        // Promotion failed: restore previous destination from recovery copy
+        let restoreSucceeded = false;
+        try {
+          fs.renameSync(recoveryBackupPath, resolvedDest);
+          restoreSucceeded = true;
+        } catch (restoreErr) {
+          // Restoration failed: recovery copy is preserved
+          if (fs.existsSync(tempBackupPath)) {
+            try { fs.unlinkSync(tempBackupPath); } catch { /* ignore */ }
+          }
+          throw new Error(
+            `BACKUP_PROMOTION_FAILED: Failed to promote new backup AND failed to restore original backup (${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}). Original backup preserved at: '${recoveryBackupPath}'. Promotion error: ${promoteErr instanceof Error ? promoteErr.message : String(promoteErr)}`
+          );
+        }
+
+        if (fs.existsSync(tempBackupPath)) {
+          try { fs.unlinkSync(tempBackupPath); } catch { /* ignore */ }
+        }
+
+        if (restoreSucceeded) {
+          throw new Error(
+            `BACKUP_PROMOTION_FAILED: Failed to promote new backup to '${resolvedDest}'; original backup was preserved and restored. Error: ${promoteErr instanceof Error ? promoteErr.message : String(promoteErr)}`
+          );
+        }
+      }
+
+      // Successful promotion: remove recovery artifact
+      try {
+        if (fs.existsSync(recoveryBackupPath)) {
+          fs.unlinkSync(recoveryBackupPath);
+        }
+      } catch {
+        // Non-fatal if recovery unlink fails after successful promotion
+      }
     }
 
     const stat = fs.statSync(resolvedDest);

@@ -112,9 +112,11 @@ curl -i http://localhost:3000/api/health
 curl -i http://localhost:3000/api/ready
 ```
 
-- **Expected Response (when ready)**: HTTP `200 OK` with payload `{"status":"ready","storage":{...}}`.
-- **Expected Response (when unready/closed)**: HTTP `503 Service Unavailable` with JSON `{"status":"unready","error":{"code":"STORAGE_NOT_READY",...}}`.
-- **What It Proves**: The server-side SQLite storage engine is open, WAL mode is active, synchronous FULL is enforced, foreign keys are ON, bounded busy timeout is set, bootstrap migrations are applied, and startup quick integrity checks succeeded.
+- **Expected Response (when storage is enabled and ready)**: HTTP `200 OK` with payload `{"status":"ready","storage":{...}}`.
+- **Expected Response (when storage is not enabled/configured)**: HTTP `503 Service Unavailable` with payload `{"status":"unready","error":{"code":"STORAGE_NOT_CONFIGURED","message":"Operational storage is not configured."},"storage":{"configured":false,"ready":false}}`.
+- **Expected Response (when storage is enabled but unready/closed)**: HTTP `503 Service Unavailable` with JSON `{"status":"unready","error":{"code":"STORAGE_NOT_READY",...}}`.
+- **Operational Configuration**: Storage defaults to disabled on standalone startup unless `QUANTFUND_ENABLE_STORAGE="true"` is configured or explicit programmatic storage is provided. Supported operational smoke and runtime validation enable storage explicitly.
+- **What It Proves**: When ready (200), the server-side SQLite storage engine is open, WAL mode is active, synchronous FULL is enforced, foreign keys are ON, bounded busy timeout is set, bootstrap migrations are applied, and startup quick integrity checks succeeded.
 
 ### 3. Client SPA Availability
 
@@ -135,14 +137,15 @@ curl -i "http://localhost:3000/api/binance/api/v3/klines?symbol=BTCUSDT&interval
 
 ---
 
-## 7. Durable state
+## 7. Durable state and backup recovery
 
 ### Storage Mechanics
-- **Client Storage**: Browser `localStorage` (client-side only during M18-C1). Key: `quant_paper_engine_state`, Schema Version: `2`.
+- **Client Storage**: Browser `localStorage` (canonical execution authority during M18-C1). Key: `quant_paper_engine_state`, Schema Version: `2`.
 - **Server Storage (M18-C1)**: Single-node SQLite database in `QUANTFUND_DATA_DIR` (`quantfund.db`). Tracks schema metadata and migration records (`_schema_metadata`, `_schema_migrations`).
+- **Backup & Recovery Protocol**: Server SQLite backups use `node:sqlite` online backup into verified sibling temporary files. When overwriting existing backups, the previous backup is moved aside to a recovery path before promotion and unlinked only upon verified promotion. If promotion fails, the previous backup is preserved and restored. Filesystem source-alias detection prevents overwriting the active source database.
 
 ### Runtime and Financial Invariants
-- **No Financial Authority in C1**: C1 establishes SQLite runtime infrastructure only. Paper trading execution, accounting, and target lifecycle remain on existing client paths until M18-D cutover.
+- **No Financial Authority in C1**: C1 establishes SQLite runtime infrastructure only. Paper trading execution, accounting, and target lifecycle remain on existing client paths until M18-D cutover. Later M18-D will make Node operational financial authority.
 - **Replay & Evidence Only**: Restored lifecycle checkpoints serve strictly as historical audit evidence. They do **not** grant fresh executable permission, risk clearance, or pricing authority.
 - **Market Authority Requirement**: Execution and active decision updates require fresh canonical market data from the active market feed (`BacktestDataset.assetBars`).
 - **Fail-Closed Storage Integrity**: Storage initialization enforces strict pragma verification, forward-only migrations with checksum checks, and quick integrity diagnostics. Corrupted databases or unrecognized future migration schemas fail closed.

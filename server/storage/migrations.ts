@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS _schema_metadata (
   value TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
+INSERT OR REPLACE INTO _schema_metadata (key, value, updated_at) VALUES ('schema_version', '1', 0);
+INSERT OR REPLACE INTO _schema_metadata (key, value, updated_at) VALUES ('foundation_initialized_at', '0', 0);
+INSERT OR REPLACE INTO _schema_metadata (key, value, updated_at) VALUES ('architecture_milestone', 'M18-C1', 0);
 `.trim();
 
 /**
@@ -47,8 +50,8 @@ export function computeMigrationChecksum(
 
 /**
  * Foundation Bootstrap Migration (001)
- * Establishes only the minimal schema metadata and migration tracking.
- * Strictly no controller or financial ledger tables.
+ * Establishes minimal schema metadata and storage infrastructure.
+ * Strictly no controller or financial ledger tables. Pure checksum-bound SQL.
  */
 export const FOUNDATION_BOOTSTRAP_MIGRATION: Migration = {
   id: "001_foundation_bootstrap",
@@ -61,17 +64,6 @@ export const FOUNDATION_BOOTSTRAP_MIGRATION: Migration = {
     name: "Establish Schema Metadata & Storage Infrastructure",
     sql: FOUNDATION_BOOTSTRAP_SQL,
   }),
-  up: (db: DatabaseSync) => {
-    db.exec(FOUNDATION_BOOTSTRAP_SQL);
-    const now = Date.now();
-    const insertMeta = db.prepare(`
-      INSERT OR REPLACE INTO ${METADATA_TABLE} (key, value, updated_at)
-      VALUES (?, ?, ?)
-    `);
-    insertMeta.run("schema_version", "1", now);
-    insertMeta.run("foundation_initialized_at", String(now), now);
-    insertMeta.run("architecture_milestone", "M18-C1", now);
-  },
 };
 
 export const REGISTERED_MIGRATIONS: readonly Migration[] = Object.freeze([
@@ -80,10 +72,24 @@ export const REGISTERED_MIGRATIONS: readonly Migration[] = Object.freeze([
 
 /**
  * Validates migration registry integrity before running any database actions.
+ * Enforces canonical foundation prefix and transaction boundary constraints.
  */
 export function validateMigrationRegistry(migrations: readonly Migration[]): void {
   if (!migrations || migrations.length === 0) {
-    throw new Error("MIGRATION_REGISTRY_INVALID: Migration registry must not be empty.");
+    throw new Error("MIGRATION_REGISTRY_INVALID: FOUNDATION_PREFIX_VIOLATION: Migration registry must not be empty.");
+  }
+
+  // 1. Enforce canonical immutable foundation prefix
+  const first = migrations[0];
+  if (
+    first.id !== FOUNDATION_BOOTSTRAP_MIGRATION.id ||
+    first.namespace !== FOUNDATION_BOOTSTRAP_MIGRATION.namespace ||
+    first.name !== FOUNDATION_BOOTSTRAP_MIGRATION.name ||
+    first.sql.trim() !== FOUNDATION_BOOTSTRAP_MIGRATION.sql.trim()
+  ) {
+    throw new Error(
+      `MIGRATION_REGISTRY_INVALID: FOUNDATION_PREFIX_VIOLATION: Initial migration must be canonical foundation bootstrap '${FOUNDATION_BOOTSTRAP_MIGRATION.id}'.`
+    );
   }
 
   const seenIds = new Set<string>();
@@ -114,6 +120,14 @@ export function validateMigrationRegistry(migrations: readonly Migration[]): voi
       throw new Error(`MIGRATION_REGISTRY_INVALID: Migration '${m.id}' has empty SQL definition.`);
     }
 
+    // Prohibit transaction-control statements that hijack runner boundaries
+    const txMatch = m.sql.match(/\b(BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)\b/i);
+    if (txMatch) {
+      throw new Error(
+        `MIGRATION_REGISTRY_INVALID: UNAUTHORIZED_TRANSACTION_CONTROL: Migration '${m.id}' contains forbidden transaction control statement '${txMatch[0]}'.`
+      );
+    }
+
     if (i > 0) {
       const prevId = migrations[i - 1].id;
       if (m.id.localeCompare(prevId) <= 0) {
@@ -124,7 +138,6 @@ export function validateMigrationRegistry(migrations: readonly Migration[]): voi
     }
   }
 }
-
 
 export function ensureMigrationHistoryTable(db: DatabaseSync): void {
   db.exec(`
@@ -170,7 +183,7 @@ export function runMigrations(
     migrations.map((m) => [m.id, m])
   );
 
-  // 1. Fail closed on unsupported future schema
+  // 1. Fail closed on unsupported future schema or checksum tampering
   for (const applied of appliedRecords) {
     const registered = registeredMap.get(applied.id);
     if (!registered) {
@@ -209,14 +222,10 @@ export function runMigrations(
 
     const checksum = computeMigrationChecksum(migration);
 
-    // 3. Apply migration inside an immediate transaction
+    // 3. Apply migration inside runner-owned immediate transaction
     db.exec("BEGIN IMMEDIATE;");
     try {
-      if (migration.up) {
-        migration.up(db);
-      } else {
-        db.exec(migration.sql);
-      }
+      db.exec(migration.sql);
 
       const recordStmt = db.prepare(`
         INSERT INTO ${MIGRATIONS_TABLE} (id, namespace, name, applied_at, checksum)

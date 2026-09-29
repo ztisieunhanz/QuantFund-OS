@@ -106,8 +106,8 @@ export function checkNodeRuntimeCompatibility(
   };
 }
 
-export function assertNodeRuntimeCompatibility(customVersion?: string): void {
-  const currentVersion = customVersion ?? process.versions.node ?? process.version;
+export function assertNodeRuntimeCompatibility(): void {
+  const currentVersion = process.versions.node ?? process.version;
   const result = checkNodeRuntimeCompatibility(currentVersion);
 
   if (!result.compatible) {

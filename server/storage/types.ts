@@ -4,8 +4,6 @@
 // NOTE: Pure type definitions for storage, migrations, integrity, and backup.
 // ============================================================================
 
-import type { DatabaseSync } from "node:sqlite";
-
 export interface SqliteStorageConfig {
   /** Root directory where database files are stored */
   readonly dataDir?: string;
@@ -15,8 +13,6 @@ export interface SqliteStorageConfig {
   readonly busyTimeoutMs?: number;
   /** Optional custom environment dictionary for resolving variables */
   readonly env?: Readonly<Record<string, string | undefined>>;
-  /** Explicit test seam for injecting Node runtime version in unit tests */
-  readonly nodeVersion?: string;
 }
 
 export interface StorageStatus {
@@ -37,7 +33,6 @@ export interface Migration {
   readonly name: string;
   readonly sql: string;
   readonly checksum?: string;
-  readonly up?: (db: DatabaseSync) => void;
 }
 
 export interface MigrationRecord {

@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer as createViteServer } from "vite";
 import {
   createProductionServer,
+  createProductionServerCore,
   type ProductionServerInstance,
   type ProductionServerOptions,
 } from "../productionServer";
@@ -53,10 +54,7 @@ const validAiRequest = JSON.stringify({
 });
 
 function createTestProductionServer(options: ProductionServerOptions = {}): ProductionServerInstance {
-  return createProductionServer({
-    nodeVersion: "22.23.3",
-    ...options,
-  });
+  return createProductionServerCore(options);
 }
 
 function stopChildProcess(child: ChildProcess): Promise<void> {
@@ -586,6 +584,45 @@ describe("M16-E1A Production Server Shell", () => {
         childProc = null;
       }
     }
+  });
+
+  it("H. rejects production server creation on unsupported Node.js runtime without spoofing", () => {
+    // Current test process is Node 24, so createProductionServer() must fail fast closed
+    expect(() => createProductionServer({ staticDir: tempStaticDir })).toThrow("RUNTIME_INCOMPATIBLE");
+  });
+
+  it("I. enforces ordered bounded shutdown: quiesces HTTP before closing storage", async () => {
+    let storageClosed = false;
+
+    const mockStorage = {
+      getStatus: () => ({ isReady: !storageClosed, isClosed: storageClosed } as any),
+      close: () => {
+        storageClosed = true;
+      },
+    } as any;
+
+    serverInstance = createProductionServerCore({
+      staticDir: tempStaticDir,
+      storage: mockStorage,
+    });
+
+    const addr = await serverInstance.listen(0, "127.0.0.1");
+    expect(serverInstance.isShuttingDown).toBe(false);
+
+    // Initial request succeeds
+    const initialRes = await requestHttp(`${addr.url}/api/health`);
+    expect(initialRes.statusCode).toBe(200);
+
+    // Trigger close
+    const closePromise1 = serverInstance.close(2000);
+    const closePromise2 = serverInstance.close(2000);
+
+    // Verify idempotency: same shared promise
+    expect(closePromise1).toBe(closePromise2);
+    expect(serverInstance.isShuttingDown).toBe(true);
+
+    await closePromise1;
+    expect(storageClosed).toBe(true);
   });
 
   it("matches production quant-events method semantics in the Vite development adapter", async () => {

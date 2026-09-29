@@ -8,6 +8,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
+import type { Socket } from "node:net";
 import { createProductionApiHandler, type ProductionApiHandler } from "./productionApi";
 import { SqliteStorage, assertNodeRuntimeCompatibility } from "./storage";
 
@@ -31,6 +32,8 @@ const MIME_TYPES: Readonly<Record<string, string>> = {
   ".wasm": "application/wasm",
 };
 
+export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5000;
+
 export interface ProductionServerOptions {
   readonly port?: number;
   readonly host?: string;
@@ -40,7 +43,6 @@ export interface ProductionServerOptions {
   readonly upstreamTimeoutMs?: number;
   readonly storage?: SqliteStorage;
   readonly autoInitStorage?: boolean;
-  readonly nodeVersion?: string;
   readonly apiHandler?: ProductionApiHandler | ((
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -59,8 +61,9 @@ export interface ProductionServerAddress {
 export interface ProductionServerInstance {
   readonly httpServer: http.Server;
   readonly storage: SqliteStorage | null;
+  readonly isShuttingDown: boolean;
   listen(port?: number, host?: string): Promise<ProductionServerAddress>;
-  close(): Promise<void>;
+  close(timeoutMs?: number): Promise<void>;
   getAddress(): ProductionServerAddress | null;
 }
 
@@ -139,18 +142,32 @@ function serveStaticFile(
   }
 }
 
+/**
+ * Creates a Production Server instance with strict Node runtime compatibility gate.
+ * Ordinary callers cannot spoof runtime version; uses actual process.versions.node.
+ */
 export function createProductionServer(
   options: ProductionServerOptions = {}
 ): ProductionServerInstance {
-  // Fail fast on unsupported Node.js runtime
-  assertNodeRuntimeCompatibility(options.nodeVersion);
+  // Fail fast on unsupported Node.js runtime using actual process.versions.node
+  assertNodeRuntimeCompatibility();
 
+  return createProductionServerCore(options);
+}
+
+/**
+ * Internal helper to instantiate server logic without the production runtime gate.
+ * Allows unit test suites (e.g., pure HTTP routing / API contract tests) to run in local environments.
+ */
+export function createProductionServerCore(
+  options: ProductionServerOptions = {}
+): ProductionServerInstance {
   const resolvedStaticDir = path.resolve(
     options.staticDir ?? path.resolve(process.cwd(), "dist")
   );
   let storageInstance: SqliteStorage | null = options.storage ?? null;
   if (!storageInstance && options.autoInitStorage) {
-    storageInstance = new SqliteStorage({ env: options.env, nodeVersion: options.nodeVersion });
+    storageInstance = new SqliteStorage({ env: options.env });
     storageInstance.open();
   }
 
@@ -160,7 +177,20 @@ export function createProductionServer(
     upstreamTimeoutMs: options.upstreamTimeoutMs,
   });
 
+  let isShuttingDownState = false;
+  let shutdownPromise: Promise<void> | null = null;
+  const activeSockets = new Set<Socket>();
+
   const server = http.createServer(async (req, res) => {
+    // 0. Quiescence check: reject new incoming requests once shutdown has commenced
+    if (isShuttingDownState) {
+      res.setHeader("Connection", "close");
+      sendJson(res, 503, {
+        error: { code: "SERVER_SHUTTING_DOWN", message: "Server is undergoing graceful shutdown" },
+      });
+      return;
+    }
+
     if (!req.url) {
       sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Missing request URL" } });
       return;
@@ -349,12 +379,88 @@ export function createProductionServer(
     });
   });
 
+  server.on("connection", (socket: Socket) => {
+    activeSockets.add(socket);
+    socket.on("close", () => {
+      activeSockets.delete(socket);
+    });
+  });
+
+  const performGracefulShutdown = (timeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS): Promise<void> => {
+    if (shutdownPromise) {
+      return shutdownPromise;
+    }
+
+    isShuttingDownState = true;
+
+    shutdownPromise = (async () => {
+      // 1. Stop accepting new HTTP connections and drain active HTTP requests
+      if (server.listening) {
+        const serverClosePromise = new Promise<void>((resolve, reject) => {
+          server.close((err) => {
+            if (err && (err as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
+              reject(err);
+            } else {
+              resolve();
+            }
+          });
+        });
+
+        // Close idle keep-alive connections
+        if (typeof server.closeIdleConnections === "function") {
+          server.closeIdleConnections();
+        }
+
+        // Bounded drain timeout
+        let timeoutHandle: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise<boolean>((resolve) => {
+          timeoutHandle = setTimeout(() => resolve(true), Math.max(100, timeoutMs));
+        });
+
+        const didTimeout = await Promise.race([
+          serverClosePromise.then(() => false),
+          timeoutPromise,
+        ]);
+
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+        }
+
+        if (didTimeout) {
+          // Force terminate lingering connections
+          if (typeof server.closeAllConnections === "function") {
+            server.closeAllConnections();
+          } else {
+            for (const socket of activeSockets) {
+              socket.destroy();
+            }
+          }
+          await serverClosePromise.catch(() => {});
+        }
+      }
+
+      // 2. Only after HTTP server is fully quiesced, close operational storage
+      if (storageInstance) {
+        try {
+          storageInstance.close();
+        } catch {
+          // Storage close
+        }
+      }
+    })();
+
+    return shutdownPromise;
+  };
+
   return {
     get httpServer() {
       return server;
     },
     get storage() {
       return storageInstance;
+    },
+    get isShuttingDown() {
+      return isShuttingDownState;
     },
     listen(port?: number, host?: string): Promise<ProductionServerAddress> {
       const targetPort = port ?? options.port ?? parseInt(process.env.PORT || "3000", 10);
@@ -388,27 +494,8 @@ export function createProductionServer(
         });
       });
     },
-    close(): Promise<void> {
-      if (storageInstance) {
-        try {
-          storageInstance.close();
-        } catch {
-          // Graceful close
-        }
-      }
-      return new Promise((resolve, reject) => {
-        if (!server.listening) {
-          resolve();
-          return;
-        }
-        if (typeof server.closeIdleConnections === "function") {
-          server.closeIdleConnections();
-        }
-        server.close((err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
+    close(timeoutMs?: number): Promise<void> {
+      return performGracefulShutdown(timeoutMs);
     },
     getAddress(): ProductionServerAddress | null {
       const addr = server.address();
