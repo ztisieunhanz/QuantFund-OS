@@ -61,7 +61,12 @@ import {
 } from "@/lib/quant/portfolioValuation";
 import { BAR_DURATION_MS, canonicalBarAvailableAt } from "@/lib/quant/timeDomain";
 import { createCycleKey } from "@/lib/quant/operationalPaperContract";
-import type { HistoricalContextAtTime } from "@/lib/quant/historicalPit";
+import {
+  validateHistoricalMarketObservation,
+  validateHistoricalMacroRelease,
+  validateHistoricalEvent,
+  type HistoricalContextAtTime,
+} from "@/lib/quant/historicalPit";
 import {
   advanceActiveTargetLifecycle,
   createActiveTargetLifecycleRoot,
@@ -266,8 +271,8 @@ export function validateCycleTransitionContext(ctx: CycleTransitionContext): voi
 
   // E. Macro State
   if (macroState) {
-    if (!Number.isFinite(macroState.asOfTimestamp)) {
-      throw new TemporalAuthorityViolationError("macroState has non-finite asOfTimestamp.");
+    if (!Number.isFinite(macroState.asOfTimestamp) || macroState.asOfTimestamp < 0) {
+      throw new TemporalAuthorityViolationError("macroState has non-finite or negative asOfTimestamp.");
     }
     if (macroState.asOfTimestamp > decisionTime) {
       throw new TemporalAuthorityViolationError(
@@ -278,8 +283,13 @@ export function validateCycleTransitionContext(ctx: CycleTransitionContext): voi
 
   // F. Event State
   if (eventState) {
-    if (!Number.isFinite(eventState.publicationTimestamp) || !Number.isFinite(eventState.consensusSnapshotTimestamp)) {
-      throw new TemporalAuthorityViolationError("eventState has non-finite publication or consensus timestamps.");
+    if (
+      !Number.isFinite(eventState.publicationTimestamp) ||
+      eventState.publicationTimestamp < 0 ||
+      !Number.isFinite(eventState.consensusSnapshotTimestamp) ||
+      eventState.consensusSnapshotTimestamp < 0
+    ) {
+      throw new TemporalAuthorityViolationError("eventState has non-finite or negative publication or consensus timestamps.");
     }
     if (eventState.publicationTimestamp > decisionTime) {
       throw new TemporalAuthorityViolationError(
@@ -295,6 +305,9 @@ export function validateCycleTransitionContext(ctx: CycleTransitionContext): voi
 
   // G. Historical Context
   if (historicalContext) {
+    if (!Number.isFinite(historicalContext.decisionTime) || historicalContext.decisionTime < 0) {
+      throw new TemporalAuthorityViolationError("historicalContext.decisionTime must be a non-negative finite timestamp.");
+    }
     if (historicalContext.decisionTime !== decisionTime) {
       throw new TemporalAuthorityViolationError(
         `historicalContext.decisionTime (${historicalContext.decisionTime}) does not match cycle decisionTime (${decisionTime}).`
@@ -302,7 +315,17 @@ export function validateCycleTransitionContext(ctx: CycleTransitionContext): voi
     }
     if (historicalContext.market) {
       for (const [seriesId, obs] of Object.entries(historicalContext.market)) {
-        if (obs && obs.availableAt > decisionTime) {
+        if (!obs) {
+          throw new TemporalAuthorityViolationError(`historicalContext market observation "${seriesId}" is null or undefined.`);
+        }
+        try {
+          validateHistoricalMarketObservation(obs);
+        } catch (err: unknown) {
+          throw new TemporalAuthorityViolationError(
+            `historicalContext market observation "${seriesId}" failed validation: ${(err as Error).message}`
+          );
+        }
+        if (obs.availableAt > decisionTime) {
           throw new TemporalAuthorityViolationError(
             `historicalContext market observation "${seriesId}" availableAt (${obs.availableAt}) exceeds decisionTime (${decisionTime}).`
           );
@@ -311,7 +334,17 @@ export function validateCycleTransitionContext(ctx: CycleTransitionContext): voi
     }
     if (historicalContext.macro) {
       for (const [seriesId, rel] of Object.entries(historicalContext.macro)) {
-        if (rel && rel.availableAt > decisionTime) {
+        if (!rel) {
+          throw new TemporalAuthorityViolationError(`historicalContext macro release "${seriesId}" is null or undefined.`);
+        }
+        try {
+          validateHistoricalMacroRelease(rel);
+        } catch (err: unknown) {
+          throw new TemporalAuthorityViolationError(
+            `historicalContext macro release "${seriesId}" failed validation: ${(err as Error).message}`
+          );
+        }
+        if (rel.availableAt > decisionTime) {
           throw new TemporalAuthorityViolationError(
             `historicalContext macro release "${seriesId}" availableAt (${rel.availableAt}) exceeds decisionTime (${decisionTime}).`
           );
@@ -319,6 +352,13 @@ export function validateCycleTransitionContext(ctx: CycleTransitionContext): voi
       }
     }
     if (historicalContext.latestEvent) {
+      try {
+        validateHistoricalEvent(historicalContext.latestEvent);
+      } catch (err: unknown) {
+        throw new TemporalAuthorityViolationError(
+          `historicalContext latestEvent failed validation: ${(err as Error).message}`
+        );
+      }
       if (historicalContext.latestEvent.availableAt > decisionTime) {
         throw new TemporalAuthorityViolationError(
           `historicalContext latestEvent availableAt (${historicalContext.latestEvent.availableAt}) exceeds decisionTime (${decisionTime}).`
@@ -326,10 +366,12 @@ export function validateCycleTransitionContext(ctx: CycleTransitionContext): voi
       }
       if (
         historicalContext.latestEvent.consensusFrozenAt !== null &&
-        historicalContext.latestEvent.consensusFrozenAt > decisionTime
+        (!Number.isFinite(historicalContext.latestEvent.consensusFrozenAt) ||
+          historicalContext.latestEvent.consensusFrozenAt < 0 ||
+          historicalContext.latestEvent.consensusFrozenAt > decisionTime)
       ) {
         throw new TemporalAuthorityViolationError(
-          `historicalContext latestEvent consensusFrozenAt (${historicalContext.latestEvent.consensusFrozenAt}) exceeds decisionTime (${decisionTime}).`
+          `historicalContext latestEvent consensusFrozenAt (${historicalContext.latestEvent.consensusFrozenAt}) is invalid or exceeds decisionTime (${decisionTime}).`
         );
       }
     }

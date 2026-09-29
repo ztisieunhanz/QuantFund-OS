@@ -419,11 +419,12 @@ describe("M18-B: Pure Single-Cycle Transition Kernel", () => {
     const priorState = createInitialPriorState(10000);
     const ctxNormal = buildContextForBar(bars, 130, config);
 
-    // Constrained risk configuration with tight maxGrossExposureCap
+    // Constrained risk configuration with binding maxGrossExposureCap (0.10)
     const ctxConstrained = buildContextForBar(bars, 130, config, {
       risk: {
         ...DEFAULT_RISK_ENGINE_CONFIG,
-        maxGrossExposureCap: 0.20, // Strict cap
+        maxGrossExposureCap: 0.10, // Binding cap below normal sizing
+        minGrossExposureFloor: 0.05,
       },
     });
 
@@ -433,17 +434,27 @@ describe("M18-B: Pure Single-Cycle Transition Kernel", () => {
     expect(resultNormal.decision.risk).toBeDefined();
     expect(resultConstrained.decision.risk).toBeDefined();
 
-    // The constrained risk engine limits gross exposure to <= 0.20
-    expect(resultConstrained.decision.risk.targetExposure).toBeLessThanOrEqual(0.20);
-    expect(resultConstrained.decision.targetWeights.grossExposure).toBeLessThanOrEqual(0.2001);
+    // 1. Constrained Risk-authorized target exposure is lower than normal and respects the cap
+    expect(resultConstrained.decision.risk.targetExposure).toBeLessThan(
+      resultNormal.decision.risk.targetExposure
+    );
+    expect(resultConstrained.decision.risk.targetExposure).toBeLessThanOrEqual(0.10);
 
-    // Normal allocation vs constrained allocation demonstrates Risk engine authority
-    if (resultNormal.decision.targetWeights.assetWeights.BTC > 0.20) {
-      expect(resultConstrained.decision.targetWeights.assetWeights.BTC).toBeLessThanOrEqual(0.2001);
-      expect(resultConstrained.decision.targetWeights.assetWeights.BTC).toBeLessThan(
-        resultNormal.decision.targetWeights.assetWeights.BTC
-      );
-    }
+    // 2. Constrained Omega target gross exposure is lower than normal and respects the cap
+    expect(resultConstrained.decision.targetWeights.grossExposure).toBeLessThan(
+      resultNormal.decision.targetWeights.grossExposure
+    );
+    expect(resultConstrained.decision.targetWeights.grossExposure).toBeLessThanOrEqual(0.1001);
+
+    // 3. Constrained final BTC target weight is lower than normal and respects the cap
+    expect(resultConstrained.decision.targetWeights.assetWeights.BTC).toBeLessThan(
+      resultNormal.decision.targetWeights.assetWeights.BTC
+    );
+    expect(resultConstrained.decision.targetWeights.assetWeights.BTC).toBeLessThanOrEqual(0.1001);
+
+    // 4. Target weight provenance proves canonical Risk -> Omega allocation pipeline
+    expect(resultConstrained.decision.targetWeights.provenance?.riskIdentity).toBeDefined();
+    expect(resultConstrained.decision.targetWeights.provenance?.omegaConfigIdentity).toBeDefined();
   });
 
   // 12. SINGLE CYCLE PARITY WITH REPLAY FIRST BAR
@@ -688,6 +699,149 @@ describe("M18-B: Pure Single-Cycle Transition Kernel", () => {
     };
 
     expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+
+  it("ADVERSARIAL REJECTION: Rejects historicalContext market observation with availableAt = NaN", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const nanMarketHistContext: HistoricalContextAtTime = {
+      decisionTime: validCtx.decisionTime,
+      market: {
+        DXY: {
+          seriesId: "DXY",
+          value: 104.5,
+          observationTime: validCtx.decisionTime,
+          availableAt: NaN, // Non-finite NaN!
+          provider: "YAHOO",
+        },
+      },
+      macro: {},
+      latestEvent: null,
+    };
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      historicalContext: nanMarketHistContext,
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+
+  it("ADVERSARIAL REJECTION: Rejects historicalContext market observation with availableAt = +Infinity", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const infMarketHistContext: HistoricalContextAtTime = {
+      decisionTime: validCtx.decisionTime,
+      market: {
+        DXY: {
+          seriesId: "DXY",
+          value: 104.5,
+          observationTime: validCtx.decisionTime,
+          availableAt: Infinity, // Non-finite +Infinity!
+          provider: "YAHOO",
+        },
+      },
+      macro: {},
+      latestEvent: null,
+    };
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      historicalContext: infMarketHistContext,
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+
+  it("ADVERSARIAL REJECTION: Rejects historicalContext macro release with non-finite availableAt (NaN or +Infinity)", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const nanMacroHistContext: HistoricalContextAtTime = {
+      decisionTime: validCtx.decisionTime,
+      market: {},
+      macro: {
+        US_CPI: {
+          seriesId: "US_CPI",
+          observationTime: validCtx.decisionTime - 30 * BAR_DURATION_MS,
+          publishedAt: validCtx.decisionTime - 5 * BAR_DURATION_MS,
+          availableAt: NaN, // Non-finite NaN!
+          revisionIndex: 0,
+          value: 3.1,
+          provider: "BLS",
+        },
+      },
+      latestEvent: null,
+    };
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      historicalContext: nanMacroHistContext,
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+  });
+
+  it("ADVERSARIAL REJECTION: Rejects historicalContext latestEvent with non-finite availableAt or consensusFrozenAt", () => {
+    const priorState = createInitialPriorState(10000);
+    const validCtx = buildContextForBar(bars, 130, config);
+    const nanEventHistContext: HistoricalContextAtTime = {
+      decisionTime: validCtx.decisionTime,
+      market: {},
+      macro: {},
+      latestEvent: {
+        eventId: "CPI-REPORT-1",
+        eventType: "CPI_RELEASE",
+        observationTime: validCtx.decisionTime - 5 * BAR_DURATION_MS,
+        publishedAt: validCtx.decisionTime - 5 * BAR_DURATION_MS,
+        availableAt: NaN, // Non-finite availableAt!
+        actual: 3.1,
+        consensus: 3.0,
+        consensusFrozenAt: validCtx.decisionTime - 6 * BAR_DURATION_MS,
+        previous: 2.9,
+        surprise: 0.1,
+        provider: "BLS",
+        sourceQuality: "TIER_1_OFFICIAL",
+      },
+    };
+    const invalidCtx: CycleTransitionContext = {
+      ...validCtx,
+      historicalContext: nanEventHistContext,
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx)).toThrow(
+      TemporalAuthorityViolationError
+    );
+
+    const nanConsensusHistContext: HistoricalContextAtTime = {
+      decisionTime: validCtx.decisionTime,
+      market: {},
+      macro: {},
+      latestEvent: {
+        eventId: "CPI-REPORT-2",
+        eventType: "CPI_RELEASE",
+        observationTime: validCtx.decisionTime - 5 * BAR_DURATION_MS,
+        publishedAt: validCtx.decisionTime - 5 * BAR_DURATION_MS,
+        availableAt: validCtx.decisionTime - 5 * BAR_DURATION_MS,
+        actual: 3.1,
+        consensus: 3.0,
+        consensusFrozenAt: NaN, // Non-finite consensusFrozenAt!
+        previous: 2.9,
+        surprise: 0.1,
+        provider: "BLS",
+        sourceQuality: "TIER_1_OFFICIAL",
+      },
+    };
+    const invalidCtx2: CycleTransitionContext = {
+      ...validCtx,
+      historicalContext: nanConsensusHistContext,
+    };
+
+    expect(() => executeSingleCycleTransition(priorState, invalidCtx2)).toThrow(
       TemporalAuthorityViolationError
     );
   });
