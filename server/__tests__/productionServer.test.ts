@@ -1,6 +1,6 @@
 // ============================================================================
 // FILE: server/__tests__/productionServer.test.ts
-// MODULE: PRODUCTION SERVER SHELL CONTRACT TESTS (M16-E1A)
+// MODULE: PRODUCTION SERVER SHELL CONTRACT TESTS (M16-E1A / M18-C1)
 // ============================================================================
 
 import fs from "node:fs";
@@ -8,12 +8,15 @@ import os from "node:os";
 import path from "node:path";
 import http from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer as createViteServer } from "vite";
 import {
   createProductionServer,
   type ProductionServerInstance,
+  type ProductionServerOptions,
 } from "../productionServer";
+import { isNodeVersionSupported } from "../storage";
 import { AI_GATEWAY_OPERATION } from "../../src/lib/aiGatewayContract";
 import { buildAiAdvisorGrounding } from "../../src/lib/aiAdvisorGroundingProjection";
 
@@ -48,6 +51,13 @@ const validAiRequest = JSON.stringify({
   grounding: buildAiAdvisorGrounding(null, null),
   messages: [{ role: "user", text: "Summarize current evidence" }],
 });
+
+function createTestProductionServer(options: ProductionServerOptions = {}): ProductionServerInstance {
+  return createProductionServer({
+    nodeVersion: "22.23.3",
+    ...options,
+  });
+}
 
 function stopChildProcess(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
@@ -128,7 +138,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("A. serves GET /api/health with minimal process readiness without secrets or provider config", async () => {
-    serverInstance = createProductionServer({
+    serverInstance = createTestProductionServer({
       staticDir: tempStaticDir,
       env: { SECRET_KEY: "super-secret-key", GEMINI_API_KEY: "ai-secret" },
     });
@@ -149,7 +159,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("A. enforces GET-only for /api/health and returns 405 for HEAD and POST", async () => {
-    serverInstance = createProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const headRes = await requestHttp(`${addr.url}/api/health`, { method: "HEAD" });
@@ -172,7 +182,7 @@ describe("M16-E1A Production Server Shell", () => {
         headers: { "Content-Type": "application/json" },
       })
     );
-    serverInstance = createProductionServer({
+    serverInstance = createTestProductionServer({
       staticDir: tempStaticDir,
       env: { GEMINI_API_KEY: "server-only-secret" },
       fetchFn: upstreamFetch,
@@ -192,7 +202,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("A. rejects unsupported AI methods, malformed JSON, and oversized requests", async () => {
-    serverInstance = createProductionServer({
+    serverInstance = createTestProductionServer({
       staticDir: tempStaticDir,
       env: { GEMINI_API_KEY: "server-only-secret" },
     });
@@ -220,7 +230,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("A. fails AI closed for missing secret and upstream rejection without SPA fallback", async () => {
-    serverInstance = createProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const missingSecret = await requestHttp(`${addr.url}/api/ai-advisor`, {
@@ -233,7 +243,7 @@ describe("M16-E1A Production Server Shell", () => {
     expect(missingSecret.body).not.toContain("<!DOCTYPE html>");
 
     await serverInstance.close();
-    serverInstance = createProductionServer({
+    serverInstance = createTestProductionServer({
       staticDir: tempStaticDir,
       env: { GEMINI_API_KEY: "server-only-secret" },
       fetchFn: vi.fn<typeof fetch>().mockResolvedValue(
@@ -262,7 +272,7 @@ describe("M16-E1A Production Server Shell", () => {
         "1256.25", 10, "5", "7", "0",
       ]]), { status: 200, headers: { "Content-Type": "application/json" } })
     );
-    serverInstance = createProductionServer({ staticDir: tempStaticDir, fetchFn: upstreamFetch });
+    serverInstance = createTestProductionServer({ staticDir: tempStaticDir, fetchFn: upstreamFetch });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const result = await requestHttp(
@@ -278,7 +288,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("B. isolates unknown /api/* routes returning JSON 404 without SPA fallback", async () => {
-    serverInstance = createProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/api/unknown-endpoint`, { method: "GET" });
@@ -291,7 +301,7 @@ describe("M16-E1A Production Server Shell", () => {
 
   it("H. returns quant events as an explicit unavailable capability without provider calls", async () => {
     const upstreamFetch = vi.fn<typeof fetch>();
-    serverInstance = createProductionServer({ staticDir: tempStaticDir, fetchFn: upstreamFetch });
+    serverInstance = createTestProductionServer({ staticDir: tempStaticDir, fetchFn: upstreamFetch });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/api/quant-events`, { method: "GET" });
@@ -315,7 +325,7 @@ describe("M16-E1A Production Server Shell", () => {
 
   it("H. rejects unsupported quant events methods with the established 405 contract", async () => {
     const upstreamFetch = vi.fn<typeof fetch>();
-    serverInstance = createProductionServer({ staticDir: tempStaticDir, fetchFn: upstreamFetch });
+    serverInstance = createTestProductionServer({ staticDir: tempStaticDir, fetchFn: upstreamFetch });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/api/quant-events`, { method: "POST" });
@@ -329,7 +339,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("C. serves static index.html entry and hashed assets correctly", async () => {
-    serverInstance = createProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     // Root index.html
@@ -348,7 +358,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("C. falls back to index.html only for client SPA routes", async () => {
-    serverInstance = createProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/macro/dashboard`, { method: "GET" });
@@ -359,7 +369,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("C. truthfully returns 404 for missing static resources with file extension", async () => {
-    serverInstance = createProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/assets/missing-bundle-999.js`, { method: "GET" });
@@ -368,7 +378,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("C. supports HEAD requests on non-API static files with correct content length and no body", async () => {
-    serverInstance = createProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/robots.txt`, { method: "HEAD" });
@@ -379,7 +389,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("C & D. strictly rejects path traversal and never leaks outside files", async () => {
-    serverInstance = createProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     // Attempt 1: standard ../ traversal
@@ -394,7 +404,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("D. includes security headers and forbids wildcard CORS by default", async () => {
-    serverInstance = createProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/`, { method: "GET" });
@@ -405,7 +415,7 @@ describe("M16-E1A Production Server Shell", () => {
 
   it("E. supports lifecycle, ephemeral port discovery, injected apiHandler, and clean shutdown", async () => {
     let customApiCalled = false;
-    serverInstance = createProductionServer({
+    serverInstance = createTestProductionServer({
       staticDir: tempStaticDir,
       apiHandler: (_req, res, pathname) => {
         if (pathname === "/api/custom-test") {
@@ -437,9 +447,11 @@ describe("M16-E1A Production Server Shell", () => {
     ).rejects.toThrow();
   });
 
-  it("F. verifies direct executable entrypoint starts and serves health via node child process", async () => {
+  it("F. verifies direct executable entrypoint starts or enforces runtime compatibility via child process", async () => {
     const serverScriptPath = path.resolve(process.cwd(), "dist-server", "productionServer.js");
     expect(fs.existsSync(serverScriptPath)).toBe(true);
+
+    const isSupported = isNodeVersionSupported(process.version).supported;
 
     childProc = spawn(process.execPath, [serverScriptPath], {
       env: { ...process.env, PORT: "0", HOST: "127.0.0.1" },
@@ -447,36 +459,127 @@ describe("M16-E1A Production Server Shell", () => {
     });
 
     try {
-      const address = await new Promise<string>((resolve, reject) => {
-        let output = "";
-        let settled = false;
-        let startupTimer: ReturnType<typeof setTimeout> | undefined;
-        const finish = (callback: () => void) => {
-          if (settled) return;
-          settled = true;
-          if (startupTimer) clearTimeout(startupTimer);
-          callback();
-        };
-
-        childProc?.stdout?.on("data", (chunk: Buffer) => {
-          output += chunk.toString();
-          const match = output.match(/listening on (http:\/\/127\.0\.0\.1:\d+)/i);
-          if (match?.[1]) finish(() => resolve(match[1]));
+      if (!isSupported) {
+        // On unsupported runtime (Node 24 locally), the server must refuse startup fail-fast
+        let stderr = "";
+        childProc.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+        const exitCode = await new Promise<number | null>((resolve) => {
+          childProc?.once("exit", (code) => resolve(code));
         });
-        childProc?.once("error", (error) => finish(() => reject(error)));
-        childProc?.once("exit", (code, signal) => {
-          finish(() => reject(new Error(`Production server exited before startup: ${code ?? signal ?? "unknown"}`)));
+        expect(exitCode).not.toBe(0);
+        expect(stderr).toContain("RUNTIME_INCOMPATIBLE");
+      } else {
+        // On supported runtime (Node 22 LTS in CI), server must start and serve health
+        const address = await new Promise<string>((resolve, reject) => {
+          let output = "";
+          let settled = false;
+          let startupTimer: ReturnType<typeof setTimeout> | undefined;
+          const finish = (callback: () => void) => {
+            if (settled) return;
+            settled = true;
+            if (startupTimer) clearTimeout(startupTimer);
+            callback();
+          };
+
+          childProc?.stdout?.on("data", (chunk: Buffer) => {
+            output += chunk.toString();
+            const match = output.match(/listening on (http:\/\/127\.0\.0\.1:\d+)/i);
+            if (match?.[1]) finish(() => resolve(match[1]));
+          });
+          childProc?.once("error", (error) => finish(() => reject(error)));
+          childProc?.once("exit", (code, signal) => {
+            finish(() => reject(new Error(`Production server exited before startup: ${code ?? signal ?? "unknown"}`)));
+          });
+
+          startupTimer = setTimeout(() => finish(() => reject(new Error("Timed out waiting for production server startup"))), 5000);
         });
 
-        // Bounded startup wait prevents a hung child from hanging the test;
-        // readiness itself is proven by the emitted bound-address signal.
-        startupTimer = setTimeout(() => finish(() => reject(new Error("Timed out waiting for production server startup"))), 5000);
-      });
+        const healthRes = await requestHttp(`${address}/api/health`, { method: "GET" });
+        expect(healthRes.statusCode).toBe(200);
+        const body = JSON.parse(healthRes.body);
+        expect(body.status).toBe("ok");
+      }
+    } finally {
+      if (childProc) {
+        await stopChildProcess(childProc);
+        childProc = null;
+      }
+    }
+  });
 
-      const healthRes = await requestHttp(`${address}/api/health`, { method: "GET" });
-      expect(healthRes.statusCode).toBe(200);
-      const body = JSON.parse(healthRes.body);
-      expect(body.status).toBe("ok");
+  it("G. exercises graceful signal shutdown with SQLite storage in a child process", async () => {
+    const serverScriptPath = path.resolve(process.cwd(), "dist-server", "productionServer.js");
+    const isSupported = isNodeVersionSupported(process.version).supported;
+    const testDataDir = path.join(tempBaseDir, "signal-test-data");
+
+    childProc = spawn(process.execPath, [serverScriptPath], {
+      env: {
+        ...process.env,
+        PORT: "0",
+        HOST: "127.0.0.1",
+        QUANTFUND_ENABLE_STORAGE: "true",
+        QUANTFUND_DATA_DIR: testDataDir,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    try {
+      if (!isSupported) {
+        // On unsupported runtime (Node 24), fail fast
+        let stderr = "";
+        childProc.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+        const exitCode = await new Promise<number | null>((resolve) => {
+          childProc?.once("exit", (code) => resolve(code));
+        });
+        expect(exitCode).not.toBe(0);
+        expect(stderr).toContain("RUNTIME_INCOMPATIBLE");
+      } else {
+        // On supported runtime, reach readiness then send SIGTERM
+        const address = await new Promise<string>((resolve, reject) => {
+          let output = "";
+          let settled = false;
+          let startupTimer: ReturnType<typeof setTimeout> | undefined;
+          const finish = (callback: () => void) => {
+            if (settled) return;
+            settled = true;
+            if (startupTimer) clearTimeout(startupTimer);
+            callback();
+          };
+
+          childProc?.stdout?.on("data", (chunk: Buffer) => {
+            output += chunk.toString();
+            const match = output.match(/listening on (http:\/\/127\.0\.0\.1:\d+)/i);
+            if (match?.[1]) finish(() => resolve(match[1]));
+          });
+          childProc?.once("error", (error) => finish(() => reject(error)));
+          childProc?.once("exit", (code, signal) => {
+            finish(() => reject(new Error(`Production server exited unexpectedly: ${code ?? signal ?? "unknown"}`)));
+          });
+
+          startupTimer = setTimeout(() => finish(() => reject(new Error("Timed out waiting for production server startup"))), 5000);
+        });
+
+        // Verify storage is genuine ready
+        const readyRes = await requestHttp(`${address}/api/ready`, { method: "GET" });
+        expect(readyRes.statusCode).toBe(200);
+
+        // Send SIGTERM for graceful shutdown
+        childProc.kill("SIGTERM");
+
+        const exitCode = await new Promise<number | null>((resolve) => {
+          childProc?.once("exit", (code) => resolve(code));
+        });
+        expect(exitCode).toBe(0);
+
+        // Verify database file was cleanly closed and is readable afterward
+        const dbFile = path.join(testDataDir, "quantfund.db");
+        expect(fs.existsSync(dbFile)).toBe(true);
+        const verifyDb = new DatabaseSync(dbFile);
+        const check = verifyDb.prepare("PRAGMA quick_check;").get() as Record<string, unknown>;
+        const checkVal = String(check.quick_check ?? Object.values(check)[0] ?? "");
+        expect(checkVal.toLowerCase()).toBe("ok");
+        verifyDb.close();
+      }
     } finally {
       if (childProc) {
         await stopChildProcess(childProc);

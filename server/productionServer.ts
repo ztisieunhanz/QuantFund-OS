@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
 import { createProductionApiHandler, type ProductionApiHandler } from "./productionApi";
-import { SqliteStorage } from "./storage";
+import { SqliteStorage, assertNodeRuntimeCompatibility } from "./storage";
 
 const MIME_TYPES: Readonly<Record<string, string>> = {
   ".html": "text/html; charset=utf-8",
@@ -40,6 +40,7 @@ export interface ProductionServerOptions {
   readonly upstreamTimeoutMs?: number;
   readonly storage?: SqliteStorage;
   readonly autoInitStorage?: boolean;
+  readonly nodeVersion?: string;
   readonly apiHandler?: ProductionApiHandler | ((
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -141,12 +142,15 @@ function serveStaticFile(
 export function createProductionServer(
   options: ProductionServerOptions = {}
 ): ProductionServerInstance {
+  // Fail fast on unsupported Node.js runtime
+  assertNodeRuntimeCompatibility(options.nodeVersion);
+
   const resolvedStaticDir = path.resolve(
     options.staticDir ?? path.resolve(process.cwd(), "dist")
   );
   let storageInstance: SqliteStorage | null = options.storage ?? null;
   if (!storageInstance && options.autoInitStorage) {
-    storageInstance = new SqliteStorage({ env: options.env });
+    storageInstance = new SqliteStorage({ env: options.env, nodeVersion: options.nodeVersion });
     storageInstance.open();
   }
 
@@ -226,11 +230,16 @@ export function createProductionServer(
             });
             return;
           }
-          sendJson(res, 200, {
-            status: "ready",
+          // Absent storage must fail closed (HTTP 503)
+          sendJson(res, 503, {
+            status: "unready",
+            error: {
+              code: "STORAGE_NOT_CONFIGURED",
+              message: "Operational storage is not configured.",
+            },
             storage: {
               configured: false,
-              ready: true,
+              ready: false,
             },
           });
           return;
@@ -437,7 +446,36 @@ if (isDirectEntry) {
   const port = parseInt(process.env.PORT || "3000", 10);
   const host = process.env.HOST || "0.0.0.0";
   const autoInitStorage = process.env.QUANTFUND_ENABLE_STORAGE === "true";
-  const instance = createProductionServer({ autoInitStorage });
+  let instance: ProductionServerInstance;
+  try {
+    instance = createProductionServer({ autoInitStorage });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Failed to initialize production server:", err);
+    process.exit(1);
+  }
+
+  let isShuttingDown = false;
+  const handleSignal = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    // eslint-disable-next-line no-console
+    console.log(`Received ${signal}, initiating graceful shutdown...`);
+    try {
+      await instance.close();
+      // eslint-disable-next-line no-console
+      console.log("Graceful shutdown completed successfully.");
+      process.exit(0);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("Error during graceful shutdown:", err);
+      process.exit(1);
+    }
+  };
+
+  process.once("SIGTERM", () => { void handleSignal("SIGTERM"); });
+  process.once("SIGINT", () => { void handleSignal("SIGINT"); });
+
   instance
     .listen(port, host)
     .then((addr) => {

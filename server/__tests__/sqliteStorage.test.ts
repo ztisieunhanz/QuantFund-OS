@@ -15,13 +15,22 @@ import {
   checkNodeRuntimeCompatibility,
   isNodeVersionSupported,
   isNodeSqliteAvailable,
+  assertNodeRuntimeCompatibility,
   resolveDataDirectory,
   validateAndEnsureDataDirectory,
   assertDataDirectory,
+  validateDatabaseFilename,
+  assertDatabaseFilename,
+  resolveDatabasePath,
+  computeMigrationChecksum,
+  validateMigrationRegistry,
   runMigrations,
   getAppliedMigrations,
   verifyC1SchemaBoundaries,
   FOUNDATION_BOOTSTRAP_MIGRATION,
+  MIN_BUSY_TIMEOUT_MS,
+  MAX_BUSY_TIMEOUT_MS,
+  type SqliteStorageConfig,
   type Migration,
 } from "../storage";
 import { createProductionServer, type ProductionServerInstance } from "../productionServer";
@@ -50,6 +59,13 @@ function requestHttp(
     req.on("error", reject);
     if (options.body !== undefined) req.write(options.body);
     req.end();
+  });
+}
+
+function createTestStorage(config: SqliteStorageConfig = {}): SqliteStorage {
+  return new SqliteStorage({
+    nodeVersion: "22.23.3",
+    ...config,
   });
 }
 
@@ -103,6 +119,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       // Above Node 22 line
       expect(isNodeVersionSupported("23.0.0").supported).toBe(false);
       expect(isNodeVersionSupported("24.0.0").supported).toBe(false);
+      expect(isNodeVersionSupported("24.19.0").supported).toBe(false);
     });
 
     it("evaluates runtime compatibility diagnostic truthfully", () => {
@@ -114,13 +131,33 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       const rejected = checkNodeRuntimeCompatibility("20.18.0");
       expect(rejected.compatible).toBe(false);
       expect(rejected.error).toBeDefined();
+
+      const rejected24 = checkNodeRuntimeCompatibility("24.19.0");
+      expect(rejected24.compatible).toBe(false);
+      expect(rejected24.error).toContain("Node major version 24 is above supported");
+    });
+
+    it("fails fast in assertNodeRuntimeCompatibility on unsupported versions", () => {
+      expect(() => assertNodeRuntimeCompatibility("24.19.0")).toThrow("RUNTIME_INCOMPATIBLE");
+      expect(() => assertNodeRuntimeCompatibility("23.5.0")).toThrow("RUNTIME_INCOMPATIBLE");
+      expect(() => assertNodeRuntimeCompatibility("20.10.0")).toThrow("RUNTIME_INCOMPATIBLE");
+      expect(() => assertNodeRuntimeCompatibility("22.15.0")).toThrow("RUNTIME_INCOMPATIBLE");
+      expect(() => assertNodeRuntimeCompatibility("22.23.3")).not.toThrow();
+    });
+
+    it("enforces runtime compatibility in SqliteStorage and ProductionServer entrypoints", () => {
+      const storageDir = path.join(tempBaseDir, "runtime-storage-test");
+      const storage24 = new SqliteStorage({ dataDir: storageDir, nodeVersion: "24.0.0" });
+      expect(() => storage24.open()).toThrow("RUNTIME_INCOMPATIBLE");
+
+      expect(() => createProductionServer({ nodeVersion: "24.19.0" })).toThrow("RUNTIME_INCOMPATIBLE");
     });
   });
 
   // --------------------------------------------------------------------------
-  // 2. Persistent Data Directory Contract
+  // 2. Persistent Data Directory & Path Containment Contract
   // --------------------------------------------------------------------------
-  describe("2. Persistent Data Directory Contract", () => {
+  describe("2. Persistent Data Directory & Path Containment Contract", () => {
     it("resolves default data directory deterministically", () => {
       const defaultDir = resolveDataDirectory(undefined, {});
       expect(defaultDir).toBe(path.resolve(process.cwd(), "data"));
@@ -153,6 +190,33 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       expect(validation.error).toContain("non-empty string");
       expect(() => assertDataDirectory("")).toThrow("DATA_DIRECTORY_INVALID");
     });
+
+    it("strictly validates database filename to prevent path traversal or escape", () => {
+      expect(assertDatabaseFilename("quantfund.db")).toBe("quantfund.db");
+      expect(assertDatabaseFilename("custom_name-1.sqlite")).toBe("custom_name-1.sqlite");
+
+      expect(validateDatabaseFilename("valid.db").ok).toBe(true);
+      expect(validateDatabaseFilename("").ok).toBe(false);
+
+      // Traversal rejection
+      expect(() => assertDatabaseFilename("../escape.db")).toThrow("DATABASE_PATH_INVALID");
+      expect(() => assertDatabaseFilename("..\\escape.db")).toThrow("DATABASE_PATH_INVALID");
+      expect(() => assertDatabaseFilename("nested/quantfund.db")).toThrow("DATABASE_PATH_INVALID");
+      expect(() => assertDatabaseFilename("nested\\quantfund.db")).toThrow("DATABASE_PATH_INVALID");
+      expect(() => assertDatabaseFilename("C:\\absolute\\path.db")).toThrow("DATABASE_PATH_INVALID");
+      expect(() => assertDatabaseFilename("/etc/passwd")).toThrow("DATABASE_PATH_INVALID");
+      expect(() => assertDatabaseFilename("")).toThrow("DATABASE_PATH_INVALID");
+    });
+
+    it("resolves database path strictly contained in data directory", () => {
+      const baseDir = path.resolve(tempBaseDir, "data");
+      const resolved = resolveDatabasePath(baseDir, "test.db");
+      expect(resolved).toBe(path.join(baseDir, "test.db"));
+
+      // Default filename resolution
+      const defaultResolved = resolveDatabasePath(baseDir);
+      expect(defaultResolved).toBe(path.join(baseDir, "quantfund.db"));
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -161,7 +225,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
   describe("3. Database Lifecycle & Canonical Pragmas", () => {
     it("opens database in isolated temporary directory and verifies all canonical pragmas", () => {
       const storageDir = path.join(tempBaseDir, "db-test");
-      const storage = new SqliteStorage({
+      const storage = createTestStorage({
         dataDir: storageDir,
         databaseFilename: "journal.db",
         busyTimeoutMs: 5000,
@@ -199,7 +263,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
 
     it("enforces foreign key constraints at runtime", () => {
       const storageDir = path.join(tempBaseDir, "fk-test");
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       storage.open();
       const db = storage.getDb();
 
@@ -220,10 +284,45 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       storage.close();
     });
 
-    it("fails closed on invalid busy timeout (< 1000ms)", () => {
-      const storageDir = path.join(tempBaseDir, "invalid-bt");
-      const storage = new SqliteStorage({ dataDir: storageDir, busyTimeoutMs: 500 });
-      expect(() => storage.open()).toThrow("busyTimeoutMs must be >= 1000ms");
+    it("strictly bounds busy timeout to valid integers within [1000..60000] ms", () => {
+      const storageDir = path.join(tempBaseDir, "bt-bounds");
+
+      // Too low (< 1000)
+      const lowStorage = createTestStorage({ dataDir: storageDir, busyTimeoutMs: 500 });
+      expect(() => lowStorage.open()).toThrow("busyTimeoutMs must be an integer between 1000 and 60000");
+
+      // Too high (> 60000)
+      const highStorage = createTestStorage({ dataDir: storageDir, busyTimeoutMs: 70000 });
+      expect(() => highStorage.open()).toThrow("busyTimeoutMs must be an integer between 1000 and 60000");
+
+      // Fractional
+      const fracStorage = createTestStorage({ dataDir: storageDir, busyTimeoutMs: 2500.5 });
+      expect(() => fracStorage.open()).toThrow("busyTimeoutMs must be an integer between 1000 and 60000");
+
+      // Valid boundaries
+      const minStorage = createTestStorage({ dataDir: path.join(tempBaseDir, "bt-min"), busyTimeoutMs: MIN_BUSY_TIMEOUT_MS });
+      minStorage.open();
+      expect(minStorage.getStatus().busyTimeoutMs).toBe(MIN_BUSY_TIMEOUT_MS);
+      minStorage.close();
+
+      const maxStorage = createTestStorage({ dataDir: path.join(tempBaseDir, "bt-max"), busyTimeoutMs: MAX_BUSY_TIMEOUT_MS });
+      maxStorage.open();
+      expect(maxStorage.getStatus().busyTimeoutMs).toBe(MAX_BUSY_TIMEOUT_MS);
+      maxStorage.close();
+    });
+
+    it("cleans up database handle and state deterministically on failed initialization", () => {
+      const storageDir = path.join(tempBaseDir, "failed-init");
+      const storage = createTestStorage({
+        dataDir: storageDir,
+        busyTimeoutMs: 500, // intentional config failure during open()
+      });
+
+      expect(() => storage.open()).toThrow("INVALID_CONFIG");
+
+      // Verify internal handle was cleaned and nulled
+      expect(storage.getStatus().isReady).toBe(false);
+      expect(() => storage.getDb()).toThrow("STORAGE_NOT_READY");
     });
   });
 
@@ -231,9 +330,38 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
   // 4. Migration Infrastructure & Schema Boundaries
   // --------------------------------------------------------------------------
   describe("4. Migration Foundation & Schema Integrity", () => {
+    it("computes deterministic SHA-256 digest from canonical migration material", () => {
+      const digest1 = computeMigrationChecksum(FOUNDATION_BOOTSTRAP_MIGRATION);
+      const digest2 = computeMigrationChecksum(FOUNDATION_BOOTSTRAP_MIGRATION);
+      expect(digest1).toBe(digest2);
+      expect(digest1).toMatch(/^sha256:[a-f0-9]{64}$/);
+      expect(FOUNDATION_BOOTSTRAP_MIGRATION.checksum).toBe(digest1);
+    });
+
+    it("prevalidates migration registry ordering and uniqueness", () => {
+      expect(() => validateMigrationRegistry([FOUNDATION_BOOTSTRAP_MIGRATION])).not.toThrow();
+
+      // Duplicate ID
+      const dup: Migration = { ...FOUNDATION_BOOTSTRAP_MIGRATION };
+      expect(() => validateMigrationRegistry([FOUNDATION_BOOTSTRAP_MIGRATION, dup])).toThrow("DUPLICATE_MIGRATION_ID");
+
+      // Unsorted order
+      const migration2: Migration = {
+        id: "002_second",
+        namespace: "foundation",
+        name: "Second",
+        checksum: "sha256:...",
+        sql: "SELECT 1;",
+        up: () => {},
+      };
+      migration2.checksum = computeMigrationChecksum(migration2);
+
+      expect(() => validateMigrationRegistry([migration2, FOUNDATION_BOOTSTRAP_MIGRATION])).toThrow("INVALID_MIGRATION_ORDER");
+    });
+
     it("applies bootstrap migration exactly once and records migration history deterministically", () => {
       const storageDir = path.join(tempBaseDir, "migration-test");
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       storage.open();
 
       const status = storage.getStatus();
@@ -261,9 +389,29 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       storage.close();
     });
 
+    it("fails closed on modified migration content (content-bound checksum mismatch)", () => {
+      const storageDir = path.join(tempBaseDir, "migration-tamper-content");
+      const storage = createTestStorage({ dataDir: storageDir });
+      storage.open();
+      const db = storage.getDb();
+
+      // Modify SQL material of already applied migration
+      const tamperedSqlMigration: Migration = {
+        ...FOUNDATION_BOOTSTRAP_MIGRATION,
+        sql: "CREATE TABLE _schema_metadata (id INT);",
+      };
+      tamperedSqlMigration.checksum = computeMigrationChecksum(tamperedSqlMigration);
+
+      expect(() => {
+        runMigrations(db, [tamperedSqlMigration]);
+      }).toThrow("MIGRATION_CHECKSUM_MISMATCH");
+
+      storage.close();
+    });
+
     it("fails closed and rolls back cleanly when a migration throws an error", () => {
       const storageDir = path.join(tempBaseDir, "migration-fail");
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       storage.open();
       const db = storage.getDb();
 
@@ -271,12 +419,14 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
         id: "002_broken_migration",
         namespace: "foundation",
         name: "Broken Migration",
-        checksum: "sha256:broken",
+        checksum: "",
+        sql: "CREATE TABLE temporary_probe (id INT PRIMARY KEY); INVALID_SQL_SYNTAX;",
         up: (dbSync) => {
           dbSync.exec("CREATE TABLE temporary_probe (id INT PRIMARY KEY);");
-          throw new Error("Simulated migration SQL failure");
+          dbSync.exec("INVALID_SQL_SYNTAX;");
         },
       };
+      failingMigration.checksum = computeMigrationChecksum(failingMigration);
 
       expect(() => {
         runMigrations(db, [FOUNDATION_BOOTSTRAP_MIGRATION, failingMigration]);
@@ -293,27 +443,9 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       storage.close();
     });
 
-    it("fails closed on migration checksum tampering", () => {
-      const storageDir = path.join(tempBaseDir, "migration-tamper");
-      const storage = new SqliteStorage({ dataDir: storageDir });
-      storage.open();
-      const db = storage.getDb();
-
-      const tamperedMigration: Migration = {
-        ...FOUNDATION_BOOTSTRAP_MIGRATION,
-        checksum: "sha256:tampered_content_hash",
-      };
-
-      expect(() => {
-        runMigrations(db, [tamperedMigration]);
-      }).toThrow("MIGRATION_CHECKSUM_MISMATCH");
-
-      storage.close();
-    });
-
     it("fails closed when encountering unknown future schema migrations", () => {
       const storageDir = path.join(tempBaseDir, "migration-future");
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       storage.open();
       const db = storage.getDb();
 
@@ -331,18 +463,23 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       storage.close();
     });
 
-    it("strictly verifies no controller or financial ledger tables exist in C1", () => {
+    it("strictly verifies exact C1 schema allowlist and rejects unexpected tables like 'orders'", () => {
       const storageDir = path.join(tempBaseDir, "schema-boundary");
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       storage.open();
       const db = storage.getDb();
 
       const check = verifyC1SchemaBoundaries(db);
       expect(check.valid).toBe(true);
       expect(check.disallowedFound).toEqual([]);
-
-      // Allowed tables in C1: strictly metadata and migrations
       expect(check.tables.sort()).toEqual(["_schema_metadata", "_schema_migrations"].sort());
+
+      // Create an unauthorized future financial table
+      db.exec("CREATE TABLE orders (id TEXT PRIMARY KEY, amount REAL);");
+
+      const checkAfterViolation = verifyC1SchemaBoundaries(db);
+      expect(checkAfterViolation.valid).toBe(false);
+      expect(checkAfterViolation.disallowedFound).toContain("orders");
 
       storage.close();
     });
@@ -354,7 +491,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
   describe("5. Integrity Diagnostics", () => {
     it("runs quick integrity diagnostic successfully on healthy database", () => {
       const storageDir = path.join(tempBaseDir, "quick-integrity");
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       storage.open();
 
       const quick = storage.quickIntegrityCheck();
@@ -368,7 +505,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
 
     it("runs explicit full integrity diagnostic successfully", () => {
       const storageDir = path.join(tempBaseDir, "full-integrity");
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       storage.open();
 
       const full = storage.fullIntegrityCheck();
@@ -382,7 +519,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
 
     it("returns error diagnostic when integrity checks are run on closed storage", () => {
       const storageDir = path.join(tempBaseDir, "closed-integrity");
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       storage.open();
       storage.close();
 
@@ -400,12 +537,12 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
   // 6. Online Backup Primitive
   // --------------------------------------------------------------------------
   describe("6. Online Backup Primitive", () => {
-    it("performs online backup via node:sqlite backup API and verifies committed data", async () => {
+    it("performs online backup and verifies committed foundation data", async () => {
       const storageDir = path.join(tempBaseDir, "backup-source");
       const backupDir = path.join(tempBaseDir, "backups");
       const backupFile = path.join(backupDir, "quantfund-backup.db");
 
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       storage.open();
 
       const result = await storage.backup({ destinationPath: backupFile });
@@ -436,20 +573,40 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       storage.close();
     });
 
-    it("fails closed on existing backup file when overwrite is false and allows overwrite when true", async () => {
+    it("rejects backup when source equals destination (identity protection)", async () => {
+      const storageDir = path.join(tempBaseDir, "backup-identity");
+      const storage = createTestStorage({ dataDir: storageDir });
+      storage.open();
+
+      const sourceDbPath = storage.getStatus().dbPath;
+      await expect(
+        storage.backup({ destinationPath: sourceDbPath })
+      ).rejects.toThrow("BACKUP_SOURCE_EQUALS_DESTINATION");
+
+      // Source database remains usable
+      expect(storage.getStatus().isReady).toBe(true);
+      expect(storage.quickIntegrityCheck().ok).toBe(true);
+
+      storage.close();
+    });
+
+    it("fails closed on existing backup file when overwrite is false and preserves existing file", async () => {
       const storageDir = path.join(tempBaseDir, "backup-no-overwrite");
       const backupFile = path.join(tempBaseDir, "existing-backup.db");
 
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       storage.open();
 
       await storage.backup({ destinationPath: backupFile });
       expect(fs.existsSync(backupFile)).toBe(true);
+      const originalMtime = fs.statSync(backupFile).mtimeMs;
 
-      // Second backup with overwrite: false must fail closed
+      // Second backup with overwrite: false must fail closed without touching existing file
       await expect(
         storage.backup({ destinationPath: backupFile, overwrite: false })
       ).rejects.toThrow("BACKUP_DESTINATION_EXISTS");
+
+      expect(fs.statSync(backupFile).mtimeMs).toBe(originalMtime);
 
       // Second backup with overwrite: true succeeds
       await expect(
@@ -461,7 +618,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
 
     it("rejects backup on closed or unready storage", async () => {
       const storageDir = path.join(tempBaseDir, "backup-closed");
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       await expect(
         storage.backup({ destinationPath: path.join(tempBaseDir, "bak.db") })
       ).rejects.toThrow("STORAGE_NOT_READY");
@@ -469,7 +626,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
 
     it("fails closed on empty or invalid backup destination path", async () => {
       const storageDir = path.join(tempBaseDir, "backup-invalid-path");
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       storage.open();
 
       await expect(
@@ -486,7 +643,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
   describe("7. Graceful Close Lifecycle", () => {
     it("closes database cleanly and makes repeated close calls safe and idempotent", () => {
       const storageDir = path.join(tempBaseDir, "graceful-close");
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       storage.open();
 
       expect(storage.getStatus().isReady).toBe(true);
@@ -511,12 +668,13 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
   describe("8. Production Server Health vs Readiness Distinction", () => {
     it("distinguishes process alive (GET /api/health) from storage readiness (GET /api/ready)", async () => {
       const storageDir = path.join(tempBaseDir, "server-storage");
-      const storage = new SqliteStorage({ dataDir: storageDir });
+      const storage = createTestStorage({ dataDir: storageDir });
       storage.open();
 
       serverInstance = createProductionServer({
         storage,
         staticDir: path.join(tempBaseDir, "dist"),
+        nodeVersion: "22.23.3",
       });
       const addr = await serverInstance.listen(0, "127.0.0.1");
 
@@ -548,9 +706,25 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       expect(healthStillOk.statusCode).toBe(200);
     });
 
+    it("returns HTTP 503 unready for /api/ready when storage is unconfigured", async () => {
+      serverInstance = createProductionServer({
+        staticDir: path.join(tempBaseDir, "dist"),
+        nodeVersion: "22.23.3",
+      });
+      const addr = await serverInstance.listen(0, "127.0.0.1");
+
+      const readyRes = await requestHttp(`${addr.url}/api/ready`, { method: "GET" });
+      expect(readyRes.statusCode).toBe(503);
+      const readyBody = JSON.parse(readyRes.body);
+      expect(readyBody.status).toBe("unready");
+      expect(readyBody.error.code).toBe("STORAGE_NOT_CONFIGURED");
+      expect(readyBody.storage.ready).toBe(false);
+    });
+
     it("enforces GET-only for /api/ready and returns 405 for POST/HEAD", async () => {
       serverInstance = createProductionServer({
         staticDir: path.join(tempBaseDir, "dist"),
+        nodeVersion: "22.23.3",
       });
       const addr = await serverInstance.listen(0, "127.0.0.1");
 

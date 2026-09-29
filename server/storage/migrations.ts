@@ -1,14 +1,49 @@
 // ============================================================================
 // FILE: server/storage/migrations.ts
 // MODULE: DETERMINISTIC FORWARD-ONLY MIGRATIONS (M18-C1)
-// NOTE: Bootstrap migration infrastructure with fail-closed integrity.
+// NOTE: Content-bound migration infrastructure with exact C1 schema allowlist.
 // ============================================================================
 
+import crypto from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { Migration, MigrationRecord } from "./types";
 
 export const MIGRATIONS_TABLE = "_schema_migrations";
 export const METADATA_TABLE = "_schema_metadata";
+
+export const ALLOWED_C1_TABLES: readonly string[] = Object.freeze([
+  METADATA_TABLE,
+  MIGRATIONS_TABLE,
+]);
+
+export const FOUNDATION_BOOTSTRAP_SQL = `
+CREATE TABLE IF NOT EXISTS _schema_metadata (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+`.trim();
+
+/**
+ * Computes a deterministic SHA-256 digest from canonical migration material.
+ */
+export function computeMigrationChecksum(
+  migration: Pick<Migration, "id" | "namespace" | "name" | "sql">
+): string {
+  const canonicalMaterial = [
+    migration.id.trim(),
+    migration.namespace.trim(),
+    migration.name.trim(),
+    migration.sql.trim(),
+  ].join("\n---\n");
+
+  const digest = crypto
+    .createHash("sha256")
+    .update(canonicalMaterial, "utf8")
+    .digest("hex");
+
+  return `sha256:${digest}`;
+}
 
 /**
  * Foundation Bootstrap Migration (001)
@@ -19,22 +54,20 @@ export const FOUNDATION_BOOTSTRAP_MIGRATION: Migration = {
   id: "001_foundation_bootstrap",
   namespace: "foundation",
   name: "Establish Schema Metadata & Storage Infrastructure",
-  checksum: "sha256:c1_foundation_bootstrap_20260929",
+  sql: FOUNDATION_BOOTSTRAP_SQL,
+  checksum: computeMigrationChecksum({
+    id: "001_foundation_bootstrap",
+    namespace: "foundation",
+    name: "Establish Schema Metadata & Storage Infrastructure",
+    sql: FOUNDATION_BOOTSTRAP_SQL,
+  }),
   up: (db: DatabaseSync) => {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS ${METADATA_TABLE} (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-    `);
-
+    db.exec(FOUNDATION_BOOTSTRAP_SQL);
     const now = Date.now();
     const insertMeta = db.prepare(`
       INSERT OR REPLACE INTO ${METADATA_TABLE} (key, value, updated_at)
       VALUES (?, ?, ?)
     `);
-
     insertMeta.run("schema_version", "1", now);
     insertMeta.run("foundation_initialized_at", String(now), now);
     insertMeta.run("architecture_milestone", "M18-C1", now);
@@ -44,6 +77,54 @@ export const FOUNDATION_BOOTSTRAP_MIGRATION: Migration = {
 export const REGISTERED_MIGRATIONS: readonly Migration[] = Object.freeze([
   FOUNDATION_BOOTSTRAP_MIGRATION,
 ]);
+
+/**
+ * Validates migration registry integrity before running any database actions.
+ */
+export function validateMigrationRegistry(migrations: readonly Migration[]): void {
+  if (!migrations || migrations.length === 0) {
+    throw new Error("MIGRATION_REGISTRY_INVALID: Migration registry must not be empty.");
+  }
+
+  const seenIds = new Set<string>();
+  const allowedNamespaces = new Set(["foundation", "ledger", "controller"]);
+
+  for (let i = 0; i < migrations.length; i++) {
+    const m = migrations[i];
+
+    if (!m.id || typeof m.id !== "string" || m.id.trim().length === 0) {
+      throw new Error(`MIGRATION_REGISTRY_INVALID: Migration at index ${i} has empty ID.`);
+    }
+    if (seenIds.has(m.id)) {
+      throw new Error(`MIGRATION_REGISTRY_INVALID: DUPLICATE_MIGRATION_ID: Duplicate migration ID detected: '${m.id}'.`);
+    }
+    seenIds.add(m.id);
+
+    if (!allowedNamespaces.has(m.namespace)) {
+      throw new Error(
+        `MIGRATION_REGISTRY_INVALID: Migration '${m.id}' has invalid namespace '${m.namespace}'.`
+      );
+    }
+
+    if (!m.name || typeof m.name !== "string" || m.name.trim().length === 0) {
+      throw new Error(`MIGRATION_REGISTRY_INVALID: Migration '${m.id}' has empty name.`);
+    }
+
+    if (!m.sql || typeof m.sql !== "string" || m.sql.trim().length === 0) {
+      throw new Error(`MIGRATION_REGISTRY_INVALID: Migration '${m.id}' has empty SQL definition.`);
+    }
+
+    if (i > 0) {
+      const prevId = migrations[i - 1].id;
+      if (m.id.localeCompare(prevId) <= 0) {
+        throw new Error(
+          `MIGRATION_REGISTRY_INVALID: INVALID_MIGRATION_ORDER: Migrations must be in strict ascending order. Found '${m.id}' after '${prevId}'.`
+        );
+      }
+    }
+  }
+}
+
 
 export function ensureMigrationHistoryTable(db: DatabaseSync): void {
   db.exec(`
@@ -81,44 +162,61 @@ export function runMigrations(
   db: DatabaseSync,
   migrations: readonly Migration[] = REGISTERED_MIGRATIONS
 ): { applied: string[]; skipped: string[] } {
+  validateMigrationRegistry(migrations);
   ensureMigrationHistoryTable(db);
-  const appliedRecords = getAppliedMigrations(db);
-  const appliedMap = new Map<string, MigrationRecord>(
-    appliedRecords.map((rec) => [rec.id, rec])
-  );
 
-  const registeredIds = new Set(migrations.map((m) => m.id));
+  const appliedRecords = getAppliedMigrations(db);
+  const registeredMap = new Map<string, Migration>(
+    migrations.map((m) => [m.id, m])
+  );
 
   // 1. Fail closed on unsupported future schema
   for (const applied of appliedRecords) {
-    if (!registeredIds.has(applied.id)) {
+    const registered = registeredMap.get(applied.id);
+    if (!registered) {
       throw new Error(
         `UNSUPPORTED_FUTURE_SCHEMA: Database contains migration '${applied.id}' from namespace '${applied.namespace}' not recognized by current runtime.`
       );
     }
+
+    const expectedChecksum = computeMigrationChecksum(registered);
+    if (
+      applied.checksum !== expectedChecksum ||
+      applied.namespace !== registered.namespace ||
+      applied.name !== registered.name
+    ) {
+      throw new Error(
+        `MIGRATION_CHECKSUM_MISMATCH: Applied migration '${applied.id}' does not match registered migration content. Expected checksum '${expectedChecksum}', got '${applied.checksum}'. Migration tampering detected.`
+      );
+    }
   }
+
+  const appliedMap = new Map<string, MigrationRecord>(
+    appliedRecords.map((rec) => [rec.id, rec])
+  );
 
   const applied: string[] = [];
   const skipped: string[] = [];
 
-  // 2. Execute migrations in exact deterministic order
+  // 2. Execute pending migrations in exact deterministic order
   for (const migration of migrations) {
     const existing = appliedMap.get(migration.id);
 
     if (existing) {
-      if (existing.checksum !== migration.checksum) {
-        throw new Error(
-          `MIGRATION_CHECKSUM_MISMATCH: Applied migration '${migration.id}' has checksum '${existing.checksum}', expected '${migration.checksum}'. Migration tampering detected.`
-        );
-      }
       skipped.push(migration.id);
       continue;
     }
 
+    const checksum = computeMigrationChecksum(migration);
+
     // 3. Apply migration inside an immediate transaction
     db.exec("BEGIN IMMEDIATE;");
     try {
-      migration.up(db);
+      if (migration.up) {
+        migration.up(db);
+      } else {
+        db.exec(migration.sql);
+      }
 
       const recordStmt = db.prepare(`
         INSERT INTO ${MIGRATIONS_TABLE} (id, namespace, name, applied_at, checksum)
@@ -129,7 +227,7 @@ export function runMigrations(
         migration.namespace,
         migration.name,
         Date.now(),
-        migration.checksum
+        checksum
       );
 
       db.exec("COMMIT;");
@@ -151,33 +249,20 @@ export function runMigrations(
 
 /**
  * Diagnostic utility to verify that only allowed C1 tables exist.
- * Rejects any presence of M18-D controller or financial ledger tables.
+ * Replaces denylist with an exact allowlist for C1 user-defined tables.
  */
 export function verifyC1SchemaBoundaries(db: DatabaseSync): {
   valid: boolean;
   tables: string[];
   disallowedFound: string[];
 } {
-  const disallowedPatterns = [
-    /^controller_/i,
-    /^cycle_/i,
-    /^cycle_commits$/i,
-    /^fills$/i,
-    /^ledger_/i,
-    /^positions$/i,
-    /^account_state$/i,
-    /^owner_token$/i,
-    /^heartbeat$/i,
-  ];
-
   const rows = db.prepare(`
     SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'
   `).all() as unknown[];
 
   const tables = rows.map((r) => String((r as Record<string, unknown>).name));
-  const disallowedFound = tables.filter((tableName) =>
-    disallowedPatterns.some((pattern) => pattern.test(tableName))
-  );
+  const allowedSet = new Set<string>(ALLOWED_C1_TABLES);
+  const disallowedFound = tables.filter((tableName) => !allowedSet.has(tableName));
 
   return {
     valid: disallowedFound.length === 0,

@@ -1,12 +1,13 @@
 // ============================================================================
 // FILE: scripts/production-smoke.mjs
-// MODULE: PRODUCTION RUNTIME SMOKE HARNESS (M16-E3)
+// MODULE: PRODUCTION RUNTIME SMOKE HARNESS (M16-E3 / M18-C1)
 // NOTE: Exercises built client + built server against local ephemeral port.
 // ============================================================================
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,6 +18,14 @@ const DIST_MANIFEST = path.join(ROOT_DIR, "dist", ".vite", "manifest.json");
 
 const STARTUP_TIMEOUT_MS = 10_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
+
+function isSupportedNodeVersion(versionStr) {
+  const clean = versionStr.startsWith("v") ? versionStr.slice(1) : versionStr;
+  const parts = clean.split(".").map((p) => parseInt(p, 10));
+  const major = parts[0];
+  const minor = parts[1] || 0;
+  return major === 22 && minor >= 16;
+}
 
 function httpRequest(
   urlStr,
@@ -68,15 +77,53 @@ export async function runProductionSmoke() {
   }
 
   const manifest = JSON.parse(fs.readFileSync(DIST_MANIFEST, "utf8"));
+  const nodeVersion = process.version;
+  const isSupported = isSupportedNodeVersion(nodeVersion);
+
+  // If running on unsupported Node (e.g. Node 24 locally), test that server correctly fails fast
+  if (!isSupported) {
+    console.log(`[smoke] Running on unsupported Node runtime ${nodeVersion}. Verifying fail-fast rejection...`);
+    const child = spawn(process.execPath, [DIST_SERVER], {
+      cwd: ROOT_DIR,
+      env: { ...process.env, PORT: "0", HOST: "127.0.0.1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (c) => { stdout += c.toString(); });
+    child.stderr.on("data", (c) => { stderr += c.toString(); });
+
+    const exitCode = await new Promise((resolve) => {
+      child.on("exit", (code) => resolve(code));
+    });
+
+    if (exitCode !== 0 && (stderr.includes("RUNTIME_INCOMPATIBLE") || stdout.includes("RUNTIME_INCOMPATIBLE"))) {
+      console.log(`[smoke] EXPECTED RESULT: Production server correctly refused to run under ${nodeVersion} (exit code ${exitCode}).`);
+      console.log(`[smoke] Storage-enabled production smoke requires supported Node 22 LTS (22.23.3 in CI).`);
+      throw new Error(`UNSUPPORTED_LOCAL_NODE_RUNTIME: Local Node ${nodeVersion} is not in supported range >=22.16.0 <23. Server correctly rejected startup.`);
+    } else {
+      throw new Error(`[smoke] FAILED: Server did not properly fail-fast on unsupported Node ${nodeVersion}. Code: ${exitCode}, Stderr: ${stderr}`);
+    }
+  }
 
   let child = null;
   let serverUrl = null;
   let stdoutAccum = "";
   let stderrAccum = "";
+  let smokeDataDir = null;
 
   try {
-    // 1. Spawn production server with PORT=0 and isolated AI environment
-    const childEnv = { ...process.env, PORT: "0", HOST: "127.0.0.1" };
+    smokeDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "qf-smoke-storage-"));
+
+    // 1. Spawn production server with PORT=0, isolated storage dir, and isolated AI environment
+    const childEnv = {
+      ...process.env,
+      PORT: "0",
+      HOST: "127.0.0.1",
+      QUANTFUND_ENABLE_STORAGE: "true",
+      QUANTFUND_DATA_DIR: smokeDataDir,
+    };
     delete childEnv.GEMINI_API_KEY;
     delete childEnv.VITE_GEMINI_API_KEY;
 
@@ -136,9 +183,9 @@ export async function runProductionSmoke() {
     const failures = [];
 
     // ========================================================================
-    // SMOKE A: Process Health & Readiness Distinction
+    // SMOKE A: Process Health & Storage Readiness Distinction
     // ========================================================================
-    console.log("[smoke] Running Smoke A: Process Health & Readiness...");
+    console.log("[smoke] Running Smoke A: Process Health & Storage Readiness...");
     const healthRes = await httpRequest(`${serverUrl}/api/health`, { method: "GET" });
     if (healthRes.statusCode !== 200) {
       throw new Error(`[smoke A] GET /api/health returned status ${healthRes.statusCode}, expected 200. Body: ${healthRes.body}`);
@@ -161,8 +208,14 @@ export async function runProductionSmoke() {
       throw new Error(`[smoke A] GET /api/ready returned status ${readyRes.statusCode}, expected 200. Body: ${readyRes.body}`);
     }
     const readyJson = JSON.parse(readyRes.body);
-    if (readyJson.status !== "ready") {
-      throw new Error(`[smoke A] GET /api/ready returned invalid JSON shape: ${readyRes.body}`);
+    if (readyJson.status !== "ready" || !readyJson.storage || readyJson.storage.isReady !== true) {
+      throw new Error(`[smoke A] GET /api/ready returned invalid storage readiness: ${readyRes.body}`);
+    }
+    if (readyJson.storage.journalMode !== "wal" || readyJson.storage.synchronous !== 2 || !readyJson.storage.foreignKeys) {
+      throw new Error(`[smoke A] GET /api/ready storage pragmas not verified: ${readyRes.body}`);
+    }
+    if (readyJson.storage.appliedMigrationsCount < 1) {
+      throw new Error(`[smoke A] GET /api/ready storage migrations not applied: ${readyRes.body}`);
     }
 
     // ========================================================================
@@ -391,6 +444,12 @@ export async function runProductionSmoke() {
         }, SHUTDOWN_TIMEOUT_MS);
       });
       console.log("[smoke] Production server process confirmed terminated.");
+    }
+
+    if (smokeDataDir && fs.existsSync(smokeDataDir)) {
+      try {
+        fs.rmSync(smokeDataDir, { recursive: true, force: true });
+      } catch {}
     }
   }
 }

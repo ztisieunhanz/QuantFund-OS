@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, backup as sqliteBackup } from "node:sqlite";
 import { assertNodeRuntimeCompatibility } from "./runtimeCompatibility";
-import { resolveDataDirectory, assertDataDirectory } from "./dataDirectory";
+import { resolveDataDirectory, assertDataDirectory, resolveDatabasePath, DEFAULT_DB_FILENAME } from "./dataDirectory";
 import { runMigrations, getAppliedMigrations, verifyC1SchemaBoundaries } from "./migrations";
 import type {
   SqliteStorageConfig,
@@ -19,8 +19,10 @@ import type {
   Migration,
 } from "./types";
 
-export const DEFAULT_DB_FILENAME = "quantfund.db";
+export { DEFAULT_DB_FILENAME };
 export const DEFAULT_BUSY_TIMEOUT_MS = 5000;
+export const MIN_BUSY_TIMEOUT_MS = 1000;
+export const MAX_BUSY_TIMEOUT_MS = 60000;
 
 export class SqliteStorage {
   private db: DatabaseSync | null = null;
@@ -50,51 +52,74 @@ export class SqliteStorage {
     }
 
     // 1. Runtime Compatibility Check (fail fast)
-    assertNodeRuntimeCompatibility(undefined, { allowExperimentalSuperset: true });
+    assertNodeRuntimeCompatibility(this.config.nodeVersion);
 
-    // 2. Persistent Data Directory Validation (fail closed)
+    // 2. Persistent Data Directory & Path Validation (fail closed, no escape)
     const dataDir = assertDataDirectory(
       resolveDataDirectory(this.config.dataDir, this.config.env)
     );
-    const filename = this.config.databaseFilename?.trim() || DEFAULT_DB_FILENAME;
-    this.resolvedDbPath = path.resolve(dataDir, filename);
+    this.resolvedDbPath = resolveDatabasePath(dataDir, this.config.databaseFilename);
 
-    // 3. Open SQLite Database
+    // 3. Open SQLite Database with deterministic failure cleanup
     try {
       this.db = new DatabaseSync(this.resolvedDbPath);
     } catch (err) {
+      this.cleanupFailedOpen();
       throw new Error(
         `STORAGE_OPEN_FAILED: Failed to open SQLite database at '${this.resolvedDbPath}': ${err instanceof Error ? err.message : String(err)}`
       );
     }
 
-    // 4. Apply & Verify Canonical Pragmas
-    this.applyAndVerifyPragmas();
+    try {
+      // 4. Apply & Verify Canonical Pragmas
+      this.applyAndVerifyPragmas();
 
-    // 5. Apply Bootstrap Migrations
-    runMigrations(this.db, customMigrations);
-    const applied = getAppliedMigrations(this.db);
-    this.appliedMigrationsCount = applied.length;
-    this.lastMigrationId = applied.length > 0 ? applied[applied.length - 1].id : null;
+      // 5. Apply Bootstrap Migrations
+      runMigrations(this.db, customMigrations);
+      const applied = getAppliedMigrations(this.db);
+      this.appliedMigrationsCount = applied.length;
+      this.lastMigrationId = applied.length > 0 ? applied[applied.length - 1].id : null;
 
-    // 6. Schema Boundary Guard
-    const boundaryCheck = verifyC1SchemaBoundaries(this.db);
-    if (!boundaryCheck.valid) {
-      throw new Error(
-        `C1_SCHEMA_VIOLATION: Found unauthorized future/controller tables in C1 database: ${boundaryCheck.disallowedFound.join(", ")}`
-      );
+      // 6. Schema Boundary Guard
+      const boundaryCheck = verifyC1SchemaBoundaries(this.db);
+      if (!boundaryCheck.valid) {
+        throw new Error(
+          `C1_SCHEMA_VIOLATION: Found unauthorized future/controller tables in C1 database: ${boundaryCheck.disallowedFound.join(", ")}`
+        );
+      }
+
+      // 7. Startup Quick Integrity Check
+      const integrity = this.quickIntegrityCheck();
+      if (!integrity.ok) {
+        throw new Error(
+          `STORAGE_CORRUPT: Initial database integrity check failed: ${integrity.error ?? integrity.details.join(", ")}`
+        );
+      }
+
+      this.isReadyState = true;
+    } catch (err) {
+      this.cleanupFailedOpen();
+      throw err;
     }
+  }
 
-    // 7. Startup Quick Integrity Check
-    const integrity = this.quickIntegrityCheck();
-    if (!integrity.ok) {
-      this.close();
-      throw new Error(
-        `STORAGE_CORRUPT: Initial database integrity check failed: ${integrity.error ?? integrity.details.join(", ")}`
-      );
+  private cleanupFailedOpen(): void {
+    this.isReadyState = false;
+    this.appliedMigrationsCount = 0;
+    this.lastMigrationId = null;
+    this.currentJournalMode = "";
+    this.currentSynchronous = 0;
+    this.currentForeignKeys = false;
+    this.currentBusyTimeoutMs = 0;
+
+    if (this.db) {
+      try {
+        this.db.close();
+      } catch {
+        // Suppress secondary close errors during cleanup
+      }
+      this.db = null;
     }
-
-    this.isReadyState = true;
   }
 
   private applyAndVerifyPragmas(): void {
@@ -141,20 +166,26 @@ export class SqliteStorage {
     this.currentForeignKeys = true;
 
     // D. PRAGMA busy_timeout = <ms>
-    const timeoutMs = this.config.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS;
-    if (timeoutMs < 1000) {
+    const rawTimeout = this.config.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS;
+    if (
+      typeof rawTimeout !== "number" ||
+      !Number.isFinite(rawTimeout) ||
+      !Number.isInteger(rawTimeout) ||
+      rawTimeout < MIN_BUSY_TIMEOUT_MS ||
+      rawTimeout > MAX_BUSY_TIMEOUT_MS
+    ) {
       throw new Error(
-        `INVALID_CONFIG: busyTimeoutMs must be >= 1000ms, got ${timeoutMs}ms.`
+        `INVALID_CONFIG: busyTimeoutMs must be an integer between ${MIN_BUSY_TIMEOUT_MS} and ${MAX_BUSY_TIMEOUT_MS} ms, got ${rawTimeout}.`
       );
     }
-    this.db.exec(`PRAGMA busy_timeout = ${timeoutMs};`);
+    this.db.exec(`PRAGMA busy_timeout = ${rawTimeout};`);
     const btRow = this.db.prepare("PRAGMA busy_timeout;").get() as
       | { timeout?: number }
       | undefined;
     const btVal = Number(btRow?.timeout ?? 0);
-    if (btVal <= 0) {
+    if (btVal !== rawTimeout) {
       throw new Error(
-        `PRAGMA_VERIFICATION_FAILED: Bounded busy_timeout verification failed, got '${btVal}'.`
+        `PRAGMA_VERIFICATION_FAILED: Bounded busy_timeout verification failed, expected '${rawTimeout}', got '${btVal}'.`
       );
     }
     this.currentBusyTimeoutMs = btVal;
@@ -266,7 +297,7 @@ export class SqliteStorage {
 
   /**
    * Performs an online SQLite backup using the official node:sqlite backup API.
-   * The destination is validated and verified to be independently openable.
+   * Protects destination with safe atomic replacement and temp verification.
    */
   public async backup(options: BackupOptions): Promise<BackupResult> {
     if (this.isClosedState || !this.db || !this.isReadyState) {
@@ -278,46 +309,112 @@ export class SqliteStorage {
     }
 
     const resolvedDest = path.resolve(options.destinationPath.trim());
-    const destDir = path.dirname(resolvedDest);
+    const canonicalSource = path.resolve(this.resolvedDbPath);
 
+    // 1. Identity rejection: Never allow backup destination to equal source database
+    if (resolvedDest.toLowerCase() === canonicalSource.toLowerCase()) {
+      throw new Error(
+        `BACKUP_SOURCE_EQUALS_DESTINATION: Destination path '${resolvedDest}' cannot be the active database.`
+      );
+    }
+
+    const destDir = path.dirname(resolvedDest);
     if (!fs.existsSync(destDir)) {
       fs.mkdirSync(destDir, { recursive: true });
     }
 
-    if (fs.existsSync(resolvedDest)) {
-      if (!options.overwrite) {
-        throw new Error(
-          `BACKUP_DESTINATION_EXISTS: Backup destination '${resolvedDest}' already exists and overwrite is false.`
-        );
-      }
-      fs.unlinkSync(resolvedDest);
+    const destAlreadyExists = fs.existsSync(resolvedDest);
+    if (destAlreadyExists && !options.overwrite) {
+      throw new Error(
+        `BACKUP_DESTINATION_EXISTS: Backup destination '${resolvedDest}' already exists and overwrite is false.`
+      );
     }
 
+    // 2. Stage backup into a unique sibling temporary file
+    const tempBackupPath = path.join(
+      destDir,
+      `.tmp_backup_${Date.now()}_${Math.random().toString(36).slice(2, 9)}.db`
+    );
+
     try {
-      await sqliteBackup(this.db, resolvedDest);
+      await sqliteBackup(this.db, tempBackupPath);
     } catch (err) {
+      if (fs.existsSync(tempBackupPath)) {
+        try { fs.unlinkSync(tempBackupPath); } catch { /* ignore */ }
+      }
       throw new Error(
         `BACKUP_EXECUTION_FAILED: node:sqlite backup failed for '${resolvedDest}': ${err instanceof Error ? err.message : String(err)}`
       );
     }
 
-    if (!fs.existsSync(resolvedDest)) {
-      throw new Error(`BACKUP_VERIFICATION_FAILED: Backup file was not created at '${resolvedDest}'.`);
+    if (!fs.existsSync(tempBackupPath)) {
+      throw new Error(`BACKUP_VERIFICATION_FAILED: Temp backup file was not created at '${tempBackupPath}'.`);
     }
 
-    // Verify backup integrity by opening with an independent handle
+    // 3. Open temp backup independently and verify integrity & foundation schema
+    let verifyHandle: DatabaseSync | null = null;
     try {
-      const verifyHandle = new DatabaseSync(resolvedDest);
+      verifyHandle = new DatabaseSync(tempBackupPath);
       const verifyCheck = verifyHandle.prepare("PRAGMA quick_check;").get() as Record<string, unknown> | undefined;
       const verifyVal = String(verifyCheck?.quick_check ?? Object.values(verifyCheck || {})[0] ?? "");
-      verifyHandle.close();
-
       if (verifyVal.toLowerCase() !== "ok") {
         throw new Error(`Backup file quick_check failed: ${verifyVal}`);
       }
+
+      // Verify foundation schema is present and readable
+      const schemaCheck = verifyHandle
+        .prepare(
+          "SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name IN ('_schema_metadata', '_schema_migrations');"
+        )
+        .get() as { count?: number } | undefined;
+      if (!schemaCheck || Number(schemaCheck.count) < 2) {
+        throw new Error("Backup file is missing required foundation tables.");
+      }
+
+      const versionRow = verifyHandle
+        .prepare("SELECT value FROM _schema_metadata WHERE key = 'schema_version';")
+        .get() as { value?: string } | undefined;
+      if (!versionRow || versionRow.value !== "1") {
+        throw new Error("Backup file foundation metadata is invalid or missing.");
+      }
     } catch (verifyErr) {
+      if (verifyHandle) {
+        try { verifyHandle.close(); } catch { /* ignore */ }
+        verifyHandle = null;
+      }
+      if (fs.existsSync(tempBackupPath)) {
+        try { fs.unlinkSync(tempBackupPath); } catch { /* ignore */ }
+      }
       throw new Error(
-        `BACKUP_VERIFICATION_FAILED: Backup file at '${resolvedDest}' could not be verified: ${verifyErr instanceof Error ? verifyErr.message : String(verifyErr)}`
+        `BACKUP_VERIFICATION_FAILED: Backup file verification failed: ${verifyErr instanceof Error ? verifyErr.message : String(verifyErr)}`
+      );
+    } finally {
+      if (verifyHandle) {
+        try {
+          verifyHandle.close();
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    // 4. Safe promotion: atomically replace target destination
+    try {
+      if (destAlreadyExists) {
+        // Safe cross-platform atomic replacement:
+        // On Windows renameSync over an existing file can throw EEXIST/EPERM,
+        // so we use copyFileSync + unlinkSync or renameSync.
+        fs.copyFileSync(tempBackupPath, resolvedDest);
+        try { fs.unlinkSync(tempBackupPath); } catch { /* ignore */ }
+      } else {
+        fs.renameSync(tempBackupPath, resolvedDest);
+      }
+    } catch (replaceErr) {
+      if (fs.existsSync(tempBackupPath)) {
+        try { fs.unlinkSync(tempBackupPath); } catch { /* ignore */ }
+      }
+      throw new Error(
+        `BACKUP_PROMOTION_FAILED: Failed to promote backup to '${resolvedDest}': ${replaceErr instanceof Error ? replaceErr.message : String(replaceErr)}`
       );
     }
 

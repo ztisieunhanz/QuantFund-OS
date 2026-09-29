@@ -11,10 +11,12 @@ export interface SqliteStorageConfig {
   readonly dataDir?: string;
   /** Primary database filename (default: 'quantfund.db') */
   readonly databaseFilename?: string;
-  /** SQLite busy timeout in milliseconds (default: 5000) */
+  /** SQLite busy timeout in milliseconds (default: 5000, bounded [1000..60000]) */
   readonly busyTimeoutMs?: number;
   /** Optional custom environment dictionary for resolving variables */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** Explicit test seam for injecting Node runtime version in unit tests */
+  readonly nodeVersion?: string;
 }
 
 export interface StorageStatus {
@@ -33,8 +35,9 @@ export interface Migration {
   readonly id: string;
   readonly namespace: "foundation" | "ledger" | "controller";
   readonly name: string;
-  readonly checksum: string;
-  readonly up: (db: DatabaseSync) => void;
+  readonly sql: string;
+  readonly checksum?: string;
+  readonly up?: (db: DatabaseSync) => void;
 }
 
 export interface MigrationRecord {

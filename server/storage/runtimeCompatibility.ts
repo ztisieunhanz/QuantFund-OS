@@ -106,18 +106,11 @@ export function checkNodeRuntimeCompatibility(
   };
 }
 
-export function assertNodeRuntimeCompatibility(
-  customVersion?: string,
-  options: { allowExperimentalSuperset?: boolean } = {}
-): void {
+export function assertNodeRuntimeCompatibility(customVersion?: string): void {
   const currentVersion = customVersion ?? process.versions.node ?? process.version;
   const result = checkNodeRuntimeCompatibility(currentVersion);
 
   if (!result.compatible) {
-    // If running in development/test on a later Node version with functional node:sqlite and allowed:
-    if (options.allowExperimentalSuperset && result.sqliteAvailable) {
-      return;
-    }
     throw new Error(
       `RUNTIME_INCOMPATIBLE: Node.js runtime '${currentVersion}' does not satisfy architecture contract (${SUPPORTED_NODE_RANGE}). ${result.error ?? ""}`
     );
