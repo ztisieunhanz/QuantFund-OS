@@ -13,13 +13,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer as createViteServer } from "vite";
 import {
   createProductionServer,
-  createProductionServerCore,
+  DEFAULT_SHUTDOWN_TIMEOUT_MS,
   type ProductionServerInstance,
   type ProductionServerOptions,
 } from "../productionServer";
+import * as productionServerModule from "../productionServer";
 import { isNodeVersionSupported } from "../storage";
 import { AI_GATEWAY_OPERATION } from "../../src/lib/aiGatewayContract";
 import { buildAiAdvisorGrounding } from "../../src/lib/aiAdvisorGroundingProjection";
+import { createTestProductionServer } from "./testServerHelper";
+
+const validAiRequest = JSON.stringify({
+  operation: AI_GATEWAY_OPERATION,
+  grounding: buildAiAdvisorGrounding(null, null),
+  messages: [{ role: "user", text: "Summarize current evidence" }],
+});
 
 function requestHttp(
   url: string,
@@ -40,21 +48,12 @@ function requestHttp(
           body: Buffer.concat(chunks).toString("utf8"),
         });
       });
+      res.on("error", reject);
     });
     req.on("error", reject);
     if (options.body !== undefined) req.write(options.body);
     req.end();
   });
-}
-
-const validAiRequest = JSON.stringify({
-  operation: AI_GATEWAY_OPERATION,
-  grounding: buildAiAdvisorGrounding(null, null),
-  messages: [{ role: "user", text: "Summarize current evidence" }],
-});
-
-function createTestProductionServer(options: ProductionServerOptions = {}): ProductionServerInstance {
-  return createProductionServerCore(options);
 }
 
 function stopChildProcess(child: ChildProcess): Promise<void> {
@@ -123,7 +122,11 @@ describe("M16-E1A Production Server Shell", () => {
 
   afterEach(async () => {
     if (serverInstance) {
-      await serverInstance.close();
+      try {
+        await serverInstance.close();
+      } catch {
+        // ignore errors during cleanup of intentionally faulted tests
+      }
       serverInstance = null;
     }
     if (childProc) {
@@ -589,9 +592,86 @@ describe("M16-E1A Production Server Shell", () => {
   it("H. rejects production server creation on unsupported Node.js runtime without spoofing", () => {
     // Current test process is Node 24, so createProductionServer() must fail fast closed
     expect(() => createProductionServer({ staticDir: tempStaticDir })).toThrow("RUNTIME_INCOMPATIBLE");
+    // Also verify no createProductionServerCore or openDirect bypass is exported
+    expect((productionServerModule as any).createProductionServerCore).toBeUndefined();
   });
 
-  it("I. enforces ordered bounded shutdown: quiesces HTTP before closing storage", async () => {
+  it("I1. enforces ordered bounded shutdown: waits for active async handler to quiesce before closing storage", async () => {
+    let storageClosed = false;
+    let storageClosedAt: number | null = null;
+    let handlerFinishedAt: number | null = null;
+
+    const mockStorage = {
+      getStatus: () => ({ isReady: !storageClosed, isClosed: storageClosed } as any),
+      close: () => {
+        storageClosed = true;
+        storageClosedAt = Date.now();
+      },
+    } as any;
+
+    // Create custom async handler that takes 150ms
+    let releaseHandler: () => void;
+    const handlerGate = new Promise<void>((resolve) => {
+      releaseHandler = resolve;
+    });
+
+    serverInstance = createTestProductionServer({
+      staticDir: tempStaticDir,
+      storage: mockStorage,
+      apiHandler: async (req, res, pathname) => {
+        if (pathname === "/api/slow-task") {
+          await handlerGate;
+          handlerFinishedAt = Date.now();
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ status: "done" }));
+          return true;
+        }
+        return false;
+      },
+    });
+
+    const addr = await serverInstance.listen(0, "127.0.0.1");
+    expect(serverInstance.isShuttingDown).toBe(false);
+
+    // Start slow request
+    let requestCompleted = false;
+    const reqPromise = requestHttp(`${addr.url}/api/slow-task`).then((res) => {
+      requestCompleted = true;
+      return res;
+    });
+
+    // Give request a moment to enter the handler
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Initiate shutdown while handler is in-flight
+    const closePromise1 = serverInstance.close(3000);
+    const closePromise2 = serverInstance.close(3000);
+
+    // Verify idempotency: same shared promise
+    expect(closePromise1).toBe(closePromise2);
+    expect(serverInstance.isShuttingDown).toBe(true);
+
+    // Verify storage is NOT closed yet while handler is running
+    expect(storageClosed).toBe(false);
+    expect(requestCompleted).toBe(false);
+
+    // Now allow handler to complete
+    releaseHandler!();
+
+    const res = await reqPromise;
+    expect(res.statusCode).toBe(200);
+
+    // Await shutdown completion
+    await closePromise1;
+
+    expect(storageClosed).toBe(true);
+    expect(handlerFinishedAt).not.toBeNull();
+    expect(storageClosedAt).not.toBeNull();
+    expect(storageClosedAt!).toBeGreaterThanOrEqual(handlerFinishedAt!);
+  });
+
+  it("I2. bounds shutdown on hanging handler: times out, skips storage close to protect storage, and rejects with error", async () => {
     let storageClosed = false;
 
     const mockStorage = {
@@ -601,28 +681,72 @@ describe("M16-E1A Production Server Shell", () => {
       },
     } as any;
 
-    serverInstance = createProductionServerCore({
+    // A handler that hangs indefinitely
+    serverInstance = createTestProductionServer({
+      staticDir: tempStaticDir,
+      storage: mockStorage,
+      apiHandler: async (req, res, pathname) => {
+        if (pathname === "/api/hanging-task") {
+          // Never resolves
+          await new Promise(() => {});
+          return true;
+        }
+        return false;
+      },
+    });
+
+    const addr = await serverInstance.listen(0, "127.0.0.1");
+
+    // Fire hanging request and catch expected client error on socket destroy
+    const hangingReqPromise = requestHttp(`${addr.url}/api/hanging-task`).catch(() => {});
+
+    // Wait a moment for handler to register
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Close with short 150ms timeout
+    let closeError: Error | null = null;
+    try {
+      await serverInstance.close(150);
+    } catch (err) {
+      closeError = err as Error;
+    }
+
+    await hangingReqPromise;
+
+    expect(closeError).not.toBeNull();
+    expect(closeError?.message).toContain("SHUTDOWN_FAILED");
+    expect(closeError?.message).toContain("SHUTDOWN_TIMEOUT");
+    expect(closeError?.message).toContain("STORAGE_CLOSE_SKIPPED");
+
+    // CRITICAL: Storage was NOT closed underneath active handler
+    expect(storageClosed).toBe(false);
+  });
+
+  it("I3. propagates storage.close failure as SHUTDOWN_FAILED", async () => {
+    const mockStorage = {
+      getStatus: () => ({ isReady: true, isClosed: false } as any),
+      close: () => {
+        throw new Error("DISK_CORRUPTION_ON_CLOSE");
+      },
+    } as any;
+
+    serverInstance = createTestProductionServer({
       staticDir: tempStaticDir,
       storage: mockStorage,
     });
 
-    const addr = await serverInstance.listen(0, "127.0.0.1");
-    expect(serverInstance.isShuttingDown).toBe(false);
+    await serverInstance.listen(0, "127.0.0.1");
 
-    // Initial request succeeds
-    const initialRes = await requestHttp(`${addr.url}/api/health`);
-    expect(initialRes.statusCode).toBe(200);
+    let closeError: Error | null = null;
+    try {
+      await serverInstance.close(1000);
+    } catch (err) {
+      closeError = err as Error;
+    }
 
-    // Trigger close
-    const closePromise1 = serverInstance.close(2000);
-    const closePromise2 = serverInstance.close(2000);
-
-    // Verify idempotency: same shared promise
-    expect(closePromise1).toBe(closePromise2);
-    expect(serverInstance.isShuttingDown).toBe(true);
-
-    await closePromise1;
-    expect(storageClosed).toBe(true);
+    expect(closeError).not.toBeNull();
+    expect(closeError?.message).toContain("SHUTDOWN_FAILED");
+    expect(closeError?.message).toContain("DISK_CORRUPTION_ON_CLOSE");
   });
 
   it("matches production quant-events method semantics in the Vite development adapter", async () => {

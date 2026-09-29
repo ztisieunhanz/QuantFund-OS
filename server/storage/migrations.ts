@@ -71,6 +71,55 @@ export const REGISTERED_MIGRATIONS: readonly Migration[] = Object.freeze([
 ]);
 
 /**
+ * Statement-aware validator that detects any transaction-control statements in migration SQL.
+ * Distinguishes executable statements from keywords within string literals, quoted identifiers, and comments.
+ */
+export function checkForForbiddenTransactionControl(sql: string): { forbidden: boolean; statement?: string } {
+  // 1. Strip block comments /* ... */
+  let cleaned = sql.replace(/\/\*[\s\S]*?\*\//g, " ");
+  // Strip line comments -- ...
+  cleaned = cleaned.replace(/--[^\r\n]*/g, " ");
+
+  // 2. Strip single-quoted string literals: '(?:''|[^'])*'
+  cleaned = cleaned.replace(/'(?:''|[^'])*'/g, "''");
+
+  // 3. Strip quoted identifiers: "...", `...`, [...]
+  cleaned = cleaned.replace(/"(?:""|[^"])*"/g, '""');
+  cleaned = cleaned.replace(/`(?:``|[^`])*`/g, "``");
+  cleaned = cleaned.replace(/\[[^\]]*\]/g, "[]");
+
+  // 4. Split by semicolon into individual statements
+  const rawStatements = cleaned.split(";");
+
+  for (const rawStmt of rawStatements) {
+    const trimmed = rawStmt.trim();
+    if (trimmed.length === 0) continue;
+
+    // Normalize whitespace to single space
+    const normalized = trimmed.replace(/\s+/g, " ");
+    const upper = normalized.toUpperCase();
+
+    // Check first token of statement
+    const firstWordMatch = upper.match(/^([A-Z_]+)/);
+    if (!firstWordMatch) continue;
+
+    const firstWord = firstWordMatch[1];
+    if (
+      firstWord === "BEGIN" ||
+      firstWord === "COMMIT" ||
+      firstWord === "END" ||
+      firstWord === "ROLLBACK" ||
+      firstWord === "SAVEPOINT" ||
+      firstWord === "RELEASE"
+    ) {
+      return { forbidden: true, statement: normalized };
+    }
+  }
+
+  return { forbidden: false };
+}
+
+/**
  * Validates migration registry integrity before running any database actions.
  * Enforces canonical foundation prefix and transaction boundary constraints.
  */
@@ -120,11 +169,12 @@ export function validateMigrationRegistry(migrations: readonly Migration[]): voi
       throw new Error(`MIGRATION_REGISTRY_INVALID: Migration '${m.id}' has empty SQL definition.`);
     }
 
-    // Prohibit transaction-control statements that hijack runner boundaries
-    const txMatch = m.sql.match(/\b(BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)\b/i);
-    if (txMatch) {
+    // Transaction Ownership Guard (P1-B):
+    // Migration SQL must not attempt to control transaction boundaries (BEGIN, COMMIT, END, ROLLBACK, SAVEPOINT, RELEASE).
+    const txCheck = checkForForbiddenTransactionControl(m.sql);
+    if (txCheck.forbidden) {
       throw new Error(
-        `MIGRATION_REGISTRY_INVALID: UNAUTHORIZED_TRANSACTION_CONTROL: Migration '${m.id}' contains forbidden transaction control statement '${txMatch[0]}'.`
+        `MIGRATION_REGISTRY_INVALID: UNAUTHORIZED_TRANSACTION_CONTROL: Migration '${m.id}' contains forbidden transaction control statement '${txCheck.statement}'.`
       );
     }
 

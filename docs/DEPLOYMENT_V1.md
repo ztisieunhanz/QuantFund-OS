@@ -10,7 +10,7 @@ This document defines the operational procedures for building, configuring, depl
 - **Topology**: Single-origin architecture. The Node production HTTP server serves both the built client Single Page Application (SPA) static assets, the isolated reverse-proxy endpoints under `/api/*`, and server-side SQLite storage infrastructure.
 - **Storage Foundation (M18-C1)**: Single-node canonical SQLite storage engine (`node:sqlite`) with WAL journal mode, full synchronous durability, foreign keys enabled, bounded busy timeouts, and forward-only transactional migrations.
 - **Stateless/Stateful Boundary**: During M18-C1, server-side storage hosts foundation schema metadata and migration history. Browser operational cutover to the Node controller and financial journal occurs in M18-D.
-- **Process Lifecycle**: Managed via standard Node HTTP server process lifecycle; terminates cleanly upon standard process signals (`SIGTERM`, `SIGINT`) closing HTTP connections and database handles gracefully.
+- **Process Lifecycle**: Managed via standard Node HTTP server process lifecycle; terminates via bounded graceful shutdown upon standard process signals (`SIGTERM`, `SIGINT`), refusing new requests, draining active in-flight request handlers before closing storage, and exiting 0 on clean completion or non-zero if bounded cleanup times out or fails.
 
 ---
 
@@ -156,7 +156,8 @@ curl -i "http://localhost:3000/api/binance/api/v3/klines?symbol=BTCUSDT&interval
 
 | Provider / Endpoint | Condition | Response / Behavior | Classification | Action Required |
 | :--- | :--- | :--- | :--- | :--- |
-| **Storage** (`/api/ready`) | Storage uninitialized or closed | HTTP 503 `STORAGE_NOT_READY`; operational storage disabled. | Expected Degraded | Check directory permissions or `QUANTFUND_DATA_DIR` accessibility. |
+| **Storage** (`/api/ready`) | `QUANTFUND_ENABLE_STORAGE` false or absent | HTTP 503 `STORAGE_NOT_CONFIGURED`; operational storage unconfigured. | Expected Configuration | Set `QUANTFUND_ENABLE_STORAGE="true"` if server-side stateful storage is desired. |
+| **Storage** (`/api/ready`) | Storage enabled but uninitialized or closed | HTTP 503 `STORAGE_NOT_READY`; operational storage degraded/closed. | Expected Degraded | Check directory permissions, `QUANTFUND_DATA_DIR` accessibility, or server logs. |
 | **Binance** (`/api/binance/api/v3/klines`) | Upstream unreachable or rate-limited | HTTP 502 `UPSTREAM_FAILURE`; client displays disconnected status; paper engine halts execution. | Expected Degraded | Monitor upstream Binance status; do not rollback application code. |
 | **Yahoo Finance** (`/api/yahoo/v8/finance/chart/*`) | Upstream error or block | HTTP 502 `UPSTREAM_FAILURE`; Macro view displays `UNAVAILABLE`; synthetic fallback prohibited. | Expected Degraded | Monitor Yahoo status; do not rollback application code. |
 | **VNDirect** (`/api/vndirect/finfo/v4/*`, `dchart/history`) | Upstream timeout or outage | HTTP 502 `UPSTREAM_FAILURE`; Vietnam macro widgets indicate no-data state. | Expected Degraded | Monitor VNDirect status; do not rollback application code. |

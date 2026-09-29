@@ -1,7 +1,7 @@
 // ============================================================================
-// FILE: server/productionServer.ts
-// MODULE: PRODUCTION NODE 22 SERVER SHELL (M16-E1A / M18-C1)
-// NOTE: Vendor-neutral HTTP runtime serving built SPA & isolated /api routes.
+// FILE: server/__tests__/testServerHelper.ts
+// MODULE: TEST-SCOPED SERVER MECHANISM HARNESS (M18-C1)
+// NOTE: For test suite execution only. Not part of production exports.
 // ============================================================================
 
 import http from "node:http";
@@ -9,8 +9,14 @@ import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
 import type { Socket } from "node:net";
-import { createProductionApiHandler, type ProductionApiHandler } from "./productionApi";
-import { SqliteStorage, assertNodeRuntimeCompatibility } from "./storage";
+import { createProductionApiHandler } from "../productionApi";
+import { SqliteStorage } from "../storage";
+import {
+  DEFAULT_SHUTDOWN_TIMEOUT_MS,
+  type ProductionServerInstance,
+  type ProductionServerOptions,
+  type ProductionServerAddress,
+} from "../productionServer";
 
 const MIME_TYPES: Readonly<Record<string, string>> = {
   ".html": "text/html; charset=utf-8",
@@ -31,41 +37,6 @@ const MIME_TYPES: Readonly<Record<string, string>> = {
   ".txt": "text/plain; charset=utf-8",
   ".wasm": "application/wasm",
 };
-
-export const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5000;
-
-export interface ProductionServerOptions {
-  readonly port?: number;
-  readonly host?: string;
-  readonly staticDir?: string;
-  readonly env?: Readonly<Record<string, string | undefined>>;
-  readonly fetchFn?: typeof fetch;
-  readonly upstreamTimeoutMs?: number;
-  readonly storage?: SqliteStorage;
-  readonly autoInitStorage?: boolean;
-  readonly apiHandler?: ProductionApiHandler | ((
-    req: http.IncomingMessage,
-    res: http.ServerResponse,
-    pathname: string,
-    query: URLSearchParams
-  ) => Promise<boolean | void> | boolean | void);
-}
-
-export interface ProductionServerAddress {
-  readonly port: number;
-  readonly host: string;
-  readonly address: string;
-  readonly url: string;
-}
-
-export interface ProductionServerInstance {
-  readonly httpServer: http.Server;
-  readonly storage: SqliteStorage | null;
-  readonly isShuttingDown: boolean;
-  listen(port?: number, host?: string): Promise<ProductionServerAddress>;
-  close(timeoutMs?: number): Promise<void>;
-  getAddress(): ProductionServerAddress | null;
-}
 
 function applySecurityHeaders(res: http.ServerResponse): void {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -143,23 +114,10 @@ function serveStaticFile(
 }
 
 /**
- * Creates a Production Server instance with strict Node runtime compatibility gate.
- * Ordinary callers cannot spoof runtime version; uses actual process.versions.node.
+ * Creates an ungated test server instance for Vitest unit tests under local Node 24.
+ * Not part of production exports or server builds.
  */
-export function createProductionServer(
-  options: ProductionServerOptions = {}
-): ProductionServerInstance {
-  // Fail fast on unsupported Node.js runtime using actual process.versions.node
-  assertNodeRuntimeCompatibility();
-
-  return createProductionServerInstance(options);
-}
-
-/**
- * Module-private factory to instantiate the server.
- * Not exported as a public API.
- */
-function createProductionServerInstance(
+export function createTestProductionServer(
   options: ProductionServerOptions = {}
 ): ProductionServerInstance {
   const resolvedStaticDir = path.resolve(
@@ -183,7 +141,6 @@ function createProductionServerInstance(
   const activeHandlers = new Set<Promise<void>>();
 
   const server = http.createServer(async (req, res) => {
-    // 0. Quiescence check: reject new incoming requests once shutdown has commenced
     if (isShuttingDownState) {
       res.setHeader("Connection", "close");
       sendJson(res, 503, {
@@ -192,7 +149,6 @@ function createProductionServerInstance(
       return;
     }
 
-    // Active handler registration (P1-C active-handler tracking)
     let handlerDone: () => void;
     const handlerPromise = new Promise<void>((resolve) => {
       handlerDone = resolve;
@@ -269,7 +225,6 @@ function createProductionServerInstance(
               });
               return;
             }
-            // Absent storage must fail closed (HTTP 503 STORAGE_NOT_CONFIGURED)
             sendJson(res, 503, {
               status: "unready",
               error: {
@@ -308,7 +263,6 @@ function createProductionServerInstance(
           }
         }
 
-        // API isolation: unknown API routes return 404 JSON, never SPA index.html
         sendJson(res, 404, {
           error: {
             code: "NOT_FOUND",
@@ -329,7 +283,6 @@ function createProductionServerInstance(
         return;
       }
 
-      // Path traversal protection
       const relativePath = decodedPathname.replace(/^\/+/, "");
       const targetFilePath = path.resolve(resolvedStaticDir, relativePath);
 
@@ -364,7 +317,6 @@ function createProductionServerInstance(
         return;
       }
 
-      // Missing static resources (with explicit file extension or asset directory path) must 404 truthfully
       const hasFileExtension = path.extname(decodedPathname).length > 0;
       const isAssetPath =
         decodedPathname.startsWith("/assets/") || decodedPathname.startsWith("/public/");
@@ -376,7 +328,6 @@ function createProductionServerInstance(
         return;
       }
 
-      // SPA fallback only for client-side navigation routes
       const spaIndexPath = path.join(resolvedStaticDir, "index.html");
       if (fs.existsSync(spaIndexPath) && fs.statSync(spaIndexPath).isFile()) {
         serveStaticFile(res, req.method, spaIndexPath, resolvedStaticDir, true);
@@ -409,7 +360,6 @@ function createProductionServerInstance(
     shutdownPromise = (async () => {
       const errors: Error[] = [];
 
-      // 1. Stop accepting new HTTP connections
       let serverCloseError: Error | null = null;
       let serverClosed = false;
 
@@ -421,7 +371,6 @@ function createProductionServerInstance(
           }
         });
 
-        // Close idle keep-alive connections immediately
         if (typeof server.closeIdleConnections === "function") {
           server.closeIdleConnections();
         }
@@ -429,7 +378,6 @@ function createProductionServerInstance(
         serverClosed = true;
       }
 
-      // 2. Await in-flight active request handlers & server close barrier
       const waitForQuiescence = async () => {
         while (activeHandlers.size > 0) {
           await Promise.all(Array.from(activeHandlers));
@@ -456,7 +404,6 @@ function createProductionServerInstance(
       }
 
       if (timedOut) {
-        // Force terminate remaining network sockets
         if (typeof server.closeAllConnections === "function") {
           server.closeAllConnections();
         } else {
@@ -477,9 +424,6 @@ function createProductionServerInstance(
         errors.push(serverCloseError);
       }
 
-      // 3. Storage close barrier:
-      // CRITICAL: Only close storage if ALL active handlers have drained.
-      // If handlers are still in-flight due to timeout, do NOT close storage underneath them!
       if (activeHandlers.size === 0) {
         if (storageInstance) {
           try {
@@ -577,60 +521,4 @@ function createProductionServerInstance(
       };
     },
   };
-}
-
-// Direct execution CLI entry
-const currentModulePath = url.fileURLToPath(import.meta.url);
-const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
-const isDirectEntry =
-  Boolean(invokedPath) &&
-  (invokedPath === path.resolve(currentModulePath) ||
-    invokedPath.endsWith("productionServer.js") ||
-    invokedPath.endsWith("productionServer.ts"));
-
-if (isDirectEntry) {
-  const port = parseInt(process.env.PORT || "3000", 10);
-  const host = process.env.HOST || "0.0.0.0";
-  const autoInitStorage = process.env.QUANTFUND_ENABLE_STORAGE === "true";
-  let instance: ProductionServerInstance;
-  try {
-    instance = createProductionServer({ autoInitStorage });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("Failed to initialize production server:", err);
-    process.exit(1);
-  }
-
-  let isShuttingDown = false;
-  const handleSignal = async (signal: string) => {
-    if (isShuttingDown) return;
-    isShuttingDown = true;
-    // eslint-disable-next-line no-console
-    console.log(`Received ${signal}, initiating graceful shutdown...`);
-    try {
-      await instance.close();
-      // eslint-disable-next-line no-console
-      console.log("Graceful shutdown completed successfully.");
-      process.exit(0);
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error("Error during graceful shutdown:", err);
-      process.exit(1);
-    }
-  };
-
-  process.once("SIGTERM", () => { void handleSignal("SIGTERM"); });
-  process.once("SIGINT", () => { void handleSignal("SIGINT"); });
-
-  instance
-    .listen(port, host)
-    .then((addr) => {
-      // eslint-disable-next-line no-console
-      console.log(`QuantFund-OS Production Server listening on ${addr.url}`);
-    })
-    .catch((err) => {
-      // eslint-disable-next-line no-console
-      console.error("Failed to start production server:", err);
-      process.exit(1);
-    });
 }

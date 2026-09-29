@@ -58,23 +58,7 @@ export class SqliteStorage {
     this.initializeStorage(customMigrations);
   }
 
-  /**
-   * Internal initialization helper for pure storage mechanism tests.
-   * Bypasses the production runtime gate so storage unit tests can run under local environments.
-   * NOTE: This is strictly for internal mechanism test suites, not production servers.
-   */
-  public openDirect(customMigrations?: readonly Migration[]): void {
-    if (this.isClosedState) {
-      throw new Error("STORAGE_CLOSED: Cannot open a closed storage instance.");
-    }
-    if (this.isReadyState && this.db) {
-      return;
-    }
-
-    this.initializeStorage(customMigrations);
-  }
-
-  private initializeStorage(customMigrations?: readonly Migration[]): void {
+  protected initializeStorage(customMigrations?: readonly Migration[]): void {
     // 2. Persistent Data Directory & Path Validation (fail closed, no escape)
     const dataDir = assertDataDirectory(
       resolveDataDirectory(this.config.dataDir, this.config.env)
