@@ -6,11 +6,11 @@ This document defines the operational procedures for building, configuring, depl
 
 ## 1. Runtime contract
 
-- **Runtime Environment**: Standard Node.js runtime (version 22 LTS, `>= 22.12.0`). Vendor-neutral; requires no specialized cloud container or proprietary serverless wrapper.
-- **Topology**: Single-origin architecture. The Node production HTTP server serves both the built client Single Page Application (SPA) static assets and the isolated reverse-proxy endpoints under `/api/*`.
-- **Stateless Server**: The production server process is stateless with respect to trading, orders, positions, and accounting state.
-- **No Production Database**: There is no server-side database (SQL, NoSQL, or key-value store), transaction log file, or server-side durable ledger.
-- **Process Lifecycle**: Managed via standard Node HTTP server process lifecycle; terminates cleanly upon standard process signals (`SIGTERM`, `SIGINT`).
+- **Runtime Environment**: Standard Node.js runtime (version 22 LTS, exact tested patch `22.16.0`, supported architecture range `>= 22.16.0 < 23` with native `node:sqlite` storage support). Vendor-neutral; requires no specialized cloud container or proprietary serverless wrapper.
+- **Topology**: Single-origin architecture. The Node production HTTP server serves both the built client Single Page Application (SPA) static assets, the isolated reverse-proxy endpoints under `/api/*`, and server-side SQLite storage infrastructure.
+- **Storage Foundation (M18-C1)**: Single-node canonical SQLite storage engine (`node:sqlite`) with WAL journal mode, full synchronous durability, foreign keys enabled, bounded busy timeouts, and forward-only transactional migrations.
+- **Stateless/Stateful Boundary**: During M18-C1, server-side storage hosts foundation schema metadata and migration history. Browser operational cutover to the Node controller and financial journal occurs in M18-D.
+- **Process Lifecycle**: Managed via standard Node HTTP server process lifecycle; terminates cleanly upon standard process signals (`SIGTERM`, `SIGINT`) closing HTTP connections and database handles gracefully.
 
 ---
 
@@ -22,6 +22,8 @@ Production configuration is supplied via process environment variables.
 | :--- | :--- | :--- | :--- | :--- |
 | `PORT` | Optional | `3000` | Non-secret | Integer port number on which the HTTP server listens. |
 | `HOST` | Optional | `0.0.0.0` | Non-secret | Host IP interface to which the server binds. |
+| `QUANTFUND_DATA_DIR` | Optional | `data` | Non-secret | Local filesystem directory path for persistent SQLite database storage and online backups. Fail-closed if path is unusable or unwritable. |
+| `QUANTFUND_ENABLE_STORAGE` | Optional | `false` | Non-secret | Boolean flag to automatically initialize and establish SQLite storage on standalone server startup. |
 | `GEMINI_API_KEY` | Optional | *None* | Secret | Google Gemini API key for AI Advisor features. If absent, base server startup and all market/trading features remain operational; `/api/ai-advisor` requests fail closed with HTTP 503 `UNAVAILABLE`. |
 
 *Note: Never commit or log secret values. Server logs and health responses do not emit environment secrets.*
@@ -92,9 +94,9 @@ node dist-server/productionServer.js
 
 ---
 
-## 6. Health and post-deploy verification
+## 6. Health, readiness and post-deploy verification
 
-### 1. Process Health Verification
+### 1. Process Health Verification (Process Liveness)
 
 ```bash
 curl -i http://localhost:3000/api/health
@@ -102,9 +104,19 @@ curl -i http://localhost:3000/api/health
 
 - **Expected Response**: HTTP `200 OK` with payload `{"status":"ok","uptime":<seconds>}`.
 - **What It Proves**: The Node.js process is active, the event loop is responsive, the configured port is open, and core HTTP routing is functional.
-- **What It Does NOT Prove**: It does not probe external market providers (Binance, Yahoo, VNDirect), verify client `localStorage` integrity, or confer executable trading permissions.
+- **What It Does NOT Prove**: It does not probe storage readiness, external market providers, client `localStorage` integrity, or confer executable trading permissions.
 
-### 2. Client SPA Availability
+### 2. Operational Storage Readiness Verification (Storage Readiness)
+
+```bash
+curl -i http://localhost:3000/api/ready
+```
+
+- **Expected Response (when ready)**: HTTP `200 OK` with payload `{"status":"ready","storage":{...}}`.
+- **Expected Response (when unready/closed)**: HTTP `503 Service Unavailable` with JSON `{"status":"unready","error":{"code":"STORAGE_NOT_READY",...}}`.
+- **What It Proves**: The server-side SQLite storage engine is open, WAL mode is active, synchronous FULL is enforced, foreign keys are ON, bounded busy timeout is set, bootstrap migrations are applied, and startup quick integrity checks succeeded.
+
+### 3. Client SPA Availability
 
 ```bash
 curl -i http://localhost:3000/
@@ -112,7 +124,7 @@ curl -i http://localhost:3000/
 
 - **Expected Response**: HTTP `200 OK`, `Content-Type: text/html; charset=utf-8`, containing `<div id="root"></div>`.
 
-### 3. Market Gateway Proxy Verification
+### 4. Market Gateway Proxy Verification
 
 ```bash
 curl -i "http://localhost:3000/api/binance/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=500"
@@ -120,28 +132,20 @@ curl -i "http://localhost:3000/api/binance/api/v3/klines?symbol=BTCUSDT&interval
 
 - **Expected Response (when Binance is reachable)**: HTTP `200 OK` with JSON array of OHLCV candlestick data.
 - **Expected Response (when Binance is unreachable)**: HTTP `502 Bad Gateway` with JSON `{"status":"FAILURE","error":{"code":"UPSTREAM_FAILURE","message":"Market data provider request failed."}}`.
-- **Distinction**: Receiving HTTP 502 from upstream confirms the gateway routing and validation logic are operational even during external provider outages.
 
 ---
 
 ## 7. Durable state
 
 ### Storage Mechanics
-- **Location**: Browser `localStorage` (client-side only).
-- **Key**: `quant_paper_engine_state`
-- **Schema Version**: `2`
-
-### Persisted Fields
-- `latestDecision`: Canonical `DecisionState` containing accounting state (`nav`, `cash`, `currentDrawdown`), positions, signals, and execution history.
-- `lifecycleCheckpoint`: Durable `M14_A04_DURABLE_TARGET_LIFECYCLE_CHECKPOINT_V2` structure recording terminal execution proof and lineage witnesses.
-- `lastRunAt`: Epoch millisecond timestamp of last replay run.
+- **Client Storage**: Browser `localStorage` (client-side only during M18-C1). Key: `quant_paper_engine_state`, Schema Version: `2`.
+- **Server Storage (M18-C1)**: Single-node SQLite database in `QUANTFUND_DATA_DIR` (`quantfund.db`). Tracks schema metadata and migration records (`_schema_metadata`, `_schema_migrations`).
 
 ### Runtime and Financial Invariants
-- **No Server DB**: The server holds no durable copy of paper trading or accounting history.
+- **No Financial Authority in C1**: C1 establishes SQLite runtime infrastructure only. Paper trading execution, accounting, and target lifecycle remain on existing client paths until M18-D cutover.
 - **Replay & Evidence Only**: Restored lifecycle checkpoints serve strictly as historical audit evidence. They do **not** grant fresh executable permission, risk clearance, or pricing authority.
 - **Market Authority Requirement**: Execution and active decision updates require fresh canonical market data from the active market feed (`BacktestDataset.assetBars`).
-- **Schema Migration and Fail-Closed Hydration**: Schema version 2 is the active persisted schema. Valid legacy schema version 1 state is migrated by retaining historical `latestDecision` and `lastRunAt` while clearing `lifecycleCheckpoint` and `actionDecision`. Corrupted JSON, invalid decision structures, or unrecognized schema versions fail closed by resetting persisted fields to initial empty state (`null`). Migrated historical state never confers fresh executable authority.
-- **Explicit Reset**: Explicit state reset in the UI or store is destructive, resetting all runtime and persisted trading fields (`latestDecision`, `lifecycleCheckpoint`, `actionDecision`, `lastRunAt`) to their initial null/empty state through the persistence layer. No historical lifecycle or action authority survives the reset (physical `localStorage` key removal is not performed or required).
+- **Fail-Closed Storage Integrity**: Storage initialization enforces strict pragma verification, forward-only migrations with checksum checks, and quick integrity diagnostics. Corrupted databases or unrecognized future migration schemas fail closed.
 
 ---
 
@@ -149,6 +153,7 @@ curl -i "http://localhost:3000/api/binance/api/v3/klines?symbol=BTCUSDT&interval
 
 | Provider / Endpoint | Condition | Response / Behavior | Classification | Action Required |
 | :--- | :--- | :--- | :--- | :--- |
+| **Storage** (`/api/ready`) | Storage uninitialized or closed | HTTP 503 `STORAGE_NOT_READY`; operational storage disabled. | Expected Degraded | Check directory permissions or `QUANTFUND_DATA_DIR` accessibility. |
 | **Binance** (`/api/binance/api/v3/klines`) | Upstream unreachable or rate-limited | HTTP 502 `UPSTREAM_FAILURE`; client displays disconnected status; paper engine halts execution. | Expected Degraded | Monitor upstream Binance status; do not rollback application code. |
 | **Yahoo Finance** (`/api/yahoo/v8/finance/chart/*`) | Upstream error or block | HTTP 502 `UPSTREAM_FAILURE`; Macro view displays `UNAVAILABLE`; synthetic fallback prohibited. | Expected Degraded | Monitor Yahoo status; do not rollback application code. |
 | **VNDirect** (`/api/vndirect/finfo/v4/*`, `dchart/history`) | Upstream timeout or outage | HTTP 502 `UPSTREAM_FAILURE`; Vietnam macro widgets indicate no-data state. | Expected Degraded | Monitor VNDirect status; do not rollback application code. |
@@ -172,16 +177,12 @@ Rollback consists of redeploying the previous known-good application Git commit 
 3. Start the production service (`npm start`).
 4. Execute the post-rollback verification checks.
 
-### State & Compatibility Considerations
-- **No Database Restore**: There is no database backup or restore step because the server maintains no database.
-- **Schema Version 2 Compatibility**: Rollbacks between releases that share `version: 2` persistence schema rehydrate `localStorage` without data loss.
-- **Future Schema Incompatibility**: If rolling back from a hypothetical future major version (e.g. Version 3) to Version 2, the Version 2 client will reject Version 3 payloads and safely fail closed by initializing a clean default state.
-
 ### Post-Rollback Verification
 1. Verify `GET /api/health` returns HTTP `200 OK`.
-2. Verify `GET /` serves the SPA `index.html`.
-3. Open the application in a browser containing existing `localStorage` and verify the UI loads without unhandled runtime exceptions.
-4. Confirm market feeds connect and trading stores remain fail-closed when disconnected.
+2. Verify `GET /api/ready` returns HTTP `200 OK`.
+3. Verify `GET /` serves the SPA `index.html`.
+4. Open the application in a browser containing existing `localStorage` and verify the UI loads without unhandled runtime exceptions.
+5. Confirm market feeds connect and trading stores remain fail-closed when disconnected.
 
 ---
 
@@ -190,7 +191,7 @@ Rollback consists of redeploying the previous known-good application Git commit 
 ### Legitimate Rollback Triggers
 Rollback should be initiated when evidence shows defects in the deployed application release:
 - **Startup Failure**: The production server process crashes on boot or throws uncaught exceptions.
-- **Health Route Broken**: `GET /api/health` returns non-200 status codes, hangs, or errors.
+- **Health/Readiness Route Broken**: `GET /api/health` or `GET /api/ready` returns non-200 status codes, hangs, or errors.
 - **SPA Delivery Failure**: `GET /` returns HTTP 404 or 500 errors, or static assets in `/assets/` fail to resolve.
 - **API Routing Regressions**: Active proxy endpoints (e.g. `/api/binance/*`, `/api/yahoo/*`) fail to route valid query shapes.
 - **Client Hydration Crash**: Uncaught JavaScript exceptions during store hydration crash the client application.
@@ -201,7 +202,7 @@ Do **not** trigger application rollback for:
 - External outages or transient network errors from third-party data providers (Binance, Yahoo, VNDirect).
 - Absent `GEMINI_API_KEY` (AI advisor gracefully degrades to 503 while base product functions).
 - Dormant `/api/quant-events` returning HTTP 503 `UNAVAILABLE` as designed.
-- B22 load-sensitive test debt observed under local hardware constraints.
+- Degraded storage due to host environment volume misconfiguration where server process is healthy.
 
 ---
 
@@ -216,5 +217,6 @@ For each production deployment, the operator should record the following release
 | **CI Conclusion** | `success` | All verification stages passed. |
 | **Artifact Identifier** | `<build-hash-or-timestamp>` | Emitted `dist/` and `dist-server/`. |
 | **Health Verification** | `HTTP 200 (uptime: <sec>)` | Output of `GET /api/health`. |
+| **Readiness Verification** | `HTTP 200 (status: ready)` | Output of `GET /api/ready`. |
 | **SPA Verification** | `HTTP 200 (index.html)` | Output of `GET /`. |
 | **Rollback Target SHA** | `<previous-commit-sha>` | Designated target if rollback is required. |

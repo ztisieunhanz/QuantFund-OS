@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
 import { createProductionApiHandler, type ProductionApiHandler } from "./productionApi";
+import { SqliteStorage } from "./storage";
 
 const MIME_TYPES: Readonly<Record<string, string>> = {
   ".html": "text/html; charset=utf-8",
@@ -37,6 +38,8 @@ export interface ProductionServerOptions {
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly fetchFn?: typeof fetch;
   readonly upstreamTimeoutMs?: number;
+  readonly storage?: SqliteStorage;
+  readonly autoInitStorage?: boolean;
   readonly apiHandler?: ProductionApiHandler | ((
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -54,6 +57,7 @@ export interface ProductionServerAddress {
 
 export interface ProductionServerInstance {
   readonly httpServer: http.Server;
+  readonly storage: SqliteStorage | null;
   listen(port?: number, host?: string): Promise<ProductionServerAddress>;
   close(): Promise<void>;
   getAddress(): ProductionServerAddress | null;
@@ -140,6 +144,12 @@ export function createProductionServer(
   const resolvedStaticDir = path.resolve(
     options.staticDir ?? path.resolve(process.cwd(), "dist")
   );
+  let storageInstance: SqliteStorage | null = options.storage ?? null;
+  if (!storageInstance && options.autoInitStorage) {
+    storageInstance = new SqliteStorage({ env: options.env });
+    storageInstance.open();
+  }
+
   const apiHandler = options.apiHandler ?? createProductionApiHandler({
     env: options.env,
     fetchFn: options.fetchFn,
@@ -183,6 +193,45 @@ export function createProductionServer(
           sendJson(res, 200, {
             status: "ok",
             uptime: Math.floor(process.uptime()),
+          });
+          return;
+        }
+        sendJson(
+          res,
+          405,
+          { error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed" } },
+          { Allow: "GET" }
+        );
+        return;
+      }
+
+      if (decodedPathname === "/api/ready") {
+        if (req.method === "GET") {
+          if (storageInstance) {
+            const status = storageInstance.getStatus();
+            if (status.isReady && !status.isClosed) {
+              sendJson(res, 200, {
+                status: "ready",
+                storage: status,
+              });
+              return;
+            }
+            sendJson(res, 503, {
+              status: "unready",
+              error: {
+                code: "STORAGE_NOT_READY",
+                message: "Operational storage is not ready or has been closed.",
+              },
+              storage: status,
+            });
+            return;
+          }
+          sendJson(res, 200, {
+            status: "ready",
+            storage: {
+              configured: false,
+              ready: true,
+            },
           });
           return;
         }
@@ -295,6 +344,9 @@ export function createProductionServer(
     get httpServer() {
       return server;
     },
+    get storage() {
+      return storageInstance;
+    },
     listen(port?: number, host?: string): Promise<ProductionServerAddress> {
       const targetPort = port ?? options.port ?? parseInt(process.env.PORT || "3000", 10);
       const targetHost = host ?? options.host ?? process.env.HOST ?? "0.0.0.0";
@@ -328,6 +380,13 @@ export function createProductionServer(
       });
     },
     close(): Promise<void> {
+      if (storageInstance) {
+        try {
+          storageInstance.close();
+        } catch {
+          // Graceful close
+        }
+      }
       return new Promise((resolve, reject) => {
         if (!server.listening) {
           resolve();
@@ -377,7 +436,8 @@ const isDirectEntry =
 if (isDirectEntry) {
   const port = parseInt(process.env.PORT || "3000", 10);
   const host = process.env.HOST || "0.0.0.0";
-  const instance = createProductionServer();
+  const autoInitStorage = process.env.QUANTFUND_ENABLE_STORAGE === "true";
+  const instance = createProductionServer({ autoInitStorage });
   instance
     .listen(port, host)
     .then((addr) => {

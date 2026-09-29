@@ -136,9 +136,9 @@ export async function runProductionSmoke() {
     const failures = [];
 
     // ========================================================================
-    // SMOKE A: Process Health
+    // SMOKE A: Process Health & Readiness Distinction
     // ========================================================================
-    console.log("[smoke] Running Smoke A: Process Health...");
+    console.log("[smoke] Running Smoke A: Process Health & Readiness...");
     const healthRes = await httpRequest(`${serverUrl}/api/health`, { method: "GET" });
     if (healthRes.statusCode !== 200) {
       throw new Error(`[smoke A] GET /api/health returned status ${healthRes.statusCode}, expected 200. Body: ${healthRes.body}`);
@@ -154,6 +154,15 @@ export async function runProductionSmoke() {
     const healthHeadRes = await httpRequest(`${serverUrl}/api/health`, { method: "HEAD" });
     if (healthHeadRes.statusCode !== 405) {
       throw new Error(`[smoke A] HEAD /api/health returned status ${healthHeadRes.statusCode}, expected 405 Method Not Allowed`);
+    }
+
+    const readyRes = await httpRequest(`${serverUrl}/api/ready`, { method: "GET" });
+    if (readyRes.statusCode !== 200) {
+      throw new Error(`[smoke A] GET /api/ready returned status ${readyRes.statusCode}, expected 200. Body: ${readyRes.body}`);
+    }
+    const readyJson = JSON.parse(readyRes.body);
+    if (readyJson.status !== "ready") {
+      throw new Error(`[smoke A] GET /api/ready returned invalid JSON shape: ${readyRes.body}`);
     }
 
     // ========================================================================

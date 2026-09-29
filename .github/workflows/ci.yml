@@ -24,9 +24,9 @@ jobs:
       - name: Set up Node.js 22 LTS
         uses: actions/setup-node@v4
         with:
-          # The repository has no explicit Node contract; Node 22 is the
-          # conservative LTS line supported by the current Vite toolchain.
-          node-version: 22
+          # Architecture runtime contract: Node 22.16.0 satisfies >=22.16.0 <23
+          # with stable built-in node:sqlite support.
+          node-version: 22.16.0
           cache: npm
 
       - name: Validate submitted diff whitespace
