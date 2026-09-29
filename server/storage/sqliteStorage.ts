@@ -6,7 +6,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, backup as sqliteBackup } from "node:sqlite";
 import { assertNodeRuntimeCompatibility } from "./runtimeCompatibility";
 import { resolveDataDirectory, assertDataDirectory } from "./dataDirectory";
 import { runMigrations, getAppliedMigrations, verifyC1SchemaBoundaries } from "./migrations";
@@ -265,15 +265,15 @@ export class SqliteStorage {
   }
 
   /**
-   * Performs an online SQLite backup using the canonical 'VACUUM INTO' mechanism.
+   * Performs an online SQLite backup using the official node:sqlite backup API.
    * The destination is validated and verified to be independently openable.
    */
-  public backup(options: BackupOptions): BackupResult {
+  public async backup(options: BackupOptions): Promise<BackupResult> {
     if (this.isClosedState || !this.db || !this.isReadyState) {
       throw new Error("STORAGE_NOT_READY: Cannot perform backup on unready or closed storage.");
     }
 
-    if (!options.destinationPath || typeof options.destinationPath !== "string") {
+    if (!options.destinationPath || typeof options.destinationPath !== "string" || options.destinationPath.trim().length === 0) {
       throw new Error("BACKUP_PATH_INVALID: Backup destination path must be specified.");
     }
 
@@ -290,16 +290,14 @@ export class SqliteStorage {
           `BACKUP_DESTINATION_EXISTS: Backup destination '${resolvedDest}' already exists and overwrite is false.`
         );
       }
-      // SQLite VACUUM INTO requires the target file to not exist prior to command
       fs.unlinkSync(resolvedDest);
     }
 
-    const escapedDest = resolvedDest.replace(/'/g, "''");
     try {
-      this.db.exec(`VACUUM INTO '${escapedDest}';`);
+      await sqliteBackup(this.db, resolvedDest);
     } catch (err) {
       throw new Error(
-        `BACKUP_EXECUTION_FAILED: VACUUM INTO failed for '${resolvedDest}': ${err instanceof Error ? err.message : String(err)}`
+        `BACKUP_EXECUTION_FAILED: node:sqlite backup failed for '${resolvedDest}': ${err instanceof Error ? err.message : String(err)}`
       );
     }
 

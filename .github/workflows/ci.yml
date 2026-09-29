@@ -24,9 +24,9 @@ jobs:
       - name: Set up Node.js 22 LTS
         uses: actions/setup-node@v4
         with:
-          # Architecture runtime contract: Node 22.16.0 satisfies >=22.16.0 <23
-          # with stable built-in node:sqlite support.
-          node-version: 22.16.0
+          # Architecture runtime contract: Node 22.23.3 LTS satisfies >=22.16.0 <23
+          # with native node:sqlite storage support.
+          node-version: 22.23.3
           cache: npm
 
       - name: Validate submitted diff whitespace

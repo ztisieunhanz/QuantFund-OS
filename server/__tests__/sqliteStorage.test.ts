@@ -89,7 +89,8 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("accepts supported Node versions >= 22.16.0 < 23", () => {
       expect(isNodeVersionSupported("22.16.0").supported).toBe(true);
       expect(isNodeVersionSupported("22.18.1").supported).toBe(true);
-      expect(isNodeVersionSupported("v22.20.0").supported).toBe(true);
+      expect(isNodeVersionSupported("22.23.3").supported).toBe(true);
+      expect(isNodeVersionSupported("v22.23.3").supported).toBe(true);
     });
 
     it("rejects Node versions outside the architecture supported range", () => {
@@ -105,7 +106,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     });
 
     it("evaluates runtime compatibility diagnostic truthfully", () => {
-      const result = checkNodeRuntimeCompatibility("22.16.0");
+      const result = checkNodeRuntimeCompatibility("22.23.3");
       expect(result.compatible).toBe(true);
       expect(result.sqliteAvailable).toBe(true);
       expect(result.supportedRange).toBe(">=22.16.0 <23");
@@ -399,7 +400,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
   // 6. Online Backup Primitive
   // --------------------------------------------------------------------------
   describe("6. Online Backup Primitive", () => {
-    it("performs online backup via VACUUM INTO and verifies backup is independently openable", () => {
+    it("performs online backup via node:sqlite backup API and verifies committed data", async () => {
       const storageDir = path.join(tempBaseDir, "backup-source");
       const backupDir = path.join(tempBaseDir, "backups");
       const backupFile = path.join(backupDir, "quantfund-backup.db");
@@ -407,12 +408,12 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       const storage = new SqliteStorage({ dataDir: storageDir });
       storage.open();
 
-      const result = storage.backup({ destinationPath: backupFile });
+      const result = await storage.backup({ destinationPath: backupFile });
       expect(result.destinationPath).toBe(path.resolve(backupFile));
       expect(result.bytesWritten).toBeGreaterThan(0);
       expect(fs.existsSync(backupFile)).toBe(true);
 
-      // Verify the backup independently with an isolated DatabaseSync instance
+      // 1. Verify backup independently with an isolated DatabaseSync instance
       const backupDb = new DatabaseSync(backupFile);
       const appliedInBackup = getAppliedMigrations(backupDb);
       expect(appliedInBackup).toHaveLength(1);
@@ -420,40 +421,62 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
 
       const metaRow = backupDb.prepare("SELECT value FROM _schema_metadata WHERE key = ?").get("schema_version") as { value: string };
       expect(metaRow.value).toBe("1");
+
+      // 2. Verify backup passes PRAGMA quick_check
+      const quickCheck = backupDb.prepare("PRAGMA quick_check;").get() as Record<string, unknown>;
+      const checkVal = String(quickCheck.quick_check ?? Object.values(quickCheck)[0] ?? "");
+      expect(checkVal.toLowerCase()).toBe("ok");
       backupDb.close();
+
+      // 3. Source DB remains canonical, open, and usable after backup
+      const sourceDb = storage.getDb();
+      const sourceMeta = sourceDb.prepare("SELECT value FROM _schema_metadata WHERE key = ?").get("schema_version") as { value: string };
+      expect(sourceMeta.value).toBe("1");
 
       storage.close();
     });
 
-    it("fails closed on existing backup file when overwrite is false", () => {
+    it("fails closed on existing backup file when overwrite is false and allows overwrite when true", async () => {
       const storageDir = path.join(tempBaseDir, "backup-no-overwrite");
       const backupFile = path.join(tempBaseDir, "existing-backup.db");
 
       const storage = new SqliteStorage({ dataDir: storageDir });
       storage.open();
 
-      storage.backup({ destinationPath: backupFile });
+      await storage.backup({ destinationPath: backupFile });
       expect(fs.existsSync(backupFile)).toBe(true);
 
       // Second backup with overwrite: false must fail closed
-      expect(() => {
-        storage.backup({ destinationPath: backupFile, overwrite: false });
-      }).toThrow("BACKUP_DESTINATION_EXISTS");
+      await expect(
+        storage.backup({ destinationPath: backupFile, overwrite: false })
+      ).rejects.toThrow("BACKUP_DESTINATION_EXISTS");
 
       // Second backup with overwrite: true succeeds
-      expect(() => {
-        storage.backup({ destinationPath: backupFile, overwrite: true });
-      }).not.toThrow();
+      await expect(
+        storage.backup({ destinationPath: backupFile, overwrite: true })
+      ).resolves.toMatchObject({ destinationPath: path.resolve(backupFile) });
 
       storage.close();
     });
 
-    it("rejects backup on closed or unready storage", () => {
+    it("rejects backup on closed or unready storage", async () => {
       const storageDir = path.join(tempBaseDir, "backup-closed");
       const storage = new SqliteStorage({ dataDir: storageDir });
-      expect(() => {
-        storage.backup({ destinationPath: path.join(tempBaseDir, "bak.db") });
-      }).toThrow("STORAGE_NOT_READY");
+      await expect(
+        storage.backup({ destinationPath: path.join(tempBaseDir, "bak.db") })
+      ).rejects.toThrow("STORAGE_NOT_READY");
+    });
+
+    it("fails closed on empty or invalid backup destination path", async () => {
+      const storageDir = path.join(tempBaseDir, "backup-invalid-path");
+      const storage = new SqliteStorage({ dataDir: storageDir });
+      storage.open();
+
+      await expect(
+        storage.backup({ destinationPath: "" })
+      ).rejects.toThrow("BACKUP_PATH_INVALID");
+
+      storage.close();
     });
   });
 

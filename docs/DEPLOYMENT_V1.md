@@ -6,7 +6,7 @@ This document defines the operational procedures for building, configuring, depl
 
 ## 1. Runtime contract
 
-- **Runtime Environment**: Standard Node.js runtime (version 22 LTS, exact tested patch `22.16.0`, supported architecture range `>= 22.16.0 < 23` with native `node:sqlite` storage support). Vendor-neutral; requires no specialized cloud container or proprietary serverless wrapper.
+- **Runtime Environment**: Standard Node.js runtime (version 22 LTS, exact tested patch `22.23.3`, supported architecture range `>= 22.16.0 < 23` with native `node:sqlite` storage support). Vendor-neutral; requires no specialized cloud container or proprietary serverless wrapper.
 - **Topology**: Single-origin architecture. The Node production HTTP server serves both the built client Single Page Application (SPA) static assets, the isolated reverse-proxy endpoints under `/api/*`, and server-side SQLite storage infrastructure.
 - **Storage Foundation (M18-C1)**: Single-node canonical SQLite storage engine (`node:sqlite`) with WAL journal mode, full synchronous durability, foreign keys enabled, bounded busy timeouts, and forward-only transactional migrations.
 - **Stateless/Stateful Boundary**: During M18-C1, server-side storage hosts foundation schema metadata and migration history. Browser operational cutover to the Node controller and financial journal occurs in M18-D.

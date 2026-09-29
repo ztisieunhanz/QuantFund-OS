@@ -7,6 +7,7 @@
 import type { RuntimeCompatibilityResult } from "./types";
 
 export const SUPPORTED_NODE_RANGE = ">=22.16.0 <23";
+export const EXACT_TESTED_NODE_PATCH = "22.23.3";
 export const MIN_NODE_MAJOR = 22;
 export const MAX_NODE_MAJOR = 22;
 export const MIN_NODE_MINOR = 16;
