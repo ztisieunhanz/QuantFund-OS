@@ -21,7 +21,6 @@ import * as productionServerModule from "../productionServer";
 import { isNodeVersionSupported } from "../storage";
 import { AI_GATEWAY_OPERATION } from "../../src/lib/aiGatewayContract";
 import { buildAiAdvisorGrounding } from "../../src/lib/aiAdvisorGroundingProjection";
-import { createTestProductionServer } from "./testServerHelper";
 
 const validAiRequest = JSON.stringify({
   operation: AI_GATEWAY_OPERATION,
@@ -94,8 +93,15 @@ describe("M16-E1A Production Server Shell", () => {
   const SENTINEL_SECRET = "OUTSIDE-SENTINEL-CANARY-998877";
   let serverInstance: ProductionServerInstance | null = null;
   let childProc: ChildProcess | null = null;
+  let originalNodeVersion: string;
 
   beforeEach(() => {
+    originalNodeVersion = process.versions.node;
+    Object.defineProperty(process.versions, "node", {
+      value: "22.23.3",
+      configurable: true,
+      writable: true,
+    });
     tempBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "quantfund-test-base-"));
     tempStaticDir = path.join(tempBaseDir, "dist");
     fs.mkdirSync(tempStaticDir, { recursive: true });
@@ -121,6 +127,11 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   afterEach(async () => {
+    Object.defineProperty(process.versions, "node", {
+      value: originalNodeVersion,
+      configurable: true,
+      writable: true,
+    });
     if (serverInstance) {
       try {
         await serverInstance.close();
@@ -139,7 +150,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("A. serves GET /api/health with minimal process readiness without secrets or provider config", async () => {
-    serverInstance = createTestProductionServer({
+    serverInstance = createProductionServer({
       staticDir: tempStaticDir,
       env: { SECRET_KEY: "super-secret-key", GEMINI_API_KEY: "ai-secret" },
     });
@@ -160,7 +171,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("A. enforces GET-only for /api/health and returns 405 for HEAD and POST", async () => {
-    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const headRes = await requestHttp(`${addr.url}/api/health`, { method: "HEAD" });
@@ -183,7 +194,7 @@ describe("M16-E1A Production Server Shell", () => {
         headers: { "Content-Type": "application/json" },
       })
     );
-    serverInstance = createTestProductionServer({
+    serverInstance = createProductionServer({
       staticDir: tempStaticDir,
       env: { GEMINI_API_KEY: "server-only-secret" },
       fetchFn: upstreamFetch,
@@ -203,7 +214,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("A. rejects unsupported AI methods, malformed JSON, and oversized requests", async () => {
-    serverInstance = createTestProductionServer({
+    serverInstance = createProductionServer({
       staticDir: tempStaticDir,
       env: { GEMINI_API_KEY: "server-only-secret" },
     });
@@ -231,7 +242,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("A. fails AI closed for missing secret and upstream rejection without SPA fallback", async () => {
-    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const missingSecret = await requestHttp(`${addr.url}/api/ai-advisor`, {
@@ -244,7 +255,7 @@ describe("M16-E1A Production Server Shell", () => {
     expect(missingSecret.body).not.toContain("<!DOCTYPE html>");
 
     await serverInstance.close();
-    serverInstance = createTestProductionServer({
+    serverInstance = createProductionServer({
       staticDir: tempStaticDir,
       env: { GEMINI_API_KEY: "server-only-secret" },
       fetchFn: vi.fn<typeof fetch>().mockResolvedValue(
@@ -273,7 +284,7 @@ describe("M16-E1A Production Server Shell", () => {
         "1256.25", 10, "5", "7", "0",
       ]]), { status: 200, headers: { "Content-Type": "application/json" } })
     );
-    serverInstance = createTestProductionServer({ staticDir: tempStaticDir, fetchFn: upstreamFetch });
+    serverInstance = createProductionServer({ staticDir: tempStaticDir, fetchFn: upstreamFetch });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const result = await requestHttp(
@@ -289,7 +300,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("B. isolates unknown /api/* routes returning JSON 404 without SPA fallback", async () => {
-    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/api/unknown-endpoint`, { method: "GET" });
@@ -302,7 +313,7 @@ describe("M16-E1A Production Server Shell", () => {
 
   it("H. returns quant events as an explicit unavailable capability without provider calls", async () => {
     const upstreamFetch = vi.fn<typeof fetch>();
-    serverInstance = createTestProductionServer({ staticDir: tempStaticDir, fetchFn: upstreamFetch });
+    serverInstance = createProductionServer({ staticDir: tempStaticDir, fetchFn: upstreamFetch });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/api/quant-events`, { method: "GET" });
@@ -326,7 +337,7 @@ describe("M16-E1A Production Server Shell", () => {
 
   it("H. rejects unsupported quant events methods with the established 405 contract", async () => {
     const upstreamFetch = vi.fn<typeof fetch>();
-    serverInstance = createTestProductionServer({ staticDir: tempStaticDir, fetchFn: upstreamFetch });
+    serverInstance = createProductionServer({ staticDir: tempStaticDir, fetchFn: upstreamFetch });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/api/quant-events`, { method: "POST" });
@@ -340,7 +351,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("C. serves static index.html entry and hashed assets correctly", async () => {
-    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     // Root index.html
@@ -359,7 +370,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("C. falls back to index.html only for client SPA routes", async () => {
-    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/macro/dashboard`, { method: "GET" });
@@ -370,7 +381,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("C. truthfully returns 404 for missing static resources with file extension", async () => {
-    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/assets/missing-bundle-999.js`, { method: "GET" });
@@ -379,7 +390,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("C. supports HEAD requests on non-API static files with correct content length and no body", async () => {
-    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/robots.txt`, { method: "HEAD" });
@@ -390,7 +401,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("C & D. strictly rejects path traversal and never leaks outside files", async () => {
-    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     // Attempt 1: standard ../ traversal
@@ -405,7 +416,7 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("D. includes security headers and forbids wildcard CORS by default", async () => {
-    serverInstance = createTestProductionServer({ staticDir: tempStaticDir });
+    serverInstance = createProductionServer({ staticDir: tempStaticDir });
     const addr = await serverInstance.listen(0, "127.0.0.1");
 
     const res = await requestHttp(`${addr.url}/`, { method: "GET" });
@@ -416,7 +427,7 @@ describe("M16-E1A Production Server Shell", () => {
 
   it("E. supports lifecycle, ephemeral port discovery, injected apiHandler, and clean shutdown", async () => {
     let customApiCalled = false;
-    serverInstance = createTestProductionServer({
+    serverInstance = createProductionServer({
       staticDir: tempStaticDir,
       apiHandler: (_req, res, pathname) => {
         if (pathname === "/api/custom-test") {
@@ -590,10 +601,18 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("H. rejects production server creation on unsupported Node.js runtime without spoofing", () => {
+    // Restore real unmocked Node runtime (Node 24)
+    Object.defineProperty(process.versions, "node", {
+      value: originalNodeVersion,
+      configurable: true,
+      writable: true,
+    });
+
     // Current test process is Node 24, so createProductionServer() must fail fast closed
     expect(() => createProductionServer({ staticDir: tempStaticDir })).toThrow("RUNTIME_INCOMPATIBLE");
-    // Also verify no createProductionServerCore or openDirect bypass is exported
+    // Also verify no createProductionServerCore, createTestProductionServer, or openDirect bypass is exported
     expect((productionServerModule as any).createProductionServerCore).toBeUndefined();
+    expect((productionServerModule as any).createTestProductionServer).toBeUndefined();
   });
 
   it("I1. enforces ordered bounded shutdown: waits for active async handler to quiesce before closing storage", async () => {
@@ -615,7 +634,7 @@ describe("M16-E1A Production Server Shell", () => {
       releaseHandler = resolve;
     });
 
-    serverInstance = createTestProductionServer({
+    serverInstance = createProductionServer({
       staticDir: tempStaticDir,
       storage: mockStorage,
       apiHandler: async (req, res, pathname) => {
@@ -682,7 +701,7 @@ describe("M16-E1A Production Server Shell", () => {
     } as any;
 
     // A handler that hangs indefinitely
-    serverInstance = createTestProductionServer({
+    serverInstance = createProductionServer({
       staticDir: tempStaticDir,
       storage: mockStorage,
       apiHandler: async (req, res, pathname) => {
@@ -730,7 +749,7 @@ describe("M16-E1A Production Server Shell", () => {
       },
     } as any;
 
-    serverInstance = createTestProductionServer({
+    serverInstance = createProductionServer({
       staticDir: tempStaticDir,
       storage: mockStorage,
     });
@@ -747,6 +766,95 @@ describe("M16-E1A Production Server Shell", () => {
     expect(closeError).not.toBeNull();
     expect(closeError?.message).toContain("SHUTDOWN_FAILED");
     expect(closeError?.message).toContain("DISK_CORRUPTION_ON_CLOSE");
+  });
+
+  it("I4. proves server.close completion barrier holds until slow/streamed response completes, and storage closes only after complete server close (P1-D)", async () => {
+    let storageClosed = false;
+    let storageClosedAt: number | null = null;
+    let streamFinishedAt: number | null = null;
+
+    const mockStorage = {
+      getStatus: () => ({ isReady: !storageClosed, isClosed: storageClosed } as any),
+      close: () => {
+        storageClosed = true;
+        storageClosedAt = Date.now();
+      },
+    } as any;
+
+    let releaseStream: () => void;
+    const streamGate = new Promise<void>((resolve) => {
+      releaseStream = resolve;
+    });
+
+    serverInstance = createProductionServer({
+      staticDir: tempStaticDir,
+      storage: mockStorage,
+      apiHandler: async (req, res, pathname) => {
+        if (pathname === "/api/streamed-report") {
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "text/plain; charset=utf-8");
+          res.write("part-1\n");
+          // Hold stream open until release
+          await streamGate;
+          res.write("part-2\n");
+          res.end();
+          streamFinishedAt = Date.now();
+          return true;
+        }
+        return false;
+      },
+    });
+
+    const addr = await serverInstance.listen(0, "127.0.0.1");
+
+    // Start request receiving chunks
+    let fullBody = "";
+    let requestFinished = false;
+    const reqPromise = new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+      const req = http.request(`${addr.url}/api/streamed-report`, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(Buffer.from(c)));
+        res.on("end", () => {
+          requestFinished = true;
+          fullBody = Buffer.concat(chunks).toString("utf8");
+          resolve({ statusCode: res.statusCode || 0, body: fullBody });
+        });
+      });
+      req.on("error", reject);
+      req.end();
+    });
+
+    // Wait a moment for connection to establish and first chunk to arrive
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Initiate shutdown while stream is still open
+    const closePromise = serverInstance.close(3000);
+
+    // Verify shutdown barrier is active and has NOT resolved
+    let closeResolved = false;
+    closePromise.then(() => {
+      closeResolved = true;
+    });
+
+    await new Promise((r) => setTimeout(r, 60));
+    expect(closeResolved).toBe(false);
+    expect(storageClosed).toBe(false);
+    expect(requestFinished).toBe(false);
+
+    // Release the stream to allow HTTP response to finish and connection to close
+    releaseStream!();
+
+    const response = await reqPromise;
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe("part-1\npart-2\n");
+
+    // Await server close
+    await closePromise;
+    expect(closeResolved).toBe(true);
+    expect(storageClosed).toBe(true);
+    expect(streamFinishedAt).not.toBeNull();
+    expect(storageClosedAt).not.toBeNull();
+    expect(storageClosedAt!).toBeGreaterThanOrEqual(streamFinishedAt!);
   });
 
   it("matches production quant-events method semantics in the Vite development adapter", async () => {

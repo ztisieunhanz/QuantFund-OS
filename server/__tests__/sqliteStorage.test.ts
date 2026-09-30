@@ -39,9 +39,6 @@ import {
   createProductionServer,
   type ProductionServerInstance,
 } from "../productionServer";
-import { TestSqliteStorage } from "./testStorageHelper";
-import { createTestProductionServer } from "./testServerHelper";
-
 function requestHttp(
   url: string,
   options: http.RequestOptions & { body?: string } = {}
@@ -68,19 +65,31 @@ function requestHttp(
   });
 }
 
-function createTestStorage(config: SqliteStorageConfig = {}): TestSqliteStorage {
-  return new TestSqliteStorage(config);
+function createTestStorage(config: SqliteStorageConfig = {}): SqliteStorage {
+  return new SqliteStorage(config);
 }
 
 describe("M18-C1: Stateful Node SQLite Foundation", () => {
   let tempBaseDir: string;
   let serverInstance: ProductionServerInstance | null = null;
+  let originalNodeVersion: string;
 
   beforeEach(() => {
+    originalNodeVersion = process.versions.node;
+    Object.defineProperty(process.versions, "node", {
+      value: "22.23.3",
+      configurable: true,
+      writable: true,
+    });
     tempBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "quantfund-c1-test-"));
   });
 
   afterEach(async () => {
+    Object.defineProperty(process.versions, "node", {
+      value: originalNodeVersion,
+      configurable: true,
+      writable: true,
+    });
     if (serverInstance) {
       await serverInstance.close();
       serverInstance = null;
@@ -141,16 +150,34 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     });
 
     it("assertNodeRuntimeCompatibility evaluates real process runtime and rejects unsupported local runtime without spoofing", () => {
+      // Restore real process.versions.node (Node 24)
+      Object.defineProperty(process.versions, "node", {
+        value: originalNodeVersion,
+        configurable: true,
+        writable: true,
+      });
+
       // Current test runner process is Node 24, which must fail closed
       expect(() => assertNodeRuntimeCompatibility()).toThrow("RUNTIME_INCOMPATIBLE");
     });
 
     it("enforces runtime compatibility in SqliteStorage.open() and createProductionServer() without bypasses", () => {
+      // Restore real process.versions.node (Node 24)
+      Object.defineProperty(process.versions, "node", {
+        value: originalNodeVersion,
+        configurable: true,
+        writable: true,
+      });
+
       const storageDir = path.join(tempBaseDir, "runtime-storage-test");
       const storage = new SqliteStorage({ dataDir: storageDir });
 
       // Verify no openDirect method exists on exported SqliteStorage prototype
       expect((storage as unknown as Record<string, unknown>).openDirect).toBeUndefined();
+      // Verify no initializeStorage method exists or is accessible
+      expect((storage as unknown as Record<string, unknown>).initializeStorage).toBeUndefined();
+      // Verify no openForTest exists
+      expect((storage as unknown as Record<string, unknown>).openForTest).toBeUndefined();
 
       // Production open() uses actual process.versions.node and throws RUNTIME_INCOMPATIBLE
       expect(() => storage.open()).toThrow("RUNTIME_INCOMPATIBLE");
@@ -237,7 +264,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
         busyTimeoutMs: 5000,
       });
 
-      storage.openForTest();
+      storage.open();
       const status = storage.getStatus();
 
       expect(status.isReady).toBe(true);
@@ -270,7 +297,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("enforces foreign key constraints at runtime", () => {
       const storageDir = path.join(tempBaseDir, "fk-test");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
       const db = storage.getDb();
 
       db.exec(`
@@ -295,24 +322,24 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
 
       // Too low (< 1000)
       const lowStorage = createTestStorage({ dataDir: storageDir, busyTimeoutMs: 500 });
-      expect(() => lowStorage.openForTest()).toThrow("busyTimeoutMs must be an integer between 1000 and 60000");
+      expect(() => lowStorage.open()).toThrow("busyTimeoutMs must be an integer between 1000 and 60000");
 
       // Too high (> 60000)
       const highStorage = createTestStorage({ dataDir: storageDir, busyTimeoutMs: 70000 });
-      expect(() => highStorage.openForTest()).toThrow("busyTimeoutMs must be an integer between 1000 and 60000");
+      expect(() => highStorage.open()).toThrow("busyTimeoutMs must be an integer between 1000 and 60000");
 
       // Fractional
       const fracStorage = createTestStorage({ dataDir: storageDir, busyTimeoutMs: 2500.5 });
-      expect(() => fracStorage.openForTest()).toThrow("busyTimeoutMs must be an integer between 1000 and 60000");
+      expect(() => fracStorage.open()).toThrow("busyTimeoutMs must be an integer between 1000 and 60000");
 
       // Valid boundaries
       const minStorage = createTestStorage({ dataDir: path.join(tempBaseDir, "bt-min"), busyTimeoutMs: MIN_BUSY_TIMEOUT_MS });
-      minStorage.openForTest();
+      minStorage.open();
       expect(minStorage.getStatus().busyTimeoutMs).toBe(MIN_BUSY_TIMEOUT_MS);
       minStorage.close();
 
       const maxStorage = createTestStorage({ dataDir: path.join(tempBaseDir, "bt-max"), busyTimeoutMs: MAX_BUSY_TIMEOUT_MS });
-      maxStorage.openForTest();
+      maxStorage.open();
       expect(maxStorage.getStatus().busyTimeoutMs).toBe(MAX_BUSY_TIMEOUT_MS);
       maxStorage.close();
     });
@@ -321,10 +348,10 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       const storageDir = path.join(tempBaseDir, "failed-init");
       const storage = createTestStorage({
         dataDir: storageDir,
-        busyTimeoutMs: 500, // intentional config failure during openForTest()
+        busyTimeoutMs: 500, // intentional config failure during open()
       });
 
-      expect(() => storage.openForTest()).toThrow("INVALID_CONFIG");
+      expect(() => storage.open()).toThrow("INVALID_CONFIG");
 
       // Verify internal handle was cleaned and nulled
       expect(storage.getStatus().isReady).toBe(false);
@@ -487,7 +514,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("CRITICAL REGRESSION: rejects END TRANSACTION takeover attempt before DB execution, preserves transaction ownership and safe reopen (P1-B)", () => {
       const storageDir = path.join(tempBaseDir, "migration-end-tx-regression");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
       const db = storage.getDb();
 
       // Migration attempting early transaction termination with END TRANSACTION;
@@ -518,7 +545,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
 
       // 5. Verify database reopens safely and cleanly
       const reopenStorage = createTestStorage({ dataDir: storageDir });
-      expect(() => reopenStorage.openForTest()).not.toThrow();
+      expect(() => reopenStorage.open()).not.toThrow();
       expect(reopenStorage.getStatus().isReady).toBe(true);
       expect(reopenStorage.getStatus().appliedMigrationsCount).toBe(1);
       reopenStorage.close();
@@ -527,7 +554,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("applies bootstrap migration exactly once and records migration history deterministically", () => {
       const storageDir = path.join(tempBaseDir, "migration-test");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
       const status = storage.getStatus();
       expect(status.appliedMigrationsCount).toBe(1);
@@ -557,7 +584,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("fails closed on modified migration content (content-bound checksum mismatch)", () => {
       const storageDir = path.join(tempBaseDir, "migration-tamper-content");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
       const db = storage.getDb();
 
       // Tamper stored record
@@ -573,7 +600,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("fails closed and rolls back cleanly when a migration throws an error", () => {
       const storageDir = path.join(tempBaseDir, "migration-fail");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
       const db = storage.getDb();
 
       const failingMigration: Migration = {
@@ -603,7 +630,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("fails closed when encountering unknown future schema migrations", () => {
       const storageDir = path.join(tempBaseDir, "migration-future");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
       const db = storage.getDb();
 
       // Simulate a future migration recorded by a newer version
@@ -623,7 +650,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("strictly verifies exact C1 schema allowlist and rejects unexpected tables like 'orders'", () => {
       const storageDir = path.join(tempBaseDir, "schema-boundary");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
       const db = storage.getDb();
 
       const check = verifyC1SchemaBoundaries(db);
@@ -649,7 +676,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("runs quick integrity diagnostic successfully on healthy database", () => {
       const storageDir = path.join(tempBaseDir, "quick-integrity");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
       const quick = storage.quickIntegrityCheck();
       expect(quick.ok).toBe(true);
@@ -663,7 +690,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("runs explicit full integrity diagnostic successfully", () => {
       const storageDir = path.join(tempBaseDir, "full-integrity");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
       const full = storage.fullIntegrityCheck();
       expect(full.ok).toBe(true);
@@ -677,7 +704,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("returns error diagnostic when integrity checks are run on closed storage", () => {
       const storageDir = path.join(tempBaseDir, "closed-integrity");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
       storage.close();
 
       const quick = storage.quickIntegrityCheck();
@@ -700,7 +727,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       const backupFile = path.join(backupDir, "quantfund-backup.db");
 
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
       const result = await storage.backup({ destinationPath: backupFile });
       expect(result.destinationPath).toBe(path.resolve(backupFile));
@@ -733,7 +760,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("rejects backup when source equals destination (path identity protection)", async () => {
       const storageDir = path.join(tempBaseDir, "backup-identity");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
       const sourceDbPath = storage.getStatus().dbPath;
       await expect(
@@ -750,7 +777,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("rejects backup when destination is a hardlink alias to the source database", async () => {
       const storageDir = path.join(tempBaseDir, "backup-hardlink-source");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
       const sourceDbPath = storage.getStatus().dbPath;
       const hardlinkPath = path.join(tempBaseDir, "source-hardlink.db");
@@ -776,7 +803,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("rejects backup when destination is a symlink alias to the source database", async () => {
       const storageDir = path.join(tempBaseDir, "backup-symlink-source");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
       const sourceDbPath = storage.getStatus().dbPath;
       const symlinkPath = path.join(tempBaseDir, "source-symlink.db");
@@ -804,7 +831,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       const backupFile = path.join(tempBaseDir, "existing-backup.db");
 
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
       await storage.backup({ destinationPath: backupFile });
       expect(fs.existsSync(backupFile)).toBe(true);
@@ -827,7 +854,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       const backupFile = path.join(tempBaseDir, "preserve-me.db");
 
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
       // Write initial known-good backup
       await storage.backup({ destinationPath: backupFile });
@@ -871,7 +898,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       const backupFile = path.join(tempBaseDir, "valuable-backup.db");
 
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
       await storage.backup({ destinationPath: backupFile });
       const originalContent = fs.readFileSync(backupFile);
@@ -912,7 +939,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
       const backupFile = path.join(tempBaseDir, "clean-target.db");
 
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
       await storage.backup({ destinationPath: backupFile });
       expect(fs.existsSync(backupFile)).toBe(true);
@@ -940,7 +967,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("fails closed on empty or invalid backup destination path", async () => {
       const storageDir = path.join(tempBaseDir, "backup-invalid-path");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
       await expect(
         storage.backup({ destinationPath: "" })
@@ -957,7 +984,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("closes database cleanly and makes repeated close calls safe and idempotent", () => {
       const storageDir = path.join(tempBaseDir, "graceful-close");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
       expect(storage.getStatus().isReady).toBe(true);
       expect(storage.getStatus().isClosed).toBe(false);
@@ -982,9 +1009,9 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     it("distinguishes process alive (GET /api/health) from storage readiness (GET /api/ready)", async () => {
       const storageDir = path.join(tempBaseDir, "server-storage");
       const storage = createTestStorage({ dataDir: storageDir });
-      storage.openForTest();
+      storage.open();
 
-      serverInstance = createTestProductionServer({
+      serverInstance = createProductionServer({
         storage,
         staticDir: path.join(tempBaseDir, "dist"),
       });
@@ -1019,7 +1046,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     });
 
     it("returns HTTP 503 unready for /api/ready when storage is unconfigured", async () => {
-      serverInstance = createTestProductionServer({
+      serverInstance = createProductionServer({
         staticDir: path.join(tempBaseDir, "dist"),
       });
       const addr = await serverInstance.listen(0, "127.0.0.1");
@@ -1033,7 +1060,7 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     });
 
     it("enforces GET-only for /api/ready and returns 405 for POST/HEAD", async () => {
-      serverInstance = createTestProductionServer({
+      serverInstance = createProductionServer({
         staticDir: path.join(tempBaseDir, "dist"),
       });
       const addr = await serverInstance.listen(0, "127.0.0.1");

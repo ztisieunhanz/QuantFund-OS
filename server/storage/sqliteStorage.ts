@@ -55,10 +55,10 @@ export class SqliteStorage {
     // 1. Production Runtime Compatibility Check (fail fast using actual process.versions.node)
     assertNodeRuntimeCompatibility();
 
-    this.initializeStorage(customMigrations);
+    this.#initializeStorage(customMigrations);
   }
 
-  protected initializeStorage(customMigrations?: readonly Migration[]): void {
+  #initializeStorage(customMigrations?: readonly Migration[]): void {
     // 2. Persistent Data Directory & Path Validation (fail closed, no escape)
     const dataDir = assertDataDirectory(
       resolveDataDirectory(this.config.dataDir, this.config.env)

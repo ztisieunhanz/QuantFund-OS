@@ -199,6 +199,16 @@ function createProductionServerInstance(
     });
     activeHandlers.add(handlerPromise);
 
+    res.on("finish", () => {
+      if (isShuttingDownState) {
+        if (typeof server.closeIdleConnections === "function") {
+          server.closeIdleConnections();
+        } else if (req.socket && !req.socket.destroyed) {
+          req.socket.end();
+        }
+      }
+    });
+
     try {
       if (!req.url) {
         sendJson(res, 400, { error: { code: "BAD_REQUEST", message: "Missing request URL" } });
@@ -409,16 +419,18 @@ function createProductionServerInstance(
     shutdownPromise = (async () => {
       const errors: Error[] = [];
 
-      // 1. Stop accepting new HTTP connections
+      // 1. Stop accepting new HTTP connections and establish unconditional server-close barrier
       let serverCloseError: Error | null = null;
-      let serverClosed = false;
+      let serverClosePromise: Promise<void>;
 
       if (server.listening) {
-        server.close((err) => {
-          serverClosed = true;
-          if (err && (err as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
-            serverCloseError = err;
-          }
+        serverClosePromise = new Promise<void>((resolve) => {
+          server.close((err) => {
+            if (err && (err as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
+              serverCloseError = err;
+            }
+            resolve();
+          });
         });
 
         // Close idle keep-alive connections immediately
@@ -426,7 +438,7 @@ function createProductionServerInstance(
           server.closeIdleConnections();
         }
       } else {
-        serverClosed = true;
+        serverClosePromise = Promise.resolve();
       }
 
       // 2. Await in-flight active request handlers & server close barrier
@@ -434,11 +446,7 @@ function createProductionServerInstance(
         while (activeHandlers.size > 0) {
           await Promise.all(Array.from(activeHandlers));
         }
-        if (!serverClosed && server.listening) {
-          await new Promise<void>((resolve) => {
-            server.once("close", () => resolve());
-          });
-        }
+        await serverClosePromise;
       };
 
       let timeoutHandle: NodeJS.Timeout | null = null;
