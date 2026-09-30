@@ -4,6 +4,7 @@
 // NOTE: Validates node:sqlite availability and Node 22 architecture range (>=22.16.0 <23).
 // ============================================================================
 
+import { createRequire } from "node:module";
 import type { RuntimeCompatibilityResult } from "./types";
 
 export const SUPPORTED_NODE_RANGE = ">=22.16.0 <23";
@@ -63,8 +64,8 @@ export function isNodeVersionSupported(versionStr: string): { supported: boolean
 
 export function isNodeSqliteAvailable(): boolean {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const sqlite = require("node:sqlite");
+    const esmRequire = typeof require === "function" ? require : createRequire(import.meta.url);
+    const sqlite = esmRequire("node:sqlite");
     return typeof sqlite?.DatabaseSync === "function";
   } catch {
     return false;

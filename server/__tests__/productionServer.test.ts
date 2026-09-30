@@ -493,6 +493,10 @@ describe("M16-E1A Production Server Shell", () => {
             callback();
           };
 
+          let stderr = "";
+          childProc?.stderr?.on("data", (chunk: Buffer) => {
+            stderr += chunk.toString();
+          });
           childProc?.stdout?.on("data", (chunk: Buffer) => {
             output += chunk.toString();
             const match = output.match(/listening on (http:\/\/127\.0\.0\.1:\d+)/i);
@@ -500,10 +504,10 @@ describe("M16-E1A Production Server Shell", () => {
           });
           childProc?.once("error", (error) => finish(() => reject(error)));
           childProc?.once("exit", (code, signal) => {
-            finish(() => reject(new Error(`Production server exited before startup: ${code ?? signal ?? "unknown"}`)));
+            finish(() => reject(new Error(`Production server exited before startup: code=${code ?? "null"} signal=${signal ?? "null"}. Stderr: ${stderr}`)));
           });
 
-          startupTimer = setTimeout(() => finish(() => reject(new Error("Timed out waiting for production server startup"))), 5000);
+          startupTimer = setTimeout(() => finish(() => reject(new Error(`Timed out waiting for production server startup. Stderr: ${stderr}`))), 5000);
         });
 
         const healthRes = await requestHttp(`${address}/api/health`, { method: "GET" });
@@ -549,6 +553,7 @@ describe("M16-E1A Production Server Shell", () => {
         // On supported runtime, reach readiness then send SIGTERM
         const address = await new Promise<string>((resolve, reject) => {
           let output = "";
+          let stderr = "";
           let settled = false;
           let startupTimer: ReturnType<typeof setTimeout> | undefined;
           const finish = (callback: () => void) => {
@@ -558,6 +563,9 @@ describe("M16-E1A Production Server Shell", () => {
             callback();
           };
 
+          childProc?.stderr?.on("data", (chunk: Buffer) => {
+            stderr += chunk.toString();
+          });
           childProc?.stdout?.on("data", (chunk: Buffer) => {
             output += chunk.toString();
             const match = output.match(/listening on (http:\/\/127\.0\.0\.1:\d+)/i);
@@ -565,10 +573,10 @@ describe("M16-E1A Production Server Shell", () => {
           });
           childProc?.once("error", (error) => finish(() => reject(error)));
           childProc?.once("exit", (code, signal) => {
-            finish(() => reject(new Error(`Production server exited unexpectedly: ${code ?? signal ?? "unknown"}`)));
+            finish(() => reject(new Error(`Production server exited unexpectedly: code=${code ?? "null"} signal=${signal ?? "null"}. Stderr: ${stderr}`)));
           });
 
-          startupTimer = setTimeout(() => finish(() => reject(new Error("Timed out waiting for production server startup"))), 5000);
+          startupTimer = setTimeout(() => finish(() => reject(new Error(`Timed out waiting for production server startup. Stderr: ${stderr}`))), 5000);
         });
 
         // Verify storage is genuine ready
@@ -601,16 +609,42 @@ describe("M16-E1A Production Server Shell", () => {
   });
 
   it("H. rejects production server creation on unsupported Node.js runtime without spoofing", () => {
-    // Restore real unmocked Node runtime (Node 24)
+    // 1. Explicitly verify unsupported runtime (Node 24) fails closed
+    Object.defineProperty(process.versions, "node", {
+      value: "24.19.0",
+      configurable: true,
+      writable: true,
+    });
+    expect(() => createProductionServer({ staticDir: tempStaticDir })).toThrow("RUNTIME_INCOMPATIBLE");
+
+    // 2. Explicitly verify supported runtime (Node 22.23.3) succeeds without throwing
+    Object.defineProperty(process.versions, "node", {
+      value: "22.23.3",
+      configurable: true,
+      writable: true,
+    });
+    expect(() => {
+      const s = createProductionServer({ staticDir: tempStaticDir });
+      s.httpServer.close();
+    }).not.toThrow();
+
+    // 3. Evaluate live unmocked process runtime truthfully
     Object.defineProperty(process.versions, "node", {
       value: originalNodeVersion,
       configurable: true,
       writable: true,
     });
+    const liveSupported = isNodeVersionSupported(originalNodeVersion).supported;
+    if (liveSupported) {
+      expect(() => {
+        const s = createProductionServer({ staticDir: tempStaticDir });
+        s.httpServer.close();
+      }).not.toThrow();
+    } else {
+      expect(() => createProductionServer({ staticDir: tempStaticDir })).toThrow("RUNTIME_INCOMPATIBLE");
+    }
 
-    // Current test process is Node 24, so createProductionServer() must fail fast closed
-    expect(() => createProductionServer({ staticDir: tempStaticDir })).toThrow("RUNTIME_INCOMPATIBLE");
-    // Also verify no createProductionServerCore, createTestProductionServer, or openDirect bypass is exported
+    // 4. Verify no createProductionServerCore, createTestProductionServer, or openDirect bypass is exported
     expect((productionServerModule as any).createProductionServerCore).toBeUndefined();
     expect((productionServerModule as any).createTestProductionServer).toBeUndefined();
   });

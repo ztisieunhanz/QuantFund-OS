@@ -150,40 +150,66 @@ describe("M18-C1: Stateful Node SQLite Foundation", () => {
     });
 
     it("assertNodeRuntimeCompatibility evaluates real process runtime and rejects unsupported local runtime without spoofing", () => {
-      // Restore real process.versions.node (Node 24)
+      // 1. Explicitly verify unsupported runtime (Node 24) fails closed
+      Object.defineProperty(process.versions, "node", {
+        value: "24.19.0",
+        configurable: true,
+        writable: true,
+      });
+      expect(() => assertNodeRuntimeCompatibility()).toThrow("RUNTIME_INCOMPATIBLE");
+
+      // 2. Explicitly verify supported runtime (Node 22.23.3) succeeds
+      Object.defineProperty(process.versions, "node", {
+        value: "22.23.3",
+        configurable: true,
+        writable: true,
+      });
+      expect(() => assertNodeRuntimeCompatibility()).not.toThrow();
+
+      // 3. Evaluate live unmocked process runtime truthfully
       Object.defineProperty(process.versions, "node", {
         value: originalNodeVersion,
         configurable: true,
         writable: true,
       });
-
-      // Current test runner process is Node 24, which must fail closed
-      expect(() => assertNodeRuntimeCompatibility()).toThrow("RUNTIME_INCOMPATIBLE");
+      const liveSupported = isNodeVersionSupported(originalNodeVersion).supported;
+      if (liveSupported) {
+        expect(() => assertNodeRuntimeCompatibility()).not.toThrow();
+      } else {
+        expect(() => assertNodeRuntimeCompatibility()).toThrow("RUNTIME_INCOMPATIBLE");
+      }
     });
 
     it("enforces runtime compatibility in SqliteStorage.open() and createProductionServer() without bypasses", () => {
-      // Restore real process.versions.node (Node 24)
+      const storageDir = path.join(tempBaseDir, "runtime-storage-test");
+
+      // 1. Verify unsupported Node 24 fails closed
       Object.defineProperty(process.versions, "node", {
-        value: originalNodeVersion,
+        value: "24.19.0",
         configurable: true,
         writable: true,
       });
+      const storage24 = new SqliteStorage({ dataDir: storageDir });
+      expect(() => storage24.open()).toThrow("RUNTIME_INCOMPATIBLE");
+      expect(() => createProductionServer()).toThrow("RUNTIME_INCOMPATIBLE");
 
-      const storageDir = path.join(tempBaseDir, "runtime-storage-test");
+      // 2. Verify supported Node 22.23.3 succeeds
+      Object.defineProperty(process.versions, "node", {
+        value: "22.23.3",
+        configurable: true,
+        writable: true,
+      });
+      const storage22 = new SqliteStorage({ dataDir: path.join(tempBaseDir, "runtime-storage-supported") });
+      expect(() => storage22.open()).not.toThrow();
+      storage22.close();
+
+      // 3. Verify no openDirect method exists on exported SqliteStorage prototype
       const storage = new SqliteStorage({ dataDir: storageDir });
-
-      // Verify no openDirect method exists on exported SqliteStorage prototype
       expect((storage as unknown as Record<string, unknown>).openDirect).toBeUndefined();
       // Verify no initializeStorage method exists or is accessible
       expect((storage as unknown as Record<string, unknown>).initializeStorage).toBeUndefined();
       // Verify no openForTest exists
       expect((storage as unknown as Record<string, unknown>).openForTest).toBeUndefined();
-
-      // Production open() uses actual process.versions.node and throws RUNTIME_INCOMPATIBLE
-      expect(() => storage.open()).toThrow("RUNTIME_INCOMPATIBLE");
-
-      // Production server creation uses actual process.versions.node and throws RUNTIME_INCOMPATIBLE
-      expect(() => createProductionServer()).toThrow("RUNTIME_INCOMPATIBLE");
     });
   });
 
